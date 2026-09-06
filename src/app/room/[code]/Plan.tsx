@@ -303,16 +303,21 @@ export function Plan({
                       {proposal.yes} of {proposal.needed} needed
                     </p>
                     {stop.locked ? (
-                      // `proposals.vote` documents this refusal as guaranteed:
-                      // the deciding yes cannot be applied to a locked stop, so
-                      // it throws STOP_LOCKED at whoever happens to cast it --
-                      // an error about somebody else's action. The unlock
-                      // toggle is directly above.
+                      // A lock does not close voting, and withholding the
+                      // buttons here was too blunt: `proposals.vote` writes the
+                      // row first and only throws STOP_LOCKED when a DECIDING
+                      // yes cannot be applied. A no still lands and can settle
+                      // the proposal as rejected, which is exactly how a room
+                      // clears a stale proposal off a stop it wants to keep.
+                      // So say what the lock means and leave the choice open;
+                      // the one refusable case surfaces through castVote's
+                      // catch, with the unlock toggle directly above.
                       <p className="mt-2 text-[12px] leading-snug text-dim">
-                        This stop was locked after the swap was proposed, so the room cannot
-                        vote it through. Unlock it first.
+                        This stop is locked, so an accepted swap cannot be applied until
+                        someone unlocks it. A no still counts.
                       </p>
-                    ) : proposal.yourVote === null ? (
+                    ) : null}
+                    {proposal.yourVote === null ? (
                       <div className="mt-3 flex gap-2">
                         <Plate
                           variant="action"

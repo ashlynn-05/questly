@@ -165,8 +165,11 @@ export const vote = mutation({
     // proposal survives. Deliberately different from the roster-change path in
     // `resolveOpenProposals`, which closes such a proposal instead: there,
     // nobody is watching and a throw would block a member from leaving; here,
-    // there is a person on the other end, the message tells them exactly what
-    // to do, and their vote is still counted once the stop is unlocked.
+    // there is a person on the other end and the message tells them exactly
+    // what to do. Note the throw rolls back this whole mutation, THIS vote
+    // included -- a Convex mutation is one transaction -- so the decider casts
+    // again after the unlock. Every earlier vote was committed by its own
+    // mutation and is untouched.
     const status = await settleProposal(ctx, proposal);
     return { accepted: status === "accepted" };
   },
