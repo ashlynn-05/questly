@@ -14,6 +14,11 @@ import { recomputeItinerary, totalPerHeadCents, type Stop } from "./stops";
  * Every refusal here is something the person tapping "swap" can act on, so it
  * throws through `throwUserError`: a plain `Error` arrives in the browser as
  * "Server Error" on a production deployment, which tells them nothing.
+ *
+ * Authorisation is the CALLER's job and is not repeated here: `roomId` arrives
+ * already resolved, so this helper cannot tell a member from a stranger. Every
+ * mutation that reaches it must first have established the caller as a member
+ * of that room via `requireMember`.
  */
 export async function applyStopSwap(
   ctx: MutationCtx,
