@@ -328,6 +328,22 @@ test("build refuses to rebuild a room that is already swiping", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+test("a Google failure hands the room back to the lobby too", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t);
+  fetchMock.mockImplementation(async () => new Response("upstream is unhappy", { status: 503 }));
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  // Not a ConvexError: an upstream 5xx is our problem, not something the user
+  // can act on, so redacting it in production is the right behaviour.
+  await expect(
+    asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" }),
+  ).rejects.toThrow(/Places API 503/);
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("lobby");
+});
+
 test("build reports an empty neighbourhood and hands the room back to the lobby", async () => {
   const t = convexTest(schema, modules);
   // "new" has no partner inventory at all, and Places finds nothing out there.

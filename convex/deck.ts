@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import { action, internalMutation, internalQuery } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+
 import schema from "./schema";
 import {
   DECK_SIZE,
@@ -11,7 +13,6 @@ import {
   distanceKm,
   priceLevelToCents,
   scoreQuest,
-  type Mood,
 } from "./lib/scoring";
 import { throwUserError } from "./lib/errors";
 import { jsonCompletion } from "./lib/openai";
@@ -173,6 +174,143 @@ async function writeBlurbs(titles: string[], mood: string): Promise<string[]> {
   }
 }
 
+/**
+ * The build itself, once the caller has been established as the host of a room
+ * that is ready for one. Separated so `build` can put the room back in the
+ * lobby if any of it fails.
+ */
+async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
+  const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
+  const free = room.budgetPerHeadCents === 0;
+  const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
+
+  const places = await ctx.runAction(api.places.searchNearby, {
+    lat: room.centreLat,
+    lng: room.centreLng,
+    radiusKm: room.radiusKm,
+    includedTypes,
+    maxResults: 20,
+  });
+
+  // Partners first, and injected whether or not Places returned them -- that
+  // injection is the inventory the business model is built on.
+  const candidates: Candidate[] = partners.map((p) => ({
+    source: "partner" as const,
+    placeId: p.placeId,
+    title: p.name,
+    blurb: p.offerText,
+    priceCents: p.priceFromCents,
+    distanceKm: distanceKm(room.centreLat, room.centreLng, p.lat, p.lng),
+    discountPct: p.discountPct,
+    partnerTier: p.partnerTier,
+    // deck.context only returns partners carrying this room's mood.
+    moodMatch: true,
+    photoUrl: p.photoUrl,
+  }));
+
+  const partnerIds = new Set(partners.map((p) => p.placeId));
+  for (const place of places.results) {
+    if (partnerIds.has(place.id)) continue; // never show a partner twice
+    if (place.lat === null || place.lng === null) continue;
+    candidates.push({
+      source: "places",
+      placeId: place.id,
+      title: place.name,
+      blurb: place.summary ?? place.type ?? "",
+      priceCents: free ? 0 : priceLevelToCents(place.priceLevel),
+      distanceKm: distanceKm(room.centreLat, room.centreLng, place.lat, place.lng),
+      discountPct: 0,
+      partnerTier: 0,
+      // Places returns anything whose *types* include one we asked for, so a
+      // coffee shop surfaces under a "restaurant" query. Matching the place's
+      // own primaryType against the mood's list is what separates a real hit
+      // from a near-miss -- and it is the only thing that keeps moodFit, one
+      // of six weighted terms, from being a constant across the whole deck.
+      moodMatch: place.primaryType !== null && includedTypes.includes(place.primaryType),
+      photoUrl: place.photoUrl ?? undefined,
+      mapsUri: place.mapsUri ?? undefined,
+      websiteUri: place.websiteUri ?? undefined,
+    });
+  }
+
+  if (candidates.length === 0) {
+    throwUserError(
+      "NO_CANDIDATES",
+      "We could not find anywhere near you for that mood. Try a wider radius, or a different mood.",
+    );
+  }
+
+  // Two passes. The first ranks on the cheap signals and cuts to a shortlist,
+  // so the embedding call costs 15 vectors rather than every Places result.
+  const rank = (c: Candidate, tasteSimilarity: number) =>
+    scoreQuest({
+      priceCents: c.priceCents,
+      budgetPerHeadCents: room.budgetPerHeadCents,
+      distanceKm: c.distanceKm,
+      radiusKm: room.radiusKm,
+      discountPct: c.discountPct,
+      partnerTier: c.partnerTier,
+      moodMatch: c.moodMatch,
+      tasteSimilarity,
+    });
+
+  const shortlist = candidates
+    .map((c) => ({ ...c, ...rank(c, 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, SHORTLIST_SIZE);
+
+  // Taste. The room's vector is the mean of its signed-in members' vectors;
+  // guests contribute nothing, so the host's carries. With no vectors at all
+  // the term is 0 and the ranking falls back to budget, distance and partner.
+  const roomTaste = blend(vectors);
+  let scored = shortlist;
+
+  if (roomTaste) {
+    try {
+      const questVectors: number[][] = await ctx.runAction(
+        internal.ai.embeddings.embedMany,
+        { texts: shortlist.map((c) => `${c.title}. ${c.blurb}`) },
+      );
+      scored = shortlist
+        .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
+        .sort((a, b) => b.score - a.score);
+    } catch {
+      // Ranking without taste is worse, not broken. Keep the shortlist order.
+    }
+  }
+
+  scored = scored.slice(0, DECK_SIZE);
+
+  // One batched call writes all nine blurbs. Batched because nine sequential
+  // calls is the difference between a loading state and an abandoned room --
+  // and because this is the last latency before the swipe, where none is
+  // allowed at all.
+  const blurbs = await writeBlurbs(scored.map((c) => c.title), room.mood);
+
+  const deckSize: number = await ctx.runMutation(internal.deck.insert, {
+    roomId,
+    quests: scored.map((c, i) => ({
+      rank: i,
+      source: c.source,
+      placeId: c.placeId,
+      title: c.title,
+      // A partner's own offer text always wins -- it is the commercial claim.
+      blurb: c.source === "partner" ? c.blurb : blurbs[i] || c.blurb,
+      priceLabel: c.priceCents === 0 ? "Free" : `$${Math.round(c.priceCents / 100)}`,
+      priceCents: c.priceCents,
+      distanceKm: Math.round(c.distanceKm * 10) / 10,
+      discountPct: c.discountPct,
+      photoUrl: c.photoUrl,
+      mapsUri: c.mapsUri,
+      websiteUri: c.websiteUri,
+      score: c.score,
+      scoreBreakdown: c.breakdown,
+    })),
+  });
+
+  return deckSize;
+}
+
 export const build = action({
   args: { code: v.string(), sessionKey: v.string() },
   returns: v.object({ deckSize: v.number() }),
@@ -198,135 +336,13 @@ export const build = action({
     const roomId: Id<"rooms"> = view.room._id;
     await ctx.runMutation(internal.deck.markBuilding, { roomId });
 
-    const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
-    const free = room.budgetPerHeadCents === 0;
-    const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood as Mood];
-
-    const places = await ctx.runAction(api.places.searchNearby, {
-      lat: room.centreLat,
-      lng: room.centreLng,
-      radiusKm: room.radiusKm,
-      includedTypes,
-      maxResults: 20,
-    });
-
-    // Partners first, and injected whether or not Places returned them -- that
-    // injection is the inventory the business model is built on.
-    const candidates: Candidate[] = partners.map((p) => ({
-      source: "partner" as const,
-      placeId: p.placeId,
-      title: p.name,
-      blurb: p.offerText,
-      priceCents: p.priceFromCents,
-      distanceKm: distanceKm(room.centreLat, room.centreLng, p.lat, p.lng),
-      discountPct: p.discountPct,
-      partnerTier: p.partnerTier,
-      // deck.context only returns partners carrying this room's mood.
-      moodMatch: true,
-      photoUrl: p.photoUrl,
-    }));
-
-    const partnerIds = new Set(partners.map((p) => p.placeId));
-    for (const place of places.results) {
-      if (partnerIds.has(place.id)) continue; // never show a partner twice
-      if (place.lat === null || place.lng === null) continue;
-      candidates.push({
-        source: "places",
-        placeId: place.id,
-        title: place.name,
-        blurb: place.summary ?? place.type ?? "",
-        priceCents: free ? 0 : priceLevelToCents(place.priceLevel),
-        distanceKm: distanceKm(room.centreLat, room.centreLng, place.lat, place.lng),
-        discountPct: 0,
-        partnerTier: 0,
-        // Places returns anything whose *types* include one we asked for, so a
-        // coffee shop surfaces under a "restaurant" query. Matching the place's
-        // own primaryType against the mood's list is what separates a real hit
-        // from a near-miss -- and it is the only thing that keeps moodFit, one
-        // of six weighted terms, from being a constant across the whole deck.
-        moodMatch: place.primaryType !== null && includedTypes.includes(place.primaryType),
-        photoUrl: place.photoUrl ?? undefined,
-        mapsUri: place.mapsUri ?? undefined,
-        websiteUri: place.websiteUri ?? undefined,
-      });
-    }
-
-    if (candidates.length === 0) {
+    try {
+      return { deckSize: await buildDeck(ctx, roomId) };
+    } catch (error) {
+      // Google 5xx, a quota wall, an empty neighbourhood: whatever it was, the
+      // room must not be left spinning on "building" with no way out of it.
       await ctx.runMutation(internal.deck.abandonBuild, { roomId });
-      throwUserError(
-        "NO_CANDIDATES",
-        "We could not find anywhere near you for that mood. Try a wider radius, or a different mood.",
-      );
+      throw error;
     }
-
-    // Two passes. The first ranks on the cheap signals and cuts to a shortlist,
-    // so the embedding call costs 15 vectors rather than every Places result.
-    const rank = (c: Candidate, tasteSimilarity: number) =>
-      scoreQuest({
-        priceCents: c.priceCents,
-        budgetPerHeadCents: room.budgetPerHeadCents,
-        distanceKm: c.distanceKm,
-        radiusKm: room.radiusKm,
-        discountPct: c.discountPct,
-        partnerTier: c.partnerTier,
-        moodMatch: c.moodMatch,
-        tasteSimilarity,
-      });
-
-    const shortlist = candidates
-      .map((c) => ({ ...c, ...rank(c, 0) }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, SHORTLIST_SIZE);
-
-    // Taste. The room's vector is the mean of its signed-in members' vectors;
-    // guests contribute nothing, so the host's carries. With no vectors at all
-    // the term is 0 and the ranking falls back to budget, distance and partner.
-    const roomTaste = blend(vectors);
-    let scored = shortlist;
-
-    if (roomTaste) {
-      try {
-        const questVectors: number[][] = await ctx.runAction(
-          internal.ai.embeddings.embedMany,
-          { texts: shortlist.map((c) => `${c.title}. ${c.blurb}`) },
-        );
-        scored = shortlist
-          .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
-          .sort((a, b) => b.score - a.score);
-      } catch {
-        // Ranking without taste is worse, not broken. Keep the shortlist order.
-      }
-    }
-
-    scored = scored.slice(0, DECK_SIZE);
-
-    // One batched call writes all nine blurbs. Batched because nine sequential
-    // calls is the difference between a loading state and an abandoned room --
-    // and because this is the last latency before the swipe, where none is
-    // allowed at all.
-    const blurbs = await writeBlurbs(scored.map((c) => c.title), room.mood);
-
-    const deckSize: number = await ctx.runMutation(internal.deck.insert, {
-      roomId,
-      quests: scored.map((c, i) => ({
-        rank: i,
-        source: c.source,
-        placeId: c.placeId,
-        title: c.title,
-        // A partner's own offer text always wins -- it is the commercial claim.
-        blurb: c.source === "partner" ? c.blurb : blurbs[i] || c.blurb,
-        priceLabel: c.priceCents === 0 ? "Free" : `$${Math.round(c.priceCents / 100)}`,
-        priceCents: c.priceCents,
-        distanceKm: Math.round(c.distanceKm * 10) / 10,
-        discountPct: c.discountPct,
-        photoUrl: c.photoUrl,
-        mapsUri: c.mapsUri,
-        websiteUri: c.websiteUri,
-        score: c.score,
-        scoreBreakdown: c.breakdown,
-      })),
-    });
-
-    return { deckSize };
   },
 });
