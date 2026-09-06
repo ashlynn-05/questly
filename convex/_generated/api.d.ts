@@ -13,7 +13,12 @@ import type * as ai_store from "../ai/store.js";
 import type * as auth from "../auth.js";
 import type * as events from "../events.js";
 import type * as http from "../http.js";
+import type * as lib_access from "../lib/access.js";
+import type * as lib_errors from "../lib/errors.js";
+import type * as lib_scoring from "../lib/scoring.js";
+import type * as lib_stops from "../lib/stops.js";
 import type * as places from "../places.js";
+import type * as rooms from "../rooms.js";
 
 import type {
   ApiFromModules,
@@ -27,7 +32,12 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   events: typeof events;
   http: typeof http;
+  "lib/access": typeof lib_access;
+  "lib/errors": typeof lib_errors;
+  "lib/scoring": typeof lib_scoring;
+  "lib/stops": typeof lib_stops;
   places: typeof places;
+  rooms: typeof rooms;
 }>;
 
 /**

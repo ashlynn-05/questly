@@ -4,6 +4,7 @@ import { moodValidator } from "./schema";
 import {
   findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireUserId, roomByCode, safeUserId,
 } from "./lib/access";
+import { throwUserError } from "./lib/errors";
 
 export const create = mutation({
   args: {
@@ -34,7 +35,7 @@ export const create = mutation({
       }
       code = newRoomCode();
     }
-    if (!free) throw new Error("Could not find a free room code. Please try again.");
+    if (!free) throwUserError("NO_FREE_ROOM_CODE", "Could not find a free room code. Please try again.");
 
     const roomId = await ctx.db.insert("rooms", {
       ...room,
@@ -65,11 +66,11 @@ export const join = mutation({
     // judged against the members who saw the deck, so a late joiner would
     // silently move the denominator mid-swipe.
     if (room.status !== "lobby") {
-      throw new Error("This room has already started, so it is closed to new people.");
+      throwUserError("ROOM_CLOSED", "This room has already started, so it is closed to new people.");
     }
 
     const trimmed = name.trim();
-    if (!trimmed) throw new Error("A first name is required.");
+    if (!trimmed) throwUserError("FIELD_REQUIRED", "A first name is required.");
 
     // Signed-in users get their id attached; guests do not need one.
     const userId = await safeUserId(ctx);
@@ -242,7 +243,7 @@ export const leave = mutation({
     const room = await roomByCode(ctx, code);
     const member = await findMember(ctx, room._id, sessionKey);
     if (!member) return null; // already gone; leaving twice is not an error
-    if (member.isHost) throw new Error("The host cannot leave their own room.");
+    if (member.isHost) throwUserError("HOST_CANNOT_LEAVE", "The host cannot leave their own room.");
 
     const swipes = await ctx.db
       .query("swipes")

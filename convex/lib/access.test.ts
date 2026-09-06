@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { expect, test } from "vitest";
 import schema from "../schema";
 import {
@@ -23,6 +24,18 @@ async function seedRoom(t: ReturnType<typeof convexTest>) {
   });
 }
 
+/**
+ * Every user-facing throw must arrive as a `ConvexError` carrying a stable
+ * `code`, not just prose a copywriter could later change out from under a
+ * regex. This asserts both.
+ */
+async function expectUserError(promise: Promise<unknown>, code: string, messagePattern: RegExp) {
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({
+    data: { code, message: expect.stringMatching(messagePattern) },
+  });
+}
+
 test("requireMember accepts the right session key", async () => {
   const t = convexTest(schema, modules);
   const roomId = await seedRoom(t);
@@ -30,12 +43,14 @@ test("requireMember accepts the right session key", async () => {
   expect(name).toBe("Tam");
 });
 
-test("requireMember rejects a wrong session key", async () => {
+test("requireMember rejects a wrong session key with NOT_A_MEMBER", async () => {
   const t = convexTest(schema, modules);
   const roomId = await seedRoom(t);
-  await expect(
+  await expectUserError(
     t.run(async (ctx) => requireMember(ctx, roomId, "guessed-key")),
-  ).rejects.toThrow(/not a member/i);
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
 });
 
 test("findMember returns null instead of throwing", async () => {
@@ -44,11 +59,15 @@ test("findMember returns null instead of throwing", async () => {
   expect(await t.run(async (ctx) => findMember(ctx, roomId, "guessed-key"))).toBeNull();
 });
 
-test("roomByCode finds the room and throws for an unknown code", async () => {
+test("roomByCode finds the room and throws ROOM_NOT_FOUND for an unknown code", async () => {
   const t = convexTest(schema, modules);
   await seedRoom(t);
   expect(await t.run(async (ctx) => (await roomByCode(ctx, "1234")).code)).toBe("1234");
-  await expect(t.run(async (ctx) => roomByCode(ctx, "9999"))).rejects.toThrow(/no room/i);
+  await expectUserError(
+    t.run(async (ctx) => roomByCode(ctx, "9999")),
+    "ROOM_NOT_FOUND",
+    /no room/i,
+  );
 });
 
 test("memberCount counts the room roster", async () => {
@@ -57,10 +76,14 @@ test("memberCount counts the room roster", async () => {
   expect(await t.run(async (ctx) => memberCount(ctx, roomId))).toBe(1);
 });
 
-test("safeUserId returns null and requireUserId throws when signed out", async () => {
+test("safeUserId returns null and requireUserId throws NOT_SIGNED_IN when signed out", async () => {
   const t = convexTest(schema, modules);
   expect(await t.run(async (ctx) => safeUserId(ctx))).toBeNull();
-  await expect(t.run(async (ctx) => requireUserId(ctx))).rejects.toThrow(/signed in/i);
+  await expectUserError(
+    t.run(async (ctx) => requireUserId(ctx)),
+    "NOT_SIGNED_IN",
+    /signed in/i,
+  );
 });
 
 test("safeUserId and requireUserId derive the subject from ctx.auth, never an argument", async () => {

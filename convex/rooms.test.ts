@@ -1,10 +1,23 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { ConvexError } from "convex/values";
+import { expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
+
+/**
+ * Every user-facing throw must arrive as a `ConvexError` carrying a stable
+ * `code`, not just prose a copywriter could later change out from under a
+ * regex. This asserts both.
+ */
+async function expectUserError(promise: Promise<unknown>, code: string, messagePattern: RegExp) {
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({
+    data: { code, message: expect.stringMatching(messagePattern) },
+  });
+}
 
 const CREATE = {
   mood: "grass" as const,
@@ -67,16 +80,24 @@ test("rooms.get returns null for an unknown code", async () => {
   expect(await t.query(api.rooms.get, { code: "9999", sessionKey: "x" })).toBeNull();
 });
 
-test("joining an unknown code fails clearly", async () => {
+test("joining an unknown code fails clearly with ROOM_NOT_FOUND", async () => {
   const t = convexTest(schema, modules);
-  await expect(t.mutation(api.rooms.join, { code: "9999", name: "Tam" })).rejects.toThrow(/no room/i);
+  await expectUserError(
+    t.mutation(api.rooms.join, { code: "9999", name: "Tam" }),
+    "ROOM_NOT_FOUND",
+    /no room/i,
+  );
 });
 
-test("a blank name cannot join", async () => {
+test("a blank name cannot join, and fails with FIELD_REQUIRED", async () => {
   const t = convexTest(schema, modules);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
   const { code } = await asHost.mutation(api.rooms.create, CREATE);
-  await expect(t.mutation(api.rooms.join, { code, name: "   " })).rejects.toThrow(/name/i);
+  await expectUserError(
+    t.mutation(api.rooms.join, { code, name: "   " }),
+    "FIELD_REQUIRED",
+    /name/i,
+  );
 });
 
 // Correction 1: the roster freezes the moment the room leaves the lobby. A late
@@ -95,7 +116,9 @@ test("a room that has left the lobby is closed to new joiners", async () => {
         .unique();
       await ctx.db.patch(room!._id, { status });
     });
-    await expect(t.mutation(api.rooms.join, { code, name: "Tam" })).rejects.toThrow(
+    await expectUserError(
+      t.mutation(api.rooms.join, { code, name: "Tam" }),
+      "ROOM_CLOSED",
       /already started/i,
     );
   }
@@ -113,9 +136,43 @@ test("open rooms are discoverable by mood, private rooms are not", async () => {
   expect(open[0].memberCount).toBe(1);
 });
 
-test("creating a room requires a signed-in host", async () => {
+test("creating a room requires a signed-in host, and fails with NOT_SIGNED_IN", async () => {
   const t = convexTest(schema, modules);
-  await expect(t.mutation(api.rooms.create, CREATE)).rejects.toThrow(/signed in/i);
+  await expectUserError(t.mutation(api.rooms.create, CREATE), "NOT_SIGNED_IN", /signed in/i);
+});
+
+test("create surfaces NO_FREE_ROOM_CODE when every generated code collides", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  // Seed a room at the one code our mocked RNG will ever produce, so every
+  // retry inside rooms.create finds it taken.
+  await t.run(async (ctx) => {
+    await ctx.db.insert("rooms", {
+      hostUserId: "other", mood: "grass", headcount: 2, budgetPerHeadCents: 0,
+      whenAt: 1, centreLat: 0, centreLng: 0, radiusKm: 5,
+      visibility: "private", status: "lobby", code: "0000",
+    });
+  });
+
+  const spy = vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation(<
+    T extends ArrayBufferView | null,
+  >(
+    array: T,
+  ): T => {
+    if (array) new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(0);
+    return array;
+  });
+
+  try {
+    await expectUserError(
+      asHost.mutation(api.rooms.create, CREATE),
+      "NO_FREE_ROOM_CODE",
+      /free room code/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("leaving removes you from the roster", async () => {
@@ -204,9 +261,13 @@ test("leaving takes your proposal votes with you", async () => {
   expect(view!.proposals[0]).toMatchObject({ yes: 1, needed: 1, youVoted: true });
 });
 
-test("the host cannot leave their own room", async () => {
+test("the host cannot leave their own room, and fails with HOST_CANNOT_LEAVE", async () => {
   const t = convexTest(schema, modules);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
   const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
-  await expect(t.mutation(api.rooms.leave, { code, sessionKey })).rejects.toThrow(/host/i);
+  await expectUserError(
+    t.mutation(api.rooms.leave, { code, sessionKey }),
+    "HOST_CANNOT_LEAVE",
+    /host/i,
+  );
 });

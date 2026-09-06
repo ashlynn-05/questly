@@ -1,5 +1,6 @@
 import type { Id, Doc } from "../_generated/dataModel";
 import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
+import { throwUserError } from "./errors";
 
 type Ctx = QueryCtx | MutationCtx;
 type AnyCtx = Ctx | ActionCtx;
@@ -19,7 +20,7 @@ export async function safeUserId(ctx: AnyCtx): Promise<string | null> {
 
 export async function requireUserId(ctx: AnyCtx): Promise<string> {
   const userId = await safeUserId(ctx);
-  if (!userId) throw new Error("You need to be signed in to do that.");
+  if (!userId) throwUserError("NOT_SIGNED_IN", "You need to be signed in to do that.");
   return userId;
 }
 
@@ -46,7 +47,7 @@ export async function requireMember(
   sessionKey: string,
 ): Promise<Doc<"members">> {
   const member = await findMember(ctx, roomId, sessionKey);
-  if (!member) throw new Error("You are not a member of this room.");
+  if (!member) throwUserError("NOT_A_MEMBER", "You are not a member of this room.");
   return member;
 }
 
@@ -59,7 +60,7 @@ export async function findRoomByCode(ctx: Ctx, code: string): Promise<Doc<"rooms
 
 export async function roomByCode(ctx: Ctx, code: string): Promise<Doc<"rooms">> {
   const room = await findRoomByCode(ctx, code);
-  if (!room) throw new Error(`No room with code ${code}.`);
+  if (!room) throwUserError("ROOM_NOT_FOUND", `No room with code ${code}.`);
   return room;
 }
 

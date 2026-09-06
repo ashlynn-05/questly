@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { throwUserError } from "./lib/errors";
 
 export const list = query({
   args: {},
@@ -14,7 +15,7 @@ export const create = mutation({
   handler: async (ctx, { title }) => {
     const user = await authComponent.getAuthUser(ctx); // throws when signed out
     const trimmed = title.trim();
-    if (!trimmed) throw new Error("Title is required");
+    if (!trimmed) throwUserError("FIELD_REQUIRED", "Title is required");
 
     return await ctx.db.insert("events", {
       title: trimmed,
