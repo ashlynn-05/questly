@@ -1,12 +1,13 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
-import schema, { stopValidator } from "./schema";
-import { memberCount, requireMember, roomByCode } from "./lib/access";
+import { api, internal } from "./_generated/api";
+import { action, internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
+import schema, { slotValidator, stopValidator } from "./schema";
+import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
-import { isOverBudget, totalPerHeadCents } from "./lib/stops";
+import { priceLevelToCents } from "./lib/scoring";
+import { isOverBudget, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
 
 export const planContext = internalQuery({
@@ -156,6 +157,7 @@ export const replaceStop = mutation({
     // The sessionKey is the only authority accepted: a capability to act as one
     // member in one room. No memberId or userId argument exists.
     await requireMember(ctx, room._id, args.sessionKey);
+    refuseIfBooked(room);
 
     if ((await memberCount(ctx, room._id)) > 1) {
       throwUserError(
@@ -195,6 +197,9 @@ export const setLocked = mutation({
   handler: async (ctx, args): Promise<null> => {
     const room = await roomByCode(ctx, args.code);
     await requireMember(ctx, room._id, args.sessionKey);
+    // Locking AND unlocking are both refused once the night is booked -- see
+    // refuseIfBooked for why releasing a lock is the same problem as a swap.
+    refuseIfBooked(room);
 
     // .first(), not .unique(), for the reason documented at length in rooms.get:
     // a duplicate plan row must not turn into a throw on every edit in the room.
@@ -213,5 +218,160 @@ export const setLocked = mutation({
       stops: plan.stops.map((s) => (s.id === args.stopId ? { ...s, locked: args.locked } : s)),
     });
     return null;
+  },
+});
+
+const optionsValidator = v.object({ options: v.array(stopValidator) });
+
+/**
+ * Turns Places results into swap candidates for one slot.
+ *
+ * HONESTY -- the price shown is always the real estimate for the venue, even in
+ * a $0 room. `deck.ts` may stamp a free room's candidates at $0 because it
+ * restricts the SEARCH to FREE_TYPES first, so the $0 is true there. Here the
+ * query is free text: a $0 group that types the name of a fine diner would be
+ * shown it at $0 and find out at the table. `isOverBudget` can then do its job
+ * and the group declines knowingly.
+ */
+function toOptions(
+  results: Array<{
+    id: string; name: string; address: string;
+    summary: string | null; priceLevel: string | null;
+  }>,
+  slot: Slot,
+  prefix: string,
+): Stop[] {
+  return results.slice(0, 6).map((place, i) => ({
+    id: `${prefix}_${i}`,
+    slot,
+    placeId: place.id,
+    name: place.name,
+    // startAt is rewritten by applyStopSwap, so a placeholder is correct here.
+    startAt: 0,
+    durationMin: 60,
+    costPerHeadCents: priceLevelToCents(place.priceLevel),
+    note: place.summary ?? place.address,
+    source: "manual" as const,
+    locked: false,
+  }));
+}
+
+/** "Pick it yourself" -- a typed search, biased to the room's area. */
+export const searchStop = action({
+  args: {
+    code: v.string(),
+    sessionKey: v.string(),
+    query: v.string(),
+    slot: slotValidator,
+  },
+  returns: optionsValidator,
+  handler: async (ctx, args): Promise<{ options: Stop[] }> => {
+    // rooms.get returns null rather than throwing for an unknown code or a
+    // stale key, so membership is established by the null check here.
+    const view = await ctx.runQuery(api.rooms.get, {
+      code: args.code,
+      sessionKey: args.sessionKey,
+    });
+    if (!view) throwUserError("NOT_A_MEMBER", "You are not a member of this room.");
+    if (!args.query.trim()) return { options: [] };
+
+    // internal.places.searchText, not api: the text search is an internalAction
+    // precisely so it is not an unauthenticated proxy onto our billed Google key.
+    const found = await ctx.runAction(internal.places.searchText, {
+      query: args.query,
+      lat: view.room.centreLat,
+      lng: view.room.centreLng,
+      radiusKm: view.room.radiusKm,
+    });
+
+    return { options: toOptions(found.results, args.slot, "search") };
+  },
+});
+
+/**
+ * "Ask Claude" -- three alternatives for one stop, with the stops around it as
+ * context so the suggestion fits the night rather than replacing it.
+ *
+ * Falls back to a plain nearby search when the model is unavailable, so the
+ * button always does something. An empty sheet reads as a broken feature.
+ */
+export const suggestStop = action({
+  args: { code: v.string(), sessionKey: v.string(), stopId: v.string() },
+  returns: optionsValidator,
+  handler: async (ctx, args): Promise<{ options: Stop[] }> => {
+    const view = await ctx.runQuery(api.rooms.get, {
+      code: args.code,
+      sessionKey: args.sessionKey,
+    });
+    if (!view) throwUserError("NOT_A_MEMBER", "You are not a member of this room.");
+    if (!view.plan) throwUserError("PLAN_NOT_READY", "There is no plan to edit yet.");
+
+    const target = view.plan.stops.find((s) => s.id === args.stopId);
+    if (!target) throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
+
+    const free = view.room.budgetPerHeadCents === 0;
+    const keeping = view.plan.stops
+      .filter((s) => s.id !== args.stopId)
+      .map((s) => `${s.slot}: ${s.name}${s.locked ? " (locked, do not change)" : ""}`)
+      .join("\n");
+
+    try {
+      const prompt = [
+        `A group of ${view.members.length} is out in Melbourne. These stops are staying:`,
+        keeping || "(none -- this is the only stop)",
+        `Replace the "${target.slot}" stop, currently "${target.name}".`,
+        free
+          ? "The budget is $0 per head, so the replacement must genuinely cost nothing."
+          : `The whole night must stay under $${Math.round(view.room.budgetPerHeadCents / 100)} per head.`,
+        "Return 3 real Melbourne options as JSON and nothing else, shaped:",
+        `{"options":[{"name":string,"durationMin":number,"costPerHeadCents":number,"note":string}]}`,
+        "note is one short sentence saying why it fits.",
+      ].join("\n");
+
+      // The one shared OpenAI entry point, so this feature cannot drift from
+      // plans.generate the day the model name changes.
+      const raw = (await jsonCompletion(prompt)) as {
+        options?: Array<Record<string, unknown>>;
+      };
+
+      const options: Stop[] = (raw.options ?? []).slice(0, 3).map((o, i) => ({
+        id: `llm_${i}`,
+        slot: target.slot,
+        name: typeof o.name === "string" && o.name.trim() ? o.name.trim() : "A stop",
+        startAt: 0,
+        durationMin: typeof o.durationMin === "number" && o.durationMin > 0 ? o.durationMin : 60,
+        // Sanitised, never zeroed: a nonsense value becomes 0, but a real
+        // estimate survives even in a $0 room. Showing a paid venue at $0
+        // because the room asked for free is the same lie as in `toOptions`.
+        costPerHeadCents:
+          typeof o.costPerHeadCents === "number" &&
+          Number.isFinite(o.costPerHeadCents) &&
+          o.costPerHeadCents > 0
+            ? Math.round(o.costPerHeadCents)
+            : 0,
+        note: typeof o.note === "string" ? o.note : "",
+        source: "llm" as const,
+        locked: false,
+      }));
+
+      if (options.length) return { options };
+      console.warn(`plans.suggestStop: room ${view.room.code}: the model returned no options.`);
+    } catch (error) {
+      // Fall through to the search below rather than surfacing an empty sheet
+      // -- but never silently: a demo quietly running on the fallback has to be
+      // visible in the logs.
+      console.warn(
+        `plans.suggestStop: room ${view.room.code}: no model suggestions, falling back to a nearby search.`,
+        error,
+      );
+    }
+
+    const found = await ctx.runAction(internal.places.searchText, {
+      query: target.name,
+      lat: view.room.centreLat,
+      lng: view.room.centreLng,
+      radiusKm: view.room.radiusKm,
+    });
+    return { options: toOptions(found.results, target.slot, "nearby").slice(0, 3) };
   },
 });

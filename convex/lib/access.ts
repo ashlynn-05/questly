@@ -64,6 +64,31 @@ export async function roomByCode(ctx: Ctx, code: string): Promise<Doc<"rooms">> 
   return room;
 }
 
+/**
+ * A booked night is frozen.
+ *
+ * Once `bookings.confirm` has run, the group is holding a reference to a
+ * specific itinerary -- on a screenshot, in a group chat, in someone's head.
+ * Every path that could change that itinerary afterwards is refused here:
+ * the solo swap, the group proposal, the vote that would apply one, and the
+ * lock toggle.
+ *
+ * Unlocking is refused too, and that is not an oversight. A lock is the record
+ * of what the group agreed to; releasing one after the booking reopens the swap
+ * path that this guard exists to close, just by another door.
+ *
+ * Call it AFTER `requireMember`, so a stranger is told they are a stranger
+ * rather than being told about the state of a room they are not in.
+ */
+export function refuseIfBooked(room: Doc<"rooms">): void {
+  if (room.status === "booked") {
+    throwUserError(
+      "ROOM_BOOKED",
+      "This night is booked, so the plan is settled -- everyone is working from it now.",
+    );
+  }
+}
+
 export async function memberCount(ctx: Ctx, roomId: Id<"rooms">): Promise<number> {
   const members = await ctx.db
     .query("members")

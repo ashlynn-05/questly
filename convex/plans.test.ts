@@ -2,7 +2,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { applyStopSwap } from "./lib/swap";
@@ -216,6 +216,9 @@ const json = (body: unknown) =>
 
 beforeEach(() => {
   process.env.OPENAI_API_KEY = OPENAI_KEY;
+  // The suggestion actions below fall back to the Places text search, which
+  // needs a key of its own before it will even reach the mocked fetch.
+  process.env.GOOGLE_MAPS_SERVER_KEY = "test-google-key";
   fetchMock = vi.fn(async (url: string) => {
     if (String(url) === OPENAI_URL) return json(chatBody(modelPlan));
     throw new Error(`Unexpected fetch to ${url}`);
@@ -227,6 +230,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
   delete process.env.OPENAI_API_KEY;
+  delete process.env.GOOGLE_MAPS_SERVER_KEY;
 });
 
 const storedPlan = (t: T, roomId: Id<"rooms">) =>
@@ -407,5 +411,261 @@ test("swapping before the plan exists is refused with something the user can act
     t.run(async (ctx) => applyStopSwap(ctx, roomId, "a", stop())),
     "PLAN_NOT_READY",
     /no plan/i,
+  );
+});
+
+// --- searchStop and suggestStop -------------------------------------------
+
+const PLACES_TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
+
+const placesBody = {
+  places: [
+    {
+      id: "p1",
+      displayName: { text: "Bar Liberty" },
+      formattedAddress: "234 Johnston St",
+      priceLevel: "PRICE_LEVEL_EXPENSIVE",
+      editorialSummary: { text: "Wine bar with a short menu" },
+    },
+    {
+      id: "p2",
+      displayName: { text: "Napier Hotel" },
+      formattedAddress: "210 Napier St",
+      priceLevel: "PRICE_LEVEL_MODERATE",
+    },
+    {
+      id: "p3",
+      displayName: { text: "Carlton Gardens" },
+      formattedAddress: "1 Carlton St",
+      priceLevel: "PRICE_LEVEL_FREE",
+    },
+    {
+      id: "p4",
+      displayName: { text: "Marion" },
+      formattedAddress: "53 Gertrude St",
+      priceLevel: "PRICE_LEVEL_EXPENSIVE",
+    },
+  ],
+};
+
+/** Both endpoints answered, so a test can exercise either path. */
+function mockBoth(chat: unknown) {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) === OPENAI_URL) return json(chat);
+    if (String(url) === PLACES_TEXT_URL) return json(placesBody);
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+}
+
+/** A room the caller is actually a member of, with a plan to edit. */
+async function seedMemberRoom(
+  t: T,
+  over: { code?: string; budgetPerHeadCents?: number } = {},
+) {
+  const code = over.code ?? "4446";
+  const { roomId, questId } = await seedRoom(t, {
+    code,
+    budgetPerHeadCents: over.budgetPerHeadCents ?? 3000,
+  });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("members", {
+      roomId, name: "Bec", userId: "u1", isHost: true, sessionKey: "k-bec", joinedAt: 1,
+    });
+  });
+  await t.mutation(internal.plans.writePlan, {
+    roomId, questId,
+    stops: [
+      stop({ id: "a", slot: "meet", name: "Gate", durationMin: 20 }),
+      stop({ id: "b", slot: "after", name: "Old nightcap", durationMin: 45, locked: true }),
+    ],
+    shareMessage: "hi",
+  });
+  return { roomId, questId, code };
+}
+
+test("searchStop returns the typed venues as swap candidates", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t);
+
+  const { options } = await t.action(api.plans.searchStop, {
+    code, sessionKey: "k-bec", query: "wine bar", slot: "after",
+  });
+
+  expect(options.map((o) => o.name)).toEqual([
+    "Bar Liberty", "Napier Hotel", "Carlton Gardens", "Marion",
+  ]);
+  expect(options.every((o) => o.slot === "after")).toBe(true);
+  expect(options[0].placeId).toBe("p1");
+  // The summary is the note when there is one; the address stands in when not.
+  expect(options[0].note).toBe("Wine bar with a short menu");
+  expect(options[1].note).toBe("210 Napier St");
+
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+  expect(body.textQuery).toBe("wine bar");
+});
+
+/**
+ * HONESTY. `deck.ts` may stamp a free room's cards at $0 because it restricts
+ * the search to FREE_TYPES first. searchStop takes free text, so the same $0
+ * would be a price that is not the price -- a group that typed the name of an
+ * expensive restaurant would find out at the table.
+ */
+test("a $0 room is shown the real price estimate, never a fabricated $0", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t, { code: "4447", budgetPerHeadCents: 0 });
+
+  const { options } = await t.action(api.plans.searchStop, {
+    code, sessionKey: "k-bec", query: "fancy dinner", slot: "main",
+  });
+
+  expect(options[0].costPerHeadCents).toBe(7000);
+  expect(options[1].costPerHeadCents).toBe(3500);
+  // A genuinely free place is still free -- the estimate is reported as it is.
+  expect(options[2].costPerHeadCents).toBe(0);
+});
+
+test("a blank search spends nothing and returns nothing", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t);
+
+  const { options } = await t.action(api.plans.searchStop, {
+    code, sessionKey: "k-bec", query: "   ", slot: "main",
+  });
+  expect(options).toEqual([]);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("a stranger's session key cannot search against a room's area", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t);
+
+  await expectUserError(
+    t.action(api.plans.searchStop, {
+      code, sessionKey: "k-nobody", query: "wine bar", slot: "main",
+    }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("suggestStop returns the model's three alternatives for that slot", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(
+    chatBody({
+      options: [
+        { name: "Bar Liberty", durationMin: 90, costPerHeadCents: 2500, note: "Short menu" },
+        { name: "Napier Hotel", durationMin: 60, costPerHeadCents: 1800, note: "Parma" },
+        { name: "Marion", durationMin: 75, costPerHeadCents: 3000, note: "Wine" },
+        { name: "A fourth", durationMin: 60, costPerHeadCents: 100, note: "too many" },
+      ],
+    }),
+  );
+  const { code } = await seedMemberRoom(t);
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  expect(options).toHaveLength(3);
+  expect(options.map((o) => o.name)).toEqual(["Bar Liberty", "Napier Hotel", "Marion"]);
+  // The replacement is for the target stop's slot, not the model's opinion of it.
+  expect(options.every((o) => o.slot === "meet")).toBe(true);
+  expect(options[0].costPerHeadCents).toBe(2500);
+
+  // The prompt carries the stops that are staying, and says which are locked,
+  // so the suggestion fits the night rather than replacing it.
+  const prompt = JSON.parse(fetchMock.mock.calls[0][1].body as string).messages[0].content;
+  expect(prompt).toContain("Old nightcap");
+  expect(prompt).toContain("locked, do not change");
+  // The stop being replaced is named as the thing to replace, and is absent
+  // from the list of stops that are staying.
+  expect(prompt).toContain('Replace the "meet" stop, currently "Gate"');
+  expect(prompt).not.toContain("meet: Gate");
+});
+
+test("a nonsense cost from the model is sanitised, and a real one is kept", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(
+    chatBody({
+      options: [
+        { name: "Negative", durationMin: 60, costPerHeadCents: -500, note: "" },
+        { name: "Not a number", durationMin: -1, costPerHeadCents: "free", note: 7 },
+        { name: "Real", durationMin: 45, costPerHeadCents: 2200.4, note: "ok" },
+      ],
+    }),
+  );
+  const { code } = await seedMemberRoom(t, { code: "4448", budgetPerHeadCents: 0 });
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  expect(options[0].costPerHeadCents).toBe(0);
+  expect(options[1].costPerHeadCents).toBe(0);
+  expect(options[1].durationMin).toBe(60);
+  expect(typeof options[1].note).toBe("string");
+  // A $0 room does NOT flatten a real estimate to $0. isOverBudget flags it and
+  // the group declines knowingly, rather than being told it is free.
+  expect(options[2].costPerHeadCents).toBe(2200);
+});
+
+test("suggestStop falls back to a nearby search when the model is unavailable", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) return json(placesBody);
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+  const { code } = await seedMemberRoom(t);
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  // Three options, never an empty sheet -- an empty sheet reads as a broken
+  // button.
+  expect(options).toHaveLength(3);
+  expect(options[0].name).toBe("Bar Liberty");
+  expect(options.every((o) => o.slot === "meet")).toBe(true);
+  // The fallback searches for the stop it is replacing.
+  const placesCall = fetchMock.mock.calls.find((c) => String(c[0]) === PLACES_TEXT_URL)!;
+  expect(JSON.parse(placesCall[1].body as string).textQuery).toBe("Gate");
+  // Degrading silently would hide the outage for the whole of a live demo.
+  expect(warn).toHaveBeenCalled();
+  expect(String(warn.mock.calls[0][0])).toContain("4446");
+});
+
+test("suggestStop refuses a stop that is not in the plan", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t);
+
+  await expectUserError(
+    t.action(api.plans.suggestStop, { code, sessionKey: "k-bec", stopId: "nope" }),
+    "STOP_NOT_FOUND",
+    /not in this plan/i,
+  );
+});
+
+test("suggestStop refuses a room whose plan has not landed yet", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { roomId } = await seedRoom(t, { code: "4449" });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("members", {
+      roomId, name: "Bec", userId: "u1", isHost: true, sessionKey: "k-bec", joinedAt: 1,
+    });
+  });
+
+  await expectUserError(
+    t.action(api.plans.suggestStop, { code: "4449", sessionKey: "k-bec", stopId: "a" }),
+    "PLAN_NOT_READY",
+    /no plan to edit/i,
   );
 });

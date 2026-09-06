@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { stopValidator } from "./schema";
-import { requireMember, roomByCode } from "./lib/access";
+import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { settleProposal } from "./lib/proposals";
 
@@ -37,6 +37,7 @@ export const open = mutation({
     // so nobody can open a proposal -- or cast its opening yes -- in someone
     // else's name.
     const member = await requireMember(ctx, room._id, args.sessionKey);
+    refuseIfBooked(room);
 
     // One open proposal per stop. Two live proposals on one stop would let the
     // room vote twice on the same slot and have the loser overwrite the winner
@@ -113,6 +114,10 @@ export const vote = mutation({
   handler: async (ctx, args): Promise<{ accepted: boolean }> => {
     const room = await roomByCode(ctx, args.code);
     const member = await requireMember(ctx, room._id, args.sessionKey);
+    // A yes landing after the booking would apply a swap to the itinerary the
+    // group is already holding, so the vote is refused rather than counted --
+    // there is nothing left for it to decide.
+    refuseIfBooked(room);
 
     const proposal = await ctx.db.get(args.proposalId);
     // The room is checked as well as the id: `proposalId` is client-supplied,
