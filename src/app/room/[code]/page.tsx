@@ -8,6 +8,8 @@ import { api } from "@convex/_generated/api";
 import { useSessionKey } from "@/lib/session";
 import { Lobby } from "./Lobby";
 import { Deck } from "./Deck";
+import { Plan } from "./Plan";
+import { Booked } from "./Booked";
 
 /**
  * The shape every screen in the room is written against.
@@ -92,14 +94,11 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
         <Deck view={view} code={code} sessionKey={sessionKey} headingRef={headingRef} />
       ) : null}
 
-      {view.room.status === "matched" || view.room.status === "booked" ? (
-        <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
-          <h1 ref={headingRef} tabIndex={-1} className="board flap text-[11px] text-accent">
-            It&rsquo;s a match
-          </h1>
-          <p className="text-center text-[15px] leading-snug text-dim">Writing the plan…</p>
-        </section>
+      {view.room.status === "matched" ? (
+        <Plan view={view} code={code} sessionKey={sessionKey} headingRef={headingRef} />
       ) : null}
+
+      {view.room.status === "booked" ? <Booked view={view} headingRef={headingRef} /> : null}
     </main>
   );
 }
