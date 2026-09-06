@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
@@ -432,4 +432,63 @@ test("a departure never resolves a proposal in a booked room, however it got the
   // Untouched, not rejected: the room is booked, so nothing re-decided it.
   const proposal = await t.run(async (ctx) => ctx.db.get(proposalId));
   expect(proposal!.status).toBe("open");
+});
+
+// --- the sixth door: a plan build already in flight -----------------------
+//
+// `plans.generate` is SCHEDULED, so a build in flight when the room books is
+// not stopped by anything -- `resolveMatch` only declines to schedule a NEW
+// one. Booking before the plan lands is deliberate (the booking honestly
+// quotes the quest price), so the two windows overlap by design.
+
+test("a plan landing after the booking is dropped rather than written underneath it", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.useFakeTimers();
+  try {
+    const questId = await t.run(async (ctx) => {
+      const roomId = await ctx.db.insert("rooms", {
+        hostUserId: "u1", mood: "treat", headcount: 2, budgetPerHeadCents: 3000,
+        whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
+        visibility: "private", status: "swiping", code: "9191",
+      });
+      await ctx.db.insert("members", { roomId, name: "Bec", isHost: true, sessionKey: "k-bec", joinedAt: 1 });
+      await ctx.db.insert("members", { roomId, name: "Tam", isHost: false, sessionKey: "k-tam", joinedAt: 2 });
+      return await ctx.db.insert("quests", {
+        roomId, rank: 0, source: "places", placeId: "p", title: "The Long Weekend", blurb: "",
+        priceLabel: "$14", priceCents: 1400, distanceKm: 1, discountPct: 0,
+        score: 1, scoreBreakdown: {},
+      });
+    });
+
+    // Unanimous, so the room matches and schedules `plans.generate` -- which
+    // has not run yet.
+    await t.mutation(api.swipes.cast, { code: "9191", sessionKey: "k-bec", questId, dir: "yes" });
+    const { matched } = await t.mutation(api.swipes.cast, {
+      code: "9191", sessionKey: "k-tam", questId, dir: "yes",
+    });
+    expect(matched).toBe(true);
+    expect(await t.run(async (ctx) => ctx.db.query("plans").first())).toBeNull();
+
+    // Booked inside that window, so the total honestly quotes the quest price.
+    await t.mutation(api.bookings.confirm, { code: "9191", sessionKey: "k-bec" });
+    const booking = await t.run(async (ctx) => ctx.db.query("bookings").first());
+    expect(booking!.totalCents).toBe(2800);
+
+    // Now let the build finish. `finishInProgressScheduledFunctions` does not
+    // run a runAfter(0) job in convex-test 0.0.56; this does.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // No plan at all, which is the honest outcome: the group booked a night
+    // priced from the quest, and nothing may appear underneath that reference.
+    expect(await t.run(async (ctx) => ctx.db.query("plans").first())).toBeNull();
+    const after = await t.run(async (ctx) => ctx.db.query("bookings").first());
+    expect(after!.totalCents).toBe(2800);
+
+    // Dropped loudly -- a plan silently vanishing would be worse than the bug.
+    expect(warn.mock.calls.some((c) => /writePlan.*9191/.test(String(c[0])))).toBe(true);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

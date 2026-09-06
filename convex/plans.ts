@@ -6,7 +6,7 @@ import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/ac
 import { throwUserError } from "./lib/errors";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
-import { MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
+import { FREE_TYPES, MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
 import { isOverBudget, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
 
@@ -57,8 +57,27 @@ export const writePlan = internalMutation({
     stops: v.array(stopValidator),
     shareMessage: v.string(),
   },
-  returns: v.id("plans"),
+  // Null when the write was dropped because the room is already booked.
+  returns: v.union(v.id("plans"), v.null()),
   handler: async (ctx, args) => {
+    // The last door into a booked plan, and the only one that is not a user
+    // action: `generate` is SCHEDULED, so a build already in flight when the
+    // room books is not stopped by anything -- `resolveMatch` only declines to
+    // schedule a NEW one. And booking before the plan lands is deliberate
+    // (see bookings.ts), where the booking honestly quotes the quest price.
+    // Without this check that room books at the quest price and then acquires
+    // a different plan underneath the reference the group is holding.
+    //
+    // A mutation, so the read and the write are one transaction: there is no
+    // window between checking the status and acting on it.
+    const room = await ctx.db.get(args.roomId);
+    if (room?.status === "booked") {
+      console.warn(
+        `plans.writePlan: room ${room.code} booked before its plan landed; dropping the plan write.`,
+      );
+      return null;
+    }
+
     // .first() rather than .unique(): rooms.get reads this row the same way, and
     // a duplicate must not turn into a throw on every write for that room.
     const existing = await ctx.db
@@ -404,17 +423,27 @@ export const suggestStop = action({
     // being replaced is not an alternative however few others there are.
     //
     // The second search asks for the room's mood instead of the target's name,
-    // which is what got us here. `MOOD_TYPES` is the same mapping `deck.build`
-    // uses to turn a mood into a Places query, so "mood" means one thing in
-    // this backend; the underscores go because this is a text query, not a
-    // type filter.
+    // which is what got us here -- and for a $0 room it asks for FREE_TYPES
+    // instead, exactly as `deck.build` chooses between the two. Handing a group
+    // who said they have nothing to spend a list of spas is the same honesty
+    // problem as the fabricated $0, pointed the other way. The underscores go
+    // because this is a text query, not a type filter.
+    //
+    // The two cases are logged differently on purpose: "returned only the
+    // venue we are replacing" and "returned nothing at all" call for different
+    // responses from whoever is reading the logs, and the whole point of this
+    // line is to say which one happened.
     console.warn(
-      `plans.suggestStop: room ${view.room.code}: the nearby search returned only "${target.name}" ` +
-        `(${found.results.length} result(s), all filtered out); trying the room's mood instead.`,
+      found.results.length === 0
+        ? `plans.suggestStop: room ${view.room.code}: the nearby search for "${target.name}" ` +
+            `returned nothing; trying the room's mood instead.`
+        : `plans.suggestStop: room ${view.room.code}: the nearby search for "${target.name}" ` +
+            `returned ${found.results.length} result(s), all of them that same venue; ` +
+            `trying the room's mood instead.`,
     );
 
     const byMood = await ctx.runAction(internal.places.searchText, {
-      query: MOOD_TYPES[view.room.mood].join(" ").replace(/_/g, " "),
+      query: (free ? FREE_TYPES : MOOD_TYPES[view.room.mood]).join(" ").replace(/_/g, " "),
       lat: view.room.centreLat,
       lng: view.room.centreLng,
       radiusKm: view.room.radiusKm,

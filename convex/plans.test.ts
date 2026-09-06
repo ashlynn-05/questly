@@ -128,12 +128,15 @@ test("a paid fallback stays in whole cents and under the room's budget", () => {
 
 async function seedRoom(
   t: T,
-  over: { code?: string; headcount?: number; budgetPerHeadCents?: number; title?: string } = {},
+  over: {
+    code?: string; headcount?: number; budgetPerHeadCents?: number; title?: string;
+    mood?: "grass" | "meet" | "treat" | "new";
+  } = {},
 ) {
   return await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
       hostUserId: "u1",
-      mood: "grass",
+      mood: over.mood ?? "grass",
       headcount: over.headcount ?? 4,
       budgetPerHeadCents: over.budgetPerHeadCents ?? 3000,
       whenAt: START,
@@ -460,11 +463,15 @@ function mockBoth(chat: unknown) {
 /** A room the caller is actually a member of, with a plan to edit. */
 async function seedMemberRoom(
   t: T,
-  over: { code?: string; budgetPerHeadCents?: number; stops?: Stop[] } = {},
+  over: {
+    code?: string; budgetPerHeadCents?: number; stops?: Stop[];
+    mood?: "grass" | "meet" | "treat" | "new";
+  } = {},
 ) {
   const code = over.code ?? "4446";
   const { roomId, questId } = await seedRoom(t, {
     code,
+    mood: over.mood,
     budgetPerHeadCents: over.budgetPerHeadCents ?? 3000,
   });
   await t.run(async (ctx) => {
@@ -756,7 +763,12 @@ test("when the filter empties the sheet, the mood is searched instead", async ()
   expect(textQueries[0]).toBe("Gate");
   expect(textQueries[1]).toBe("park hiking area beach garden");
   // And the near miss is in the logs rather than being a silently blank sheet.
-  expect(warn.mock.calls.some((c) => String(c[0]).includes("4451"))).toBe(true);
+  // The log says WHICH near miss this was: results came back, all of them the
+  // target. An area that returned nothing gets a different sentence.
+  const messages = warn.mock.calls.map((c) => String(c[0]));
+  expect(messages.every((m) => m.includes("4451"))).toBe(true);
+  expect(messages.some((m) => /returned 2 result\(s\), all of them that same venue/.test(m))).toBe(true);
+  expect(messages.some((m) => /returned nothing/.test(m))).toBe(false);
 });
 
 test("an area with genuinely nothing to offer returns empty, but says so", async () => {
@@ -774,7 +786,12 @@ test("an area with genuinely nothing to offer returns empty, but says so", async
   });
 
   expect(options).toEqual([]);
-  expect(warn.mock.calls.some((c) => /after a mood search either/.test(String(c[0])))).toBe(true);
+  const messages = warn.mock.calls.map((c) => String(c[0]));
+  // Nothing came back at all, and the log says so rather than claiming the
+  // search returned only the venue being replaced.
+  expect(messages.some((m) => /returned nothing; trying the room's mood/.test(m))).toBe(true);
+  expect(messages.some((m) => /all of them that same venue/.test(m))).toBe(false);
+  expect(messages.some((m) => /after a mood search either/.test(m))).toBe(true);
 });
 
 // --- the plan tells the room when it is over budget ------------------------
@@ -824,4 +841,72 @@ test("a $0 room that swaps in a paid venue can see that it is over budget", asyn
   const after = await t.query(api.rooms.get, { code, sessionKey: "k-bec" });
   expect(after!.plan!.totalPerHeadCents).toBe(7000);
   expect(after!.plan!.overBudget).toBe(true);
+});
+
+/**
+ * The mood fallback picks its search types the way `deck.build` does. A $0
+ * "treat" room asked for MOOD_TYPES would be offered restaurants and spas --
+ * the fabricated-$0 honesty problem pointed the other way. A group who said
+ * they have nothing to spend gets places that are genuinely free to enter.
+ */
+test("a $0 room's mood fallback asks for free places, not restaurants and spas", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const textQueries: string[] = [];
+  fetchMock.mockImplementation(async (url: string, init: { body: string }) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) {
+      textQueries.push(JSON.parse(init.body).textQuery);
+      // The name search finds only the venue being replaced, so the filter
+      // empties the sheet and the mood search runs.
+      if (textQueries.length === 1) {
+        return json({ places: [{ id: "p1", displayName: { text: "Gate" }, formattedAddress: "x" }] });
+      }
+      return json({ places: [{ id: "p2", displayName: { text: "Carlton Gardens" }, formattedAddress: "y" }] });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const { code } = await seedMemberRoom(t, {
+    code: "4455",
+    mood: "treat",
+    budgetPerHeadCents: 0,
+    stops: [stop({ id: "a", slot: "main", name: "Gate", placeId: "p1" })],
+  });
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  expect(textQueries[1]).toBe("park hiking area beach garden tourist attraction");
+  expect(textQueries[1]).not.toMatch(/restaurant|spa/);
+  expect(options.map((o) => o.name)).toEqual(["Carlton Gardens"]);
+});
+
+test("a paid room's mood fallback still asks for that mood's own types", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const textQueries: string[] = [];
+  fetchMock.mockImplementation(async (url: string, init: { body: string }) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) {
+      textQueries.push(JSON.parse(init.body).textQuery);
+      if (textQueries.length === 1) {
+        return json({ places: [{ id: "p1", displayName: { text: "Gate" }, formattedAddress: "x" }] });
+      }
+      return json({ places: [{ id: "p2", displayName: { text: "Marion" }, formattedAddress: "y" }] });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const { code } = await seedMemberRoom(t, {
+    code: "4456",
+    mood: "treat",
+    budgetPerHeadCents: 5000,
+    stops: [stop({ id: "a", slot: "main", name: "Gate", placeId: "p1" })],
+  });
+
+  await t.action(api.plans.suggestStop, { code, sessionKey: "k-bec", stopId: "a" });
+
+  expect(textQueries[1]).toBe("restaurant spa movie theater bakery");
 });
