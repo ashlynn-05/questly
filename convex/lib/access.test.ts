@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import schema from "../schema";
 import {
   requireMember, findMember, roomByCode, memberCount, needed, newRoomCode, newSessionKey,
+  requireUserId, safeUserId,
 } from "./access";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -54,6 +55,18 @@ test("memberCount counts the room roster", async () => {
   const t = convexTest(schema, modules);
   const roomId = await seedRoom(t);
   expect(await t.run(async (ctx) => memberCount(ctx, roomId))).toBe(1);
+});
+
+test("safeUserId returns null and requireUserId throws when signed out", async () => {
+  const t = convexTest(schema, modules);
+  expect(await t.run(async (ctx) => safeUserId(ctx))).toBeNull();
+  await expect(t.run(async (ctx) => requireUserId(ctx))).rejects.toThrow(/signed in/i);
+});
+
+test("safeUserId and requireUserId derive the subject from ctx.auth, never an argument", async () => {
+  const t = convexTest(schema, modules).withIdentity({ subject: "u1" });
+  expect(await t.run(async (ctx) => safeUserId(ctx))).toBe("u1");
+  expect(await t.run(async (ctx) => requireUserId(ctx))).toBe("u1");
 });
 
 test("needed is a strict majority", () => {
