@@ -30,17 +30,6 @@ export function Phone({
   );
 }
 
-/** A stop on the route line. Hollow = open, filled = locked, ringed = live. */
-export function Node({
-  top,
-  state = "open",
-}: {
-  top: number;
-  state?: "open" | "locked" | "live";
-}) {
-  return <span className="node" data-state={state} style={{ top }} />;
-}
-
 /**
  * Wayfinding tile. Venue photography comes from Google Places and is neither
  * art-directed nor guaranteed to exist, so the loading and no-photo state is
