@@ -9,6 +9,23 @@ import { useCallback, useEffect, useState } from "react";
  */
 const keyFor = (code: string) => `questly-session-${code}`;
 
+/**
+ * Store a key for a room the caller has just been let into.
+ *
+ * The hook below cannot serve that case: the room code does not exist until
+ * `rooms.create` resolves, and a hook cannot be called once it does. So the
+ * write lives here instead of being retyped at each call site -- one key
+ * format, and one try/catch for private browsing, where `localStorage` throws
+ * rather than returning null.
+ */
+export function storeSessionKey(code: string, key: string) {
+  try {
+    localStorage.setItem(keyFor(code), key);
+  } catch {
+    // Still works for this page's lifetime; only survival is lost.
+  }
+}
+
 export function useSessionKey(code: string) {
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   // `ready` separates "no key" from "have not looked yet". Without it the room
@@ -27,11 +44,7 @@ export function useSessionKey(code: string) {
 
   const store = useCallback(
     (next: string) => {
-      try {
-        localStorage.setItem(keyFor(code), next);
-      } catch {
-        // Still works for this page's lifetime; only survival is lost.
-      }
+      storeSessionKey(code, next);
       setSessionKey(next);
       setReady(true);
     },
