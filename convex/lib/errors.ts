@@ -20,7 +20,10 @@ export type ErrorCode =
   | "ROOM_CLOSED"
   | "FIELD_REQUIRED"
   | "HOST_CANNOT_LEAVE"
-  | "NO_FREE_ROOM_CODE";
+  | "NO_FREE_ROOM_CODE"
+  | "NOT_THE_HOST"
+  | "ROOM_WRONG_STATE"
+  | "NO_CANDIDATES";
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });

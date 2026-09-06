@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
+import { requireUserId } from "./lib/access";
 
 const PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby";
 
@@ -134,7 +135,11 @@ export const searchNearby = action({
     maxResults: v.optional(v.number()),
   },
   returns: v.object({ radiusMeters: v.number(), results: v.array(placeResultValidator) }),
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
+    // This action proxies our billed Google key. Without a signed-in caller,
+    // anyone holding the deployment URL could drain the quota.
+    await requireUserId(ctx);
+
     const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
     if (!apiKey) {
       throw new Error(
@@ -178,8 +183,12 @@ export const searchNearby = action({
 
 const TEXT_ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
 
-/** Backs "pick it yourself" when someone already has a venue in mind. */
-export const searchText = action({
+/**
+ * Backs "pick it yourself" when someone already has a venue in mind. Internal:
+ * every caller is server-side, and a public action here would be an
+ * unauthenticated proxy onto our billed Google key.
+ */
+export const searchText = internalAction({
   args: { query: v.string(), lat: v.number(), lng: v.number(), radiusKm: v.number() },
   returns: v.object({ results: v.array(placeResultValidator) }),
   handler: async (_ctx, args): Promise<{ results: PlaceResult[] }> => {

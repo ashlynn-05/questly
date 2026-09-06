@@ -5,6 +5,16 @@
 
 export type Mood = "grass" | "meet" | "treat" | "new";
 
+/**
+ * Cards in a room's deck. Long enough that a unanimous match feels earned,
+ * short enough that a group can exhaust it in one sitting.
+ *
+ * It lives here rather than in `convex/deck.ts` because a Convex function file
+ * may only export Convex functions, and because it is a deck/ranking constant
+ * like everything else in this module.
+ */
+export const DECK_SIZE = 9;
+
 /** Mood drives the Places query. It is a filter, not a theme. */
 export const MOOD_TYPES: Record<Mood, string[]> = {
   grass: ["park", "hiking_area", "beach", "garden"],

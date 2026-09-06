@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -125,7 +126,7 @@ afterEach(() => {
 test("searchNearby sends the exact field mask and maps the response", async () => {
   const t = convexTest(schema, modules);
 
-  const result = await t.action(api.places.searchNearby, {
+  const result = await t.withIdentity({ subject: "u1" }).action(api.places.searchNearby, {
     lat: -37.8136,
     lng: 144.9631,
     radiusKm: 2,
@@ -144,7 +145,7 @@ test("searchNearby sends the exact field mask and maps the response", async () =
 test("searchText sends the exact field mask and maps the response", async () => {
   const t = convexTest(schema, modules);
 
-  const result = await t.action(api.places.searchText, {
+  const result = await t.action(internal.places.searchText, {
     query: "Proud Mary Coffee",
     lat: -37.8136,
     lng: 144.9631,
@@ -168,7 +169,19 @@ test("searchNearby throws when GOOGLE_MAPS_SERVER_KEY is not set", async () => {
   const t = convexTest(schema, modules);
 
   await expect(
-    t.action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 }),
+    t.withIdentity({ subject: "u1" }).action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 }),
   ).rejects.toThrow(/GOOGLE_MAPS_SERVER_KEY is not set/);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+// searchNearby is the one Places action the browser may call, and it proxies
+// our billed Google key -- so an anonymous caller must be turned away before
+// the key is ever read, let alone spent.
+test("searchNearby refuses an anonymous caller", async () => {
+  const t = convexTest(schema, modules);
+
+  const promise = t.action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 });
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({ data: { code: "NOT_SIGNED_IN" } });
   expect(fetchMock).not.toHaveBeenCalled();
 });
