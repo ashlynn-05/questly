@@ -1,10 +1,82 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { moodValidator } from "./schema";
+import schema, { moodValidator, stopValidator } from "./schema";
 import {
+  MAX_ROOM_MEMBERS,
   findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireUserId, roomByCode, safeUserId,
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
+
+const memberViewValidator = v.object({
+  _id: v.id("members"),
+  name: v.string(),
+  isHost: v.boolean(),
+});
+
+/**
+ * The exact shape five later tasks read. Declaring it as a `returns` validator
+ * makes Convex reject a drifted response at runtime and makes TypeScript reject
+ * a drifted handler at compile time, so neither side can quietly change the
+ * contract the whole client is built on.
+ *
+ * No member's `sessionKey` appears anywhere in it: that is enforced here, in
+ * the type, not only by the projection below.
+ */
+const roomViewValidator = v.union(
+  v.null(),
+  v.object({
+    room: v.object({
+      _id: v.id("rooms"),
+      code: v.string(),
+      mood: moodValidator,
+      headcount: v.number(),
+      budgetPerHeadCents: v.number(),
+      whenAt: v.number(),
+      centreLat: v.number(),
+      centreLng: v.number(),
+      radiusKm: v.number(),
+      visibility: v.union(v.literal("private"), v.literal("open")),
+      status: v.union(
+        v.literal("lobby"),
+        v.literal("building"),
+        v.literal("swiping"),
+        v.literal("matched"),
+        v.literal("booked"),
+      ),
+      matchedQuestId: v.optional(v.id("quests")),
+    }),
+    you: memberViewValidator,
+    members: v.array(memberViewValidator),
+    quests: v.array(schema.doc("quests")),
+    plan: v.union(
+      v.null(),
+      v.object({
+        _id: v.id("plans"),
+        stops: v.array(stopValidator),
+        totalPerHeadCents: v.number(),
+        shareMessage: v.string(),
+      }),
+    ),
+    booking: v.union(v.null(), schema.doc("bookings")),
+    proposals: v.array(
+      v.object({
+        _id: v.id("proposals"),
+        stopId: v.string(),
+        replacement: stopValidator,
+        reason: v.string(),
+        proposedByName: v.string(),
+        yes: v.number(),
+        needed: v.number(),
+        youVoted: v.boolean(),
+      }),
+    ),
+    progress: v.object({
+      swipedByYou: v.number(),
+      deckSize: v.number(),
+      waitingOn: v.array(v.string()),
+    }),
+  }),
+);
 
 export const create = mutation({
   args: {
@@ -18,6 +90,7 @@ export const create = mutation({
     visibility: v.union(v.literal("private"), v.literal("open")),
     hostName: v.string(),
   },
+  returns: v.object({ code: v.string(), sessionKey: v.string() }),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const { hostName, ...room } = args;
@@ -59,9 +132,45 @@ export const create = mutation({
 });
 
 export const join = mutation({
-  args: { code: v.string(), name: v.string() },
-  handler: async (ctx, { code, name }) => {
+  args: {
+    code: v.string(),
+    name: v.string(),
+    // Optional, and never an identity claim: holding this key proves you are
+    // already a member of this one room, which is what makes a re-join
+    // idempotent. A caller who omits it is simply someone we cannot recognise.
+    sessionKey: v.optional(v.string()),
+  },
+  returns: v.object({ code: v.string(), sessionKey: v.string() }),
+  handler: async (ctx, { code, name, sessionKey }) => {
     const room = await roomByCode(ctx, code);
+
+    // Signed-in users get their id attached; guests do not need one.
+    const userId = await safeUserId(ctx);
+
+    const roster = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .collect();
+
+    // Re-entering is not joining.
+    //
+    // A refresh, a double-tap, or the host typing their own room code must hand
+    // back the membership that already exists. A second row for the same person
+    // is a phantom member: it permanently inflates needed() and sits in
+    // waitingOn forever, so the room can never reach unanimity -- exactly the
+    // stall the never-deadlock constraint exists to prevent.
+    //
+    // There are two ways to recognise someone: the capability they were issued,
+    // and the account they are signed in to. Both are resolved BEFORE the lobby
+    // gate below, so a member who refreshes mid-swipe is not locked out of the
+    // room they are already in. Handing back their existing row leaves the
+    // roster -- and therefore the unanimity denominator -- untouched, which is
+    // the only thing that gate is protecting.
+    const existing =
+      (sessionKey ? roster.find((m) => m.sessionKey === sessionKey) : undefined) ??
+      (userId ? roster.find((m) => m.userId === userId) : undefined);
+    if (existing) return { code, sessionKey: existing.sessionKey };
+
     // The roster freezes the moment the room leaves the lobby: unanimity is
     // judged against the members who saw the deck, so a late joiner would
     // silently move the denominator mid-swipe.
@@ -72,20 +181,31 @@ export const join = mutation({
     const trimmed = name.trim();
     if (!trimmed) throwUserError("FIELD_REQUIRED", "A first name is required.");
 
-    // Signed-in users get their id attached; guests do not need one.
-    const userId = await safeUserId(ctx);
+    if (roster.length >= MAX_ROOM_MEMBERS) {
+      throwUserError(
+        "ROOM_FULL",
+        `This room is full. A room holds at most ${MAX_ROOM_MEMBERS} people.`,
+      );
+    }
 
-    const sessionKey = newSessionKey();
+    // An accountless guest arriving with no prior key is unrecognisable by
+    // construction, and deliberately so: two friends both called Tam are
+    // indistinguishable from one Tam joining twice, and a name-based identity
+    // would merge two real people into one member -- silently dropping someone
+    // from the roster, which is worse than an extra row someone can leave. They
+    // get a fresh row; keeping the issued sessionKey and sending it back is the
+    // client's job.
+    const newKey = newSessionKey();
     await ctx.db.insert("members", {
       roomId: room._id,
       name: trimmed,
       userId: userId ?? undefined,
       isHost: false,
-      sessionKey,
+      sessionKey: newKey,
       joinedAt: Date.now(),
     });
 
-    return { code, sessionKey };
+    return { code, sessionKey: newKey };
   },
 });
 
@@ -100,6 +220,7 @@ export const join = mutation({
  */
 export const get = query({
   args: { code: v.string(), sessionKey: v.string() },
+  returns: roomViewValidator,
   handler: async (ctx, { code, sessionKey }) => {
     const room = await findRoomByCode(ctx, code);
     if (!room) return null;
@@ -123,15 +244,24 @@ export const get = query({
       .withIndex("by_room_member", (q) => q.eq("roomId", room._id))
       .collect();
 
+    // .first(), not .unique(), and deliberately so -- do not "tidy" this back.
+    //
+    // Nothing in the schema enforces one plan or one booking per room, and
+    // .unique() THROWS when it finds two. A single duplicate row would make
+    // this query throw on every subsequent read, and this query is the only
+    // subscription the client has: that is not a bad read, it is a permanent
+    // outage for that room with no way back. .first() downgrades the worst case
+    // to "a stale row wins", which is recoverable. Tasks 10-13 upsert these
+    // rows, but rooms.get must not depend on their discipline.
     const plan = await ctx.db
       .query("plans")
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
-      .unique();
+      .first();
 
     const booking = await ctx.db
       .query("bookings")
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
-      .unique();
+      .first();
 
     const openProposals = await ctx.db
       .query("proposals")
@@ -204,6 +334,16 @@ export const get = query({
 
 export const openRooms = query({
   args: { mood: moodValidator },
+  returns: v.array(
+    v.object({
+      code: v.string(),
+      mood: moodValidator,
+      headcount: v.number(),
+      memberCount: v.number(),
+      whenAt: v.number(),
+      demo: v.boolean(),
+    }),
+  ),
   handler: async (ctx, { mood }) => {
     const rooms = await ctx.db
       .query("rooms")
@@ -239,6 +379,7 @@ export const openRooms = query({
  */
 export const leave = mutation({
   args: { code: v.string(), sessionKey: v.string() },
+  returns: v.null(),
   handler: async (ctx, { code, sessionKey }): Promise<null> => {
     const room = await roomByCode(ctx, code);
     const member = await findMember(ctx, room._id, sessionKey);

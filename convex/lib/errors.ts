@@ -18,12 +18,14 @@ export type ErrorCode =
   | "NOT_A_MEMBER"
   | "ROOM_NOT_FOUND"
   | "ROOM_CLOSED"
+  | "ROOM_FULL"
   | "FIELD_REQUIRED"
   | "HOST_CANNOT_LEAVE"
   | "NO_FREE_ROOM_CODE"
   | "NOT_THE_HOST"
   | "ROOM_WRONG_STATE"
-  | "NO_CANDIDATES";
+  | "NO_CANDIDATES"
+  | "INVALID_GOAL";
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });

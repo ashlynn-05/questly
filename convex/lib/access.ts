@@ -77,6 +77,16 @@ export function needed(members: number): number {
   return Math.floor(members / 2) + 1;
 }
 
+/**
+ * A hard ceiling on the roster.
+ *
+ * A match needs every member to swipe yes on the same card, and unanimity over
+ * a dozen people is already vanishingly rare -- past this point a room does not
+ * converge, it just stalls. It also bounds rooms.get, which reads every
+ * member's swipes on every update: roster x deck is the size of that read.
+ */
+export const MAX_ROOM_MEMBERS = 12;
+
 const ALPHABET = "abcdefghijkmnopqrstuvwxyz23456789"; // no l/1, no o/0
 
 export function newSessionKey(): string {

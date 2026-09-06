@@ -4,6 +4,7 @@ import { ConvexError } from "convex/values";
 import { expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { MAX_ROOM_MEMBERS } from "./lib/access";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -65,6 +66,11 @@ test("rooms.get never leaks any member's session key", async () => {
   await t.mutation(api.rooms.join, { code, name: "Tam" });
 
   const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  // Prove the view is populated before asserting an absence: a null view, or an
+  // empty roster, would satisfy the string check for entirely the wrong reason,
+  // and a security assertion that can pass vacuously is not an assertion.
+  expect(view).not.toBeNull();
+  expect(view!.members).toHaveLength(2);
   expect(JSON.stringify(view)).not.toContain("sessionKey");
 });
 
@@ -122,6 +128,95 @@ test("a room that has left the lobby is closed to new joiners", async () => {
       /already started/i,
     );
   }
+});
+
+test("a signed-in user re-joining a room they are already in gets their existing membership", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // The host typing their own room code, twice.
+  const again = await asHost.mutation(api.rooms.join, { code, name: "Bec" });
+  const third = await asHost.mutation(api.rooms.join, { code, name: "Bec" });
+
+  expect(again.sessionKey).toBe(sessionKey);
+  expect(third.sessionKey).toBe(sessionKey);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(1);
+  expect(view!.members[0].isHost).toBe(true);
+});
+
+test("a guest re-joining with the key they were issued gets their existing membership", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  // A refresh: the client sends back the key it was issued.
+  const again = await t.mutation(api.rooms.join, {
+    code, name: "Tam", sessionKey: guest.sessionKey,
+  });
+  expect(again.sessionKey).toBe(guest.sessionKey);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(2);
+});
+
+test("an existing member can re-enter after the room has left the lobby", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.patch(room!._id, { status: "swiping" });
+  });
+
+  // The lobby gate exists to freeze the denominator, not to lock a member out
+  // of the room they are already swiping in.
+  const again = await t.mutation(api.rooms.join, {
+    code, name: "Tam", sessionKey: guest.sessionKey,
+  });
+  expect(again.sessionKey).toBe(guest.sessionKey);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(2);
+});
+
+test("an accountless guest with no prior key is a new person each time", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // Documented and deliberate: two friends both called Tam are indistinguishable
+  // from one Tam joining twice, and merging them would silently drop a real
+  // person from the roster.
+  const first = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  const second = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  expect(second.sessionKey).not.toBe(first.sessionKey);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(3);
+});
+
+test("a room cannot grow past the member cap", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // The host already occupies one seat.
+  for (let i = 1; i < MAX_ROOM_MEMBERS; i++) {
+    await t.mutation(api.rooms.join, { code, name: `Guest ${i}` });
+  }
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(MAX_ROOM_MEMBERS);
+
+  await expect(t.mutation(api.rooms.join, { code, name: "One too many" })).rejects.toThrow(
+    /full/i,
+  );
 });
 
 test("open rooms are discoverable by mood, private rooms are not", async () => {
