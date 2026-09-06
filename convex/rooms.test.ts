@@ -5,6 +5,7 @@ import { expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { MAX_ROOM_MEMBERS } from "./lib/access";
+import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -325,6 +326,7 @@ test("leaving takes your proposal votes with you", async () => {
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
   const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
   const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  let hostId!: Id<"members">;
 
   await t.run(async (ctx) => {
     const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
@@ -334,6 +336,7 @@ test("leaving takes your proposal votes with you", async () => {
       .collect();
     const host = members.find((m) => m.isHost)!;
     const leaver = members.find((m) => m.sessionKey === guest.sessionKey)!;
+    hostId = host._id;
 
     // A real plan to edit, so the proposal's resolution below is the genuine
     // accept path rather than "there was nothing to swap".
@@ -356,8 +359,13 @@ test("leaving takes your proposal votes with you", async () => {
         costPerHeadCents: 0, note: "", source: "manual", locked: false,
       },
     });
+    // The two votes are deliberately different so the surviving row can only
+    // be the host's if `detachMember` deleted the right one. If it deleted the
+    // host's vote instead, a lone "no" would survive and this assertion would
+    // catch it -- with both votes "yes", either outcome leaves a "yes" behind
+    // and the test could not tell the difference.
     await ctx.db.insert("proposalVotes", { proposalId, memberId: host._id, vote: "yes" });
-    await ctx.db.insert("proposalVotes", { proposalId, memberId: leaver._id, vote: "yes" });
+    await ctx.db.insert("proposalVotes", { proposalId, memberId: leaver._id, vote: "no" });
   });
 
   await t.mutation(api.rooms.leave, { code, sessionKey: guest.sessionKey });
@@ -365,6 +373,7 @@ test("leaving takes your proposal votes with you", async () => {
   const votes = await t.run(async (ctx) => ctx.db.query("proposalVotes").collect());
   expect(votes).toHaveLength(1);
 
+  expect(votes[0].memberId).toBe(hostId);
   expect(votes[0].vote).toBe("yes");
 
   // ...and the proposal does not hang. The roster it needed a majority of has

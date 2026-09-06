@@ -31,6 +31,7 @@ import type * as plans from "../plans.js";
 import type * as profiles from "../profiles.js";
 import type * as proposals from "../proposals.js";
 import type * as rooms from "../rooms.js";
+import type * as seed from "../seed.js";
 import type * as swipes from "../swipes.js";
 
 import type {
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   profiles: typeof profiles;
   proposals: typeof proposals;
   rooms: typeof rooms;
+  seed: typeof seed;
   swipes: typeof swipes;
 }>;
 
