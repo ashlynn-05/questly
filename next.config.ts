@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // A stray package-lock.json in the home directory makes Turbopack infer
+  // ~/ as the workspace root. Tailwind v4's automatic source detection follows
+  // that root, so every utility class in src/ silently compiles to nothing --
+  // the app renders with only hand-written CSS and inline styles. Pin the root.
+  turbopack: {
+    root: fileURLToPath(new URL(".", import.meta.url)),
+  },
 };
 
 export default nextConfig;

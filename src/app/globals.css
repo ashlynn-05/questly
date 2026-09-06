@@ -1,26 +1,268 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Questly — The Network
+   Melbourne transit wayfinding. Iris ground, one orange route line, roundel
+   nodes, indicator-board plates.
+
+   Contrast is load-bearing here, not a nicety: WCAG 2.2 AA is a product
+   requirement and this palette is full of traps. Every ratio below is measured
+   against the ground it actually sits on.
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Two modes, two worlds.
+
+   DARK is the default and is not a preference -- it is the use scene. This is a
+   phone at 6pm deciding on tonight. Iris ground, apricot accent.
+
+   LIGHT is the daytime case: planning Saturday on a tram at 11am. It runs on
+   the pinned yellow palette, and the accent role SWAPS because apricot measures
+   1.8:1 on a light ground and cannot carry text there. Iris takes the job.
+
+   Every ratio below is measured against the ground it actually sits on.
+   --------------------------------------------------------------------------- */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  /* Night palette -- fixed by the brand. */
+  --q-iris: #3b3686;
+  --q-periwinkle: #767ae6;
+  --q-apricot: #edba40;
+  --q-orange-deep: #e28c33;
+  --q-orange: #e0652b;
+
+  /* Day palette -- pinned. */
+  --q-cornsilk: #fdf8e1;
+  --q-vanilla: #fcefb4;
+  --q-jasmine: #fae588;
+  --q-naples: #f9dc5c;
+  --q-jonquil: #ffd000;
+
+  /* Derived. Neither palette ships a dark, and orange needs one to reach AA. */
+  --q-ink: #1a1640;
+
+  /* Roles -- night. Use these, never the raw values. */
+  --ground: var(--q-iris);
+  --ground-deep: var(--q-ink);
+  --ground-raised: #453f95;
+
+  --text: #ffffff;              /* 10.2:1 on iris */
+  --text-dim: #b9b6e0;          /*  5.3:1 on iris -- tinted from the hue, never gray */
+  --accent: var(--q-apricot);   /*  5.7:1 on iris -- the only night colour that carries text */
+
+  --action: var(--q-orange);    /* field only: orange TEXT on iris is 2.9:1 and fails */
+  --on-action: var(--q-ink);    /*  4.9:1 on orange, in both modes */
+  --action-quiet: var(--q-orange-deep);
+
+  --rail: var(--q-periwinkle);  /*  2.8:1 on iris -- decorative line work ONLY */
+  --hairline: #524ca8;
+  --danger: #ff9d7a;            /*  6.0:1 on iris */
+
+  --focus: var(--q-apricot);    /* ring must clear 3:1 against the ground it lands on */
+  --shadow: 0 18px 40px -12px rgba(10, 8, 30, 0.7);
+
+  --node: 13px;                 /* roundel diameter on the route line */
+  --rail-x: 26px;               /* the line's distance from the left edge */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* Roles -- day. Declared once, applied by preference and by explicit choice, so
+   the toggle wins in both directions and the system default still works. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --ground: var(--q-cornsilk);
+    --ground-deep: var(--q-naples);
+    --ground-raised: var(--q-jasmine);
+
+    --text: var(--q-ink);         /* 16.0:1 on cornsilk */
+    --text-dim: #5b5499;          /*  6.2:1 on cornsilk */
+    --accent: var(--q-iris);      /*  9.6:1 on cornsilk -- apricot is 1.8:1 here and is out */
+
+    --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
+    --on-action: var(--q-ink);    /*  4.9:1 on orange */
+    --action-quiet: var(--q-jonquil);
+
+    --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
+    --hairline: #e8d48a;
+    --danger: #a8320c;            /*  6.4:1 on cornsilk */
+
+    --focus: var(--q-iris);       /* apricot is 1.8:1 on cornsilk -- the ring would vanish */
+    --shadow: 0 18px 40px -14px rgba(90, 66, 10, 0.38);
   }
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ground: var(--q-cornsilk);
+  --ground-deep: var(--q-naples);
+  --ground-raised: var(--q-jasmine);
+
+  --text: var(--q-ink);         /* 16.0:1 on cornsilk */
+  --text-dim: #5b5499;          /*  6.2:1 on cornsilk */
+  --accent: var(--q-iris);      /*  9.6:1 on cornsilk -- apricot is 1.8:1 here and is out */
+
+  --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
+  --on-action: var(--q-ink);    /*  4.9:1 on orange */
+  --action-quiet: var(--q-jonquil);
+
+  --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
+  --hairline: #e8d48a;
+  --danger: #a8320c;            /*  6.4:1 on cornsilk */
+
+  --focus: var(--q-iris);       /* apricot is 1.8:1 on cornsilk -- the ring would vanish */
+  --shadow: 0 18px 40px -14px rgba(90, 66, 10, 0.38);
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ground-deep: var(--ground-deep);
+  --color-ground-raised: var(--ground-raised);
+  --color-ink: var(--q-ink);
+  --color-text: var(--text);
+  --color-dim: var(--text-dim);
+  --color-accent: var(--accent);
+  --color-action: var(--action);
+  --color-action-quiet: var(--action-quiet);
+  --color-rail: var(--rail);
+  --color-hairline: var(--hairline);
+  --color-danger: var(--danger);
+  --color-on-action: var(--on-action);
+  --font-sans: var(--font-archivo);
+}
+
+/* --- Type -------------------------------------------------------------------
+   One superfamily, two axes. Display is Archivo pushed to the top of its width
+   axis (wdth 125) — signage wants width, not weight alone. Text sits at normal
+   width. Every number in this product is a price, a time, a headcount or a
+   distance, so tabular figures are the default, not an opt-in.
+   --------------------------------------------------------------------------- */
+
+.display {
+  font-variation-settings: "wdth" 125, "wght" 700;
+  letter-spacing: -0.035em;     /* floor is -0.04em */
+  line-height: 0.92;
+  text-wrap: balance;
+}
+
+.board {
+  font-variation-settings: "wdth" 112, "wght" 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-variation-settings: "wdth" 112, "wght" 700;
+  letter-spacing: -0.02em;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--ground-deep);
+  transition: background-color 260ms cubic-bezier(0.16, 1, 0.3, 1),
+              color 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--text);
+  font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Browser surfaces -------------------------------------------------------
+   The parts nobody draws still belong to the design system.
+   --------------------------------------------------------------------------- */
+
+::selection { background: var(--accent); color: var(--ground); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+* { caret-color: var(--focus); }
+
+@supports (scrollbar-color: red blue) {
+  * { scrollbar-color: var(--rail) transparent; scrollbar-width: thin; }
+}
+
+/* --- The route line ---------------------------------------------------------
+   The spine of every screen. Stops are roundels on it: hollow when open,
+   filled when locked, ringed when live.
+   --------------------------------------------------------------------------- */
+
+.rail {
+  position: absolute;
+  left: var(--rail-x);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--action);
+  border-radius: 2px;
+}
+
+.rail-dashed {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--action) 0 7px,
+    transparent 7px 14px
+  );
+}
+
+.node {
+  position: absolute;
+  left: calc(var(--rail-x) + 1.5px);
+  width: var(--node);
+  height: var(--node);
+  translate: -50% 0;
+  border-radius: 50%;
+  border: 3px solid var(--action);
+  background: var(--ground);
+  box-sizing: content-box;
+}
+
+.node[data-state="locked"] { background: var(--action); }
+.node[data-state="live"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* --- Indicator board --------------------------------------------------------
+   The authored moment. On match, every phone's board flips through its
+   remaining candidates and lands on the same destination. Flip, never fade —
+   a departure board has no crossfade.
+   --------------------------------------------------------------------------- */
+
+@keyframes board-flip {
+  0%   { transform: rotateX(0deg);   opacity: 1; }
+  49%  { transform: rotateX(-88deg); opacity: 0.35; }
+  50%  { transform: rotateX(88deg);  opacity: 0.35; }
+  100% { transform: rotateX(0deg);   opacity: 1; }
+}
+
+.flap {
+  display: inline-block;
+  transform-origin: center;
+  animation: board-flip 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes rail-draw {
+  from { clip-path: inset(100% 0 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+
+.rail-draw { animation: rail-draw 900ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The feedback survives; only the travel is removed. */
+  .flap, .rail-draw {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+  *, *::before, *::after {
+    transition-duration: 1ms !important;
+  }
 }
