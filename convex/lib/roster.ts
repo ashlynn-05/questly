@@ -56,6 +56,22 @@ export async function detachMember(ctx: MutationCtx, member: Doc<"members">): Pr
 
   // Last, and only once the roster is genuinely smaller: the denominator that
   // both of these are measured against has just changed.
-  await resolveOpenProposals(ctx, member.roomId);
+  //
+  // Except in a booked room, where re-deciding an open proposal is the fifth
+  // door into a frozen plan. A smaller roster is a smaller majority, so a
+  // proposal sitting one yes short at booking time would PASS the moment a
+  // member who never voted walked away -- and `settleProposal` would apply the
+  // swap, rewriting the itinerary the group is holding a reference to and
+  // leaving the booking row quoting a total for a night that no longer exists.
+  //
+  // The votes above are still deleted: the leaver takes what counted for them
+  // with them either way. It is only the resolve-and-apply step that must not
+  // run. `resolveMatch` needs no such guard -- it already returns early on a
+  // matched or booked room -- and this makes the roster module consistent with
+  // it rather than relying on every future caller to remember.
+  const room = await ctx.db.get(member.roomId);
+  if (room?.status !== "booked") {
+    await resolveOpenProposals(ctx, member.roomId);
+  }
   await resolveMatch(ctx, member.roomId);
 }

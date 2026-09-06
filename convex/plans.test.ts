@@ -707,3 +707,121 @@ test("the fallback never offers back the stop it is replacing", async () => {
   // Two real alternatives, not three where one of them is the stop itself.
   expect(options.map((o) => o.name)).toEqual(["Napier Hotel", "Marion"]);
 });
+
+/**
+ * Two options instead of three is the right trade. ZERO is the empty sheet the
+ * whole fallback exists to prevent, so a filtered-to-nothing result is answered
+ * with a fresh search -- on the room's mood, since the target's name is what
+ * got us here -- and never by relaxing the filter that was just applied.
+ */
+test("when the filter empties the sheet, the mood is searched instead", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const textQueries: string[] = [];
+  fetchMock.mockImplementation(async (url: string, init: { body: string }) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) {
+      textQueries.push(JSON.parse(init.body).textQuery);
+      // The name search finds only the venue being replaced, plus a duplicate
+      // listing of it: nothing survives the filter.
+      if (textQueries.length === 1) {
+        return json({
+          places: [
+            { id: "p1", displayName: { text: "Gate" }, formattedAddress: "1 Royal Pde" },
+            { id: "p9", displayName: { text: "gate " }, formattedAddress: "1 Royal Pde" },
+          ],
+        });
+      }
+      return json({
+        places: [
+          { id: "p2", displayName: { text: "Princes Park" }, formattedAddress: "Royal Pde" },
+          { id: "p3", displayName: { text: "Carlton Gardens" }, formattedAddress: "1 Carlton St" },
+        ],
+      });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const { code } = await seedMemberRoom(t, {
+    code: "4451",
+    stops: [stop({ id: "a", slot: "meet", name: "Gate", placeId: "p1" })],
+  });
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  expect(options.map((o) => o.name)).toEqual(["Princes Park", "Carlton Gardens"]);
+  // The second query is the room's mood -- "grass" -- not the target's name.
+  expect(textQueries[0]).toBe("Gate");
+  expect(textQueries[1]).toBe("park hiking area beach garden");
+  // And the near miss is in the logs rather than being a silently blank sheet.
+  expect(warn.mock.calls.some((c) => String(c[0]).includes("4451"))).toBe(true);
+});
+
+test("an area with genuinely nothing to offer returns empty, but says so", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) return json({ places: [] });
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const { code } = await seedMemberRoom(t, { code: "4452" });
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  expect(options).toEqual([]);
+  expect(warn.mock.calls.some((c) => /after a mood search either/.test(String(c[0])))).toBe(true);
+});
+
+// --- the plan tells the room when it is over budget ------------------------
+
+test("a plan inside the room's budget does not read as over it", async () => {
+  const t = convexTest(schema, modules);
+  const { code } = await seedMemberRoom(t, {
+    code: "4453",
+    budgetPerHeadCents: 3000,
+    stops: [stop({ id: "a", costPerHeadCents: 1000 })],
+  });
+
+  const view = await t.query(api.rooms.get, { code, sessionKey: "k-bec" });
+  expect(view!.plan!.totalPerHeadCents).toBe(1000);
+  expect(view!.plan!.overBudget).toBe(false);
+});
+
+/**
+ * The whole point of refusing to fabricate a $0 price. Nothing REFUSES the
+ * expensive swap -- the group is allowed to decide to overspend -- so the plan
+ * has to carry the fact, or "the group declines knowingly" is a claim with
+ * nothing behind it.
+ */
+test("a $0 room that swaps in a paid venue can see that it is over budget", async () => {
+  const t = convexTest(schema, modules);
+  mockBoth(chatBody(modelPlan));
+  const { code } = await seedMemberRoom(t, {
+    code: "4454",
+    budgetPerHeadCents: 0,
+    stops: [stop({ id: "a", costPerHeadCents: 0 })],
+  });
+
+  const before = await t.query(api.rooms.get, { code, sessionKey: "k-bec" });
+  expect(before!.plan!.overBudget).toBe(false);
+
+  // The $70/head option the honesty rule insists on showing at $70.
+  const { options } = await t.action(api.plans.searchStop, {
+    code, sessionKey: "k-bec", query: "fancy dinner", slot: "main",
+  });
+  expect(options[0].costPerHeadCents).toBe(7000);
+
+  // A room of one swaps directly, and the swap is allowed to go through.
+  await t.mutation(api.plans.replaceStop, {
+    code, sessionKey: "k-bec", stopId: "a", replacement: options[0],
+  });
+
+  const after = await t.query(api.rooms.get, { code, sessionKey: "k-bec" });
+  expect(after!.plan!.totalPerHeadCents).toBe(7000);
+  expect(after!.plan!.overBudget).toBe(true);
+});

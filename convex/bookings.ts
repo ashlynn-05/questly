@@ -72,6 +72,26 @@ export const confirm = mutation({
     });
 
     await ctx.db.patch(room._id, { status: "booked" });
+
+    // A booked room has nothing left to decide, so an open proposal must not
+    // outlive the booking. Closed as "rejected" -- the status `settleProposal`
+    // already uses for resolved-without-applying -- rather than left dangling.
+    //
+    // This is not tidiness. `detachMember` re-runs `resolveOpenProposals`
+    // whenever the roster shrinks, and a smaller roster means a smaller
+    // majority: an open proposal one vote short at booking time would PASS the
+    // moment a non-voter left, rewriting the itinerary the group is already
+    // holding a reference to. Closing them here removes what that path finds;
+    // `detachMember` refusing to resolve in a booked room closes the path
+    // itself. Both, because the next path someone adds will not know about this.
+    const openProposals = await ctx.db
+      .query("proposals")
+      .withIndex("by_room_status", (q) => q.eq("roomId", room._id).eq("status", "open"))
+      .collect();
+    for (const proposal of openProposals) {
+      await ctx.db.patch(proposal._id, { status: "rejected" });
+    }
+
     return { ref, deepLink };
   },
 });

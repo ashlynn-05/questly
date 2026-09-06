@@ -7,6 +7,7 @@ import {
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { detachMember } from "./lib/roster";
+import { isOverBudget } from "./lib/stops";
 
 const memberViewValidator = v.object({
   _id: v.id("members"),
@@ -55,6 +56,9 @@ const roomViewValidator = v.union(
         _id: v.id("plans"),
         stops: v.array(stopValidator),
         totalPerHeadCents: v.number(),
+        // Derived, never stored: the plan and the budget can each move without
+        // the other, and a persisted flag would go stale the moment either did.
+        overBudget: v.boolean(),
         shareMessage: v.string(),
       }),
     ),
@@ -316,6 +320,13 @@ export const get = query({
             _id: plan._id,
             stops: plan.stops,
             totalPerHeadCents: plan.totalPerHeadCents,
+            // HONESTY. `plans.searchStop` and `plans.suggestStop` deliberately
+            // never fabricate a $0 price, and `applyStopSwap` deliberately does
+            // not refuse an expensive swap -- the group is allowed to decide to
+            // overspend. This is what makes that decision an informed one. A $0
+            // room is over budget the moment its plan costs anything, which is
+            // correct and should show.
+            overBudget: isOverBudget(plan.stops, room.budgetPerHeadCents),
             shareMessage: plan.shareMessage,
           }
         : null,

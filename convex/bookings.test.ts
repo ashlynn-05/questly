@@ -26,15 +26,22 @@ async function expectUserError(promise: Promise<unknown>, code: string, messageP
   });
 }
 
-async function matchedRoom(t: T, over: { mapsUri?: string; locked?: boolean } = {}) {
+async function matchedRoom(
+  t: T,
+  over: { mapsUri?: string; locked?: boolean; members?: string[] } = {},
+) {
+  const names = over.members ?? ["Bec", "Tam"];
   const ids = await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u1", mood: "treat", headcount: 2, budgetPerHeadCents: 3000,
+      hostUserId: "u1", mood: "treat", headcount: names.length, budgetPerHeadCents: 3000,
       whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
       visibility: "private", status: "matched", code: "6666",
     });
-    await ctx.db.insert("members", { roomId, name: "Bec", isHost: true, sessionKey: "k-bec", joinedAt: 1 });
-    await ctx.db.insert("members", { roomId, name: "Tam", isHost: false, sessionKey: "k-tam", joinedAt: 2 });
+    for (const [i, name] of names.entries()) {
+      await ctx.db.insert("members", {
+        roomId, name, isHost: i === 0, sessionKey: `k-${name.toLowerCase()}`, joinedAt: i + 1,
+      });
+    }
     const questId = await ctx.db.insert("quests", {
       roomId, rank: 0, source: "places", placeId: "p", title: "The Long Weekend", blurb: "",
       priceLabel: "$14", priceCents: 1400, distanceKm: 1, discountPct: 0,
@@ -214,7 +221,7 @@ test("no new proposal can be opened once the night is booked", async () => {
   );
 });
 
-test("a proposal opened before the booking can no longer be voted through", async () => {
+test("booking closes the proposals the room had open, rather than leaving them live", async () => {
   const t = convexTest(schema, modules);
   await matchedRoom(t);
   // Two members, so the proposer's own yes is not yet a majority.
@@ -225,6 +232,43 @@ test("a proposal opened before the booking can no longer be voted through", asyn
   expect(accepted).toBe(false);
 
   await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+
+  // Closed without applying: a booked room has nothing left to decide, and a
+  // proposal left open is a swap waiting for the roster to shrink under it.
+  const proposal = await t.run(async (ctx) => ctx.db.get(proposalId));
+  expect(proposal!.status).toBe("rejected");
+
+  // So a late vote reports the outcome rather than carrying anything.
+  const late = await t.mutation(api.proposals.vote, {
+    code: "6666", sessionKey: "k-tam", proposalId, vote: "yes",
+  });
+  expect(late.accepted).toBe(false);
+
+  const plan = await t.run(async (ctx) => ctx.db.query("plans").first());
+  expect(plan!.stops[0].name).toBe("The Long Weekend");
+});
+
+/**
+ * Defence in depth. Booking closes every proposal it can see, so this state
+ * should not arise -- but the guard in `proposals.vote` is what protects the
+ * plan from the next path someone adds, so it is tested directly rather than
+ * left to be reachable only through a bug.
+ */
+test("an open proposal in a booked room cannot be voted through", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await matchedRoom(t);
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  const proposalId = await t.run(async (ctx) => {
+    const bec = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", roomId))
+      .first();
+    return await ctx.db.insert("proposals", {
+      roomId, stopId: "s1", proposedBy: bec!._id,
+      replacement: REPLACEMENT, reason: "smuggled in", status: "open",
+    });
+  });
 
   await expectUserError(
     t.mutation(api.proposals.vote, {
@@ -280,4 +324,112 @@ test("a plan with locked stops books normally", async () => {
 
   const booking = await t.run(async (ctx) => ctx.db.query("bookings").first());
   expect(booking!.totalCents).toBe(2800);
+});
+
+// --- the fifth door: a shrinking roster ----------------------------------
+//
+// The freeze is not a property of four functions, it is a property of every
+// path that can write a plan. `rooms.leave` / `rooms.removeMember` reach one
+// through `detachMember` -> `resolveOpenProposals` -> `applyStopSwap`, and a
+// smaller roster is a smaller majority: a proposal one yes short at booking
+// time PASSES the moment a member walks away.
+
+/** Bec proposes and Tam agrees (2 of the 3 needed); Jo objects; Ali is silent. */
+async function bookedRoomWithADisputedStop(t: T) {
+  const { roomId } = await matchedRoom(t, { members: ["Bec", "Tam", "Ali", "Jo"] });
+
+  const { proposalId, accepted } = await t.mutation(api.proposals.open, {
+    code: "6666", sessionKey: "k-bec", stopId: "s1",
+    replacement: REPLACEMENT, reason: "second thoughts",
+  });
+  await t.mutation(api.proposals.vote, {
+    code: "6666", sessionKey: "k-tam", proposalId, vote: "yes",
+  });
+  await t.mutation(api.proposals.vote, {
+    code: "6666", sessionKey: "k-jo", proposalId, vote: "no",
+  });
+  // needed(4) is 3 and there are 2 yeses, so it is genuinely still undecided.
+  expect(accepted).toBe(false);
+  const open = await t.run(async (ctx) => ctx.db.get(proposalId));
+  expect(open!.status).toBe("open");
+
+  const booking = await t.mutation(api.bookings.confirm, {
+    code: "6666", sessionKey: "k-bec",
+  });
+  return { roomId, proposalId, booking };
+}
+
+test("a member leaving after the booking cannot carry the proposal the room left open", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, proposalId } = await bookedRoomWithADisputedStop(t);
+
+  const before = await t.run(async (ctx) => ctx.db.query("plans").first());
+  const jo = await t.run(async (ctx) =>
+    (await ctx.db.query("members").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect())
+      .find((m) => m.name === "Jo")!,
+  );
+
+  // Jo voted no and never gets to change that by leaving: the roster drops to
+  // 3, needed(3) is 2, and the 2 yeses would carry the swap.
+  await t.mutation(api.rooms.leave, { code: "6666", sessionKey: "k-jo" });
+
+  const after = await t.run(async (ctx) => ctx.db.query("plans").first());
+  expect(after!.stops).toEqual(before!.stops);
+  expect(after!.stops[0].name).toBe("The Long Weekend");
+  expect(after!.totalPerHeadCents).toBe(before!.totalPerHeadCents);
+
+  // The booking still describes the plan it was made against.
+  const booking = await t.run(async (ctx) => ctx.db.query("bookings").first());
+  expect(booking!.totalCents).toBe(after!.totalPerHeadCents * booking!.headcount);
+
+  // The proposal was closed by the booking, not carried by the departure.
+  const proposal = await t.run(async (ctx) => ctx.db.get(proposalId));
+  expect(proposal!.status).toBe("rejected");
+
+  // Jo still took what counted for them with them. `detachMember` skips the
+  // resolve step in a booked room; it must not skip the cleanup.
+  const votes = await t.run(async (ctx) =>
+    ctx.db.query("proposalVotes").withIndex("by_member", (q) => q.eq("memberId", jo._id)).collect(),
+  );
+  expect(votes).toEqual([]);
+});
+
+/**
+ * The load-bearing half. Booking closes every proposal it can see, so the test
+ * above passes on that fix alone -- this one puts an open proposal into a
+ * booked room directly, which is what the next path someone adds would do by
+ * accident, and proves `detachMember` refuses to resolve it.
+ */
+test("a departure never resolves a proposal in a booked room, however it got there", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await matchedRoom(t, { members: ["Bec", "Tam", "Ali", "Jo"] });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  const proposalId = await t.run(async (ctx) => {
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", roomId))
+      .collect();
+    const id = await ctx.db.insert("proposals", {
+      roomId, stopId: "s1", proposedBy: members[0]._id,
+      replacement: REPLACEMENT, reason: "smuggled in", status: "open",
+    });
+    for (const name of ["Bec", "Tam"]) {
+      await ctx.db.insert("proposalVotes", {
+        proposalId: id, memberId: members.find((m) => m.name === name)!._id, vote: "yes",
+      });
+    }
+    return id;
+  });
+
+  // Roster 4 -> 3, needed 3 -> 2, and there are exactly 2 yeses waiting.
+  await t.mutation(api.rooms.leave, { code: "6666", sessionKey: "k-jo" });
+
+  const plan = await t.run(async (ctx) => ctx.db.query("plans").first());
+  expect(plan!.stops[0].name).toBe("The Long Weekend");
+  expect(plan!.totalPerHeadCents).toBe(1400);
+
+  // Untouched, not rejected: the room is booked, so nothing re-decided it.
+  const proposal = await t.run(async (ctx) => ctx.db.get(proposalId));
+  expect(proposal!.status).toBe("open");
 });

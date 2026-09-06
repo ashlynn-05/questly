@@ -6,7 +6,7 @@ import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/ac
 import { throwUserError } from "./lib/errors";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
-import { priceLevelToCents } from "./lib/scoring";
+import { MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
 import { isOverBudget, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
 
@@ -230,8 +230,14 @@ const optionsValidator = v.object({ options: v.array(stopValidator) });
  * a $0 room. `deck.ts` may stamp a free room's candidates at $0 because it
  * restricts the SEARCH to FREE_TYPES first, so the $0 is true there. Here the
  * query is free text: a $0 group that types the name of a fine diner would be
- * shown it at $0 and find out at the table. `isOverBudget` can then do its job
- * and the group declines knowingly.
+ * shown it at $0 and find out at the table.
+ *
+ * Nothing REFUSES an over-budget swap -- `applyStopSwap` checks the stop id and
+ * the lock, and that is deliberate, because the group is allowed to decide to
+ * overspend. What they are not allowed to be is uninformed: `rooms.get`
+ * projects `plan.overBudget` from `isOverBudget` against the room's budget, so
+ * the one subscription the client reads carries the fact, and the group
+ * declines knowingly instead of finding out at the table.
  */
 function toOptions(
   results: Array<{
@@ -383,10 +389,46 @@ export const suggestStop = action({
     // alternatives beat three where one of them is not one, so nothing is
     // backfilled to make the count up.
     const targetName = target.name.trim().toLowerCase();
-    const alternatives = found.results.filter(
-      (place) => place.id !== target.placeId && place.name.trim().toLowerCase() !== targetName,
+    const alternatives = <P extends { id: string; name: string }>(places: P[]): P[] =>
+      places.filter(
+        (place) => place.id !== target.placeId && place.name.trim().toLowerCase() !== targetName,
+      );
+
+    const nearby = alternatives(found.results);
+    let options = toOptions(nearby, target.slot, "nearby").slice(0, 3);
+    if (options.length) return { options };
+
+    // Two alternatives instead of three is the right trade; ZERO is the empty
+    // sheet this whole fallback exists to prevent. The answer is another
+    // search, never relaxing the filter that was just applied -- the venue
+    // being replaced is not an alternative however few others there are.
+    //
+    // The second search asks for the room's mood instead of the target's name,
+    // which is what got us here. `MOOD_TYPES` is the same mapping `deck.build`
+    // uses to turn a mood into a Places query, so "mood" means one thing in
+    // this backend; the underscores go because this is a text query, not a
+    // type filter.
+    console.warn(
+      `plans.suggestStop: room ${view.room.code}: the nearby search returned only "${target.name}" ` +
+        `(${found.results.length} result(s), all filtered out); trying the room's mood instead.`,
     );
 
-    return { options: toOptions(alternatives, target.slot, "nearby").slice(0, 3) };
+    const byMood = await ctx.runAction(internal.places.searchText, {
+      query: MOOD_TYPES[view.room.mood].join(" ").replace(/_/g, " "),
+      lat: view.room.centreLat,
+      lng: view.room.centreLng,
+      radiusKm: view.room.radiusKm,
+    });
+    options = toOptions(alternatives(byMood.results), target.slot, "mood").slice(0, 3);
+
+    if (!options.length) {
+      // Genuinely nothing to offer. Still returned as an empty list rather than
+      // a throw -- but never silently, so an area with no coverage is visible.
+      console.warn(
+        `plans.suggestStop: room ${view.room.code}: no alternatives for "${target.name}" ` +
+          `after a mood search either.`,
+      );
+    }
+    return { options };
   },
 });
