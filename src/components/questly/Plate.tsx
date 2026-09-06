@@ -7,7 +7,15 @@ type Variant = "action" | "quiet" | "raised" | "ghost";
 
 const SURFACE: Record<Variant, string> = {
   // Orange is a FIELD colour. It carries --on-action ink, never its own text.
-  action: "bg-action text-on-action",
+  //
+  // The border is not decoration either. Orange fill against `--ground`
+  // measures 2.95:1 in dark mode, under the 3:1 SC 1.4.11 asks of a control's
+  // visual boundary, and `--action` cannot move -- `--on-action` is exactly
+  // 4.9:1 on it, with no headroom. So the edge carries the boundary instead:
+  // `--action-edge` is white in dark (10.20:1 on iris, 3.46:1 on the fill) and
+  // ink in light (15.97:1 on cornsilk, 4.92:1 on the fill), clearing 3:1 on
+  // both sides of the line it draws. See globals.css.
+  action: "bg-action text-on-action border border-action-edge",
   quiet: "bg-action-quiet text-on-action",
   raised: "bg-ground-raised text-text",
   ghost: "bg-transparent text-text border border-hairline",

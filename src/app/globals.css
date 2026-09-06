@@ -55,6 +55,15 @@
   --action: var(--q-orange);    /* field only: orange TEXT on iris is 2.9:1 and fails */
   --on-action: var(--q-ink);    /*  4.9:1 on orange, in both modes */
   --action-quiet: var(--q-orange-deep);
+  /* The CTA's visual boundary, and the reason --action does not have to move.
+     Orange fill against iris ground is 2.95:1, under SC 1.4.11's 3:1 for a
+     control's edge -- but --on-action is exactly 4.9:1 on that orange and has
+     no headroom, so the fill is fixed and the edge is what changes.
+     White clears 3:1 on BOTH sides of the line it draws: 10.20:1 against the
+     iris ground outside, 3.46:1 against the orange fill inside. Every
+     orange-family edge fails the second of those (deep orange is 1.32:1 on the
+     fill), which is why this is not an orange. */
+  --action-edge: #ffffff;
 
   --rail: var(--q-periwinkle);  /*  2.8:1 on iris -- decorative line work ONLY */
   --hairline: #524ca8;
@@ -84,6 +93,11 @@
     --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
     --on-action: var(--q-ink);    /*  4.9:1 on orange */
     --action-quiet: var(--q-jonquil);
+    /* Same job, mirrored: ink is the colour that clears 3:1 on both sides of
+       the line here -- 15.97:1 against the cornsilk ground, 4.92:1 against the
+       orange fill. Every orange-family edge fails against cornsilk (deep
+       orange is 2.45:1). */
+    --action-edge: var(--q-ink);
 
     --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
     --hairline: #e8d48a;
@@ -108,6 +122,11 @@
   --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
   --on-action: var(--q-ink);    /*  4.9:1 on orange */
   --action-quiet: var(--q-jonquil);
+  /* Same job, mirrored: ink is the colour that clears 3:1 on both sides of the
+     line here -- 15.97:1 against the cornsilk ground, 4.92:1 against the orange
+     fill. Every orange-family edge fails against cornsilk (deep orange is
+     2.45:1). */
+  --action-edge: var(--q-ink);
 
   --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
   --hairline: #e8d48a;
@@ -127,6 +146,7 @@
   --color-accent: var(--accent);
   --color-action: var(--action);
   --color-action-quiet: var(--action-quiet);
+  --color-action-edge: var(--action-edge);
   --color-rail: var(--rail);
   --color-hairline: var(--hairline);
   --color-danger: var(--danger);

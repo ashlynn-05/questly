@@ -50,7 +50,11 @@ export function ThemeToggle() {
             role="radio"
             aria-checked={on}
             onClick={() => choose(o.id)}
-            className="board px-3.5 py-2.5 text-[10px]"
+            // 44px, not the 32px the padding alone gave: this product's own
+            // target floor, the same one the landing page applies to the link
+            // two lines away. The label is 10px, so the box has to make the
+            // target, not the text.
+            className="board flex min-h-[44px] min-w-[44px] items-center justify-center px-3.5 text-[10px]"
             style={
               on
                 ? { background: "var(--action)", color: "var(--on-action)" }

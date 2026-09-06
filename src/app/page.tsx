@@ -17,9 +17,12 @@ export default function Home() {
       </div>
 
       <div className="flex flex-col gap-3">
+        {/* Same orange field as a `Plate` with variant="action", and it takes
+            the same edge for the same reason: the fill alone is 2.95:1 on the
+            dark ground, under SC 1.4.11's 3:1 for a control's boundary. */}
         <Link
           href="/start"
-          className="board flex min-h-[52px] items-center justify-center rounded-[6px] bg-action text-[12px] text-on-action"
+          className="board flex min-h-[52px] items-center justify-center rounded-[6px] border border-action-edge bg-action text-[12px] text-on-action"
         >
           Start a quest
         </Link>
