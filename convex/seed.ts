@@ -167,19 +167,19 @@ function nextLocalClockTime(
  * `setHours` sets local time, and Convex runs in UTC, so naively setting
  * 18:30 lands at 5:30am in Melbourne -- a demo would open on an empty-feeling
  * lobby with a room timed for dawn. Compute the real Melbourne evening
- * instead. If this runtime's ICU data doesn't carry the zone, don't pretend
- * to a Melbourne offset we cannot compute -- AEST (UTC+10) only holds outside
- * daylight saving, and guessing it year-round would sit the room an hour off
- * true 6:30pm from October to April, the exact bug this function exists to
- * avoid. Use 18:30 UTC directly instead, same honesty as the guard in
- * lib/planPrompt.ts:111-120.
+ * instead. If this runtime's ICU data doesn't carry the zone, fall back to
+ * AEST (UTC+10, 8:30 UTC for 18:30 local) -- the best a runtime lacking the
+ * zone can do. That guess is wrong by exactly the daylight-saving offset
+ * from October to April, reading an hour early (5:30pm shown as 6:30pm), but
+ * an hour off is a demo nobody notices; there is no honest way to do better
+ * without the zone data this catch exists because we don't have.
  */
 function tonight(): number {
   try {
     return nextLocalClockTime(MELBOURNE_TZ, Date.now(), 18, 30);
   } catch {
     const d = new Date();
-    d.setUTCHours(18, 30, 0, 0);
+    d.setUTCHours(8, 30, 0, 0);
     if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1);
     return d.getTime();
   }

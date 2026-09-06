@@ -26,3 +26,22 @@ export function userMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * The `code` half of the same `{ code, message }` payload -- for the rare
+ * caller that needs to react to *which* failure this was (send a signed-out
+ * visitor to `/sign-in`, say), not just show a sentence about it. Returns
+ * `null` for anything that isn't one of this backend's own thrown errors, so
+ * a caller can check a specific code without also having to re-derive
+ * "was this even a ConvexError" itself.
+ */
+export function errorCode(error: unknown): string | null {
+  if (error instanceof ConvexError) {
+    const data: unknown = error.data;
+    if (typeof data === "object" && data !== null && "code" in data) {
+      const code = (data as { code: unknown }).code;
+      if (typeof code === "string" && code.trim()) return code;
+    }
+  }
+  return null;
+}

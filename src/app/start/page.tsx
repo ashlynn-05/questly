@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
@@ -9,7 +10,7 @@ import type { Mood } from "@convex/lib/scoring";
 import { Plate } from "@/components/questly/Plate";
 import { Chip } from "@/components/questly/Chip";
 import { storeSessionKey } from "@/lib/session";
-import { userMessage } from "@/lib/errors";
+import { errorCode, userMessage } from "@/lib/errors";
 
 type Step = "quiz" | "goals" | "mood" | "party" | "constraints";
 
@@ -76,6 +77,10 @@ export default function StartPage() {
   const [radiusKm, setRadiusKm] = useState(5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A signed-out visitor can browse the whole quiz, but opening a room needs
+  // an account. NOT_SIGNED_IN is the one failure this page cannot just show
+  // a sentence for -- without a way onward, that sentence is a dead end.
+  const [needsSignIn, setNeedsSignIn] = useState(false);
 
   // One source for the three times on offer. State holds the id, never a second
   // copy of the option, so the timestamp sent to the server is always the one
@@ -121,6 +126,7 @@ export default function StartPage() {
   async function openTheRoom() {
     setBusy(true);
     setError(null);
+    setNeedsSignIn(false);
     try {
       const { code, sessionKey } = await createRoom({
         mood,
@@ -137,6 +143,7 @@ export default function StartPage() {
       router.push(`/room/${code}`);
     } catch (e) {
       setError(userMessage(e, "Could not open the room. Please try again."));
+      setNeedsSignIn(errorCode(e) === "NOT_SIGNED_IN");
       setBusy(false);
     }
   }
@@ -144,12 +151,14 @@ export default function StartPage() {
   async function joinOpenRoom(code: string) {
     setBusy(true);
     setError(null);
+    setNeedsSignIn(false);
     try {
       const joined = await joinRoom({ code, name: profile?.displayName ?? "Someone" });
       storeSessionKey(joined.code, joined.sessionKey);
       router.push(`/room/${joined.code}`);
     } catch (e) {
       setError(userMessage(e, "Could not join that room. Please try again."));
+      setNeedsSignIn(errorCode(e) === "NOT_SIGNED_IN");
       setBusy(false);
     }
   }
@@ -166,7 +175,20 @@ export default function StartPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col gap-8 bg-ground px-5 py-10">
-      {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-[13px] text-danger">
+          {error}
+          {needsSignIn ? (
+            <>
+              {" "}
+              <Link href="/sign-in" className="underline">
+                Sign in
+              </Link>{" "}
+              to open a room.
+            </>
+          ) : null}
+        </p>
+      ) : null}
 
       {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
           otherwise strands you: nothing later in the flow returns to them. */}
@@ -234,6 +256,7 @@ export default function StartPage() {
               {QUIZ_GOALS.map((goal) => (
                 <Chip
                   key={goal.id}
+                  face="prose"
                   selected={goals.includes(goal.id)}
                   onClick={() => toggleGoal(goal.id)}
                 >

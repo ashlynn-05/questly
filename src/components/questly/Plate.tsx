@@ -18,8 +18,16 @@ const SURFACE: Record<Variant, string> = {
  * --text-dim is only measured against `--ground`, so there is no token that
  * holds AA contrast dimmed on orange, and opacity is not a permitted
  * substitute (see Plate below). Those two variants get no dimming at all --
- * `sub` inherits the surface's full-contrast ink. `raised` and `ghost` sit on
- * `--ground`, where `--text-dim` is measured and safe to use.
+ * `sub` inherits the surface's full-contrast ink.
+ *
+ * `raised` sits on `--ground-raised`, a lighter fill than the `--ground` that
+ * `--text-dim` is actually measured against -- it happens to still clear AA
+ * there (4.52:1), but that is this surface's own number, not the token's
+ * tested pairing carrying over. `ghost` is transparent, so `text-dim` is only
+ * as safe as whatever is behind it: on `--ground` it holds: on an orange
+ * field -- `--action` or `--action-quiet` -- it does not. text-dim on
+ * `--action` measures 1.79:1 and on `--action-quiet` 3.46:1, both well under
+ * the 4.5:1 floor. Never stack a `ghost` Plate over an orange background.
  */
 const SUB_TONE: Record<Variant, string> = {
   action: "",
@@ -28,18 +36,39 @@ const SUB_TONE: Record<Variant, string> = {
   ghost: "text-dim",
 };
 
-type Props = {
+type CommonProps = {
   variant?: Variant;
   selected?: boolean;
   label: string;
   sub?: string;
   right?: ReactNode;
   icon?: ReactNode;
-  disabled?: boolean;
-  href?: string;
-  onClick?: () => void;
+  /** Centers `label`/`sub`, for a plain CTA with no `icon`/`right` sibling to balance against. */
+  center?: boolean;
   className?: string;
 };
+
+/**
+ * A link and a button are different controls, so their props are mutually
+ * exclusive rather than merged into one shape a caller could misuse: a
+ * `href` plate always navigates (middle-click, open-in-new-tab, no
+ * `disabled` state a link cannot express), a `href`-less one is always a
+ * `<button>` that may take `onClick`/`disabled`. Passing `disabled` or
+ * `onClick` alongside `href` is a type error, not a silently-ignored prop.
+ */
+type LinkProps = CommonProps & {
+  href: string;
+  onClick?: never;
+  disabled?: never;
+};
+
+type ButtonProps = CommonProps & {
+  href?: never;
+  onClick?: () => void;
+  disabled?: boolean;
+};
+
+type Props = LinkProps | ButtonProps;
 
 /**
  * min-h-[44px] is not decoration: WCAG 2.2 AA target size is a product
@@ -53,24 +82,28 @@ type Props = {
  * `sub`, never smaller. Hierarchy between the two comes from the `.board`
  * treatment (uppercase, tracked, a different weight), never from dimming.
  */
-export function Plate({
-  variant = "raised",
-  selected = false,
-  label,
-  sub,
-  right,
-  icon,
-  disabled = false,
-  href,
-  onClick,
-  className = "",
-}: Props) {
+export function Plate(props: Props) {
+  const {
+    variant = "raised",
+    selected = false,
+    label,
+    sub,
+    right,
+    icon,
+    center = false,
+    className = "",
+  } = props;
+
   const base = [
-    "group flex min-h-[44px] w-full items-center gap-3 rounded-[6px] px-4 py-3",
-    "text-left transition-[transform,background-color] duration-150",
+    "flex min-h-[44px] w-full items-center gap-3 rounded-[6px] px-4 py-3",
+    center ? "text-center justify-center" : "text-left",
+    "transition-[transform,background-color] duration-150",
     "active:translate-y-[1px] disabled:opacity-50 disabled:pointer-events-none",
     SURFACE[variant],
-    selected ? "ring-2 ring-accent ring-offset-2 ring-offset-ground" : "",
+    // The offset gap is transparent, not a hardcoded surface colour: a
+    // filled gap paints a wrong-colour halo on any Plate that isn't sitting
+    // directly on `--ground` (a raised card, a modal, a ghost stack).
+    selected ? "ring-2 ring-accent ring-offset-2 ring-offset-transparent" : "",
     className,
   ].join(" ");
 
@@ -89,17 +122,28 @@ export function Plate({
     </>
   );
 
-  // A navigation control stays a link, so middle-click and open-in-new-tab work.
-  if (href) {
+  // A navigation control stays a link, so middle-click and open-in-new-tab
+  // work. `href` is `never` on ButtonProps, so this also narrows `props` to
+  // LinkProps for the branch below -- the discriminant IS the prop.
+  if (props.href) {
     return (
-      <Link href={href} className={base}>
+      <Link href={props.href} aria-current={selected ? "page" : undefined} className={base}>
         {inner}
       </Link>
     );
   }
 
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={base}>
+    <button
+      type="button"
+      onClick={props.onClick}
+      disabled={props.disabled}
+      // Present only when true: most Plates are one-shot actions ("Copy join
+      // link"), not toggles, and `aria-pressed="false"` on every one of them
+      // would announce all of them as toggle buttons to a screen reader.
+      aria-pressed={selected || undefined}
+      className={base}
+    >
       {inner}
     </button>
   );

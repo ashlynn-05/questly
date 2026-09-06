@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { ConvexError } from "convex/values";
 import { throwUserError } from "../../convex/lib/errors";
-import { userMessage } from "./errors";
+import { errorCode, userMessage } from "./errors";
 
 describe("userMessage", () => {
   test("reads the sentence the backend actually wrote", () => {
@@ -47,5 +47,32 @@ describe("userMessage", () => {
     expect(userMessage("just a string", "fallback")).toBe("fallback");
     expect(userMessage(undefined, "fallback")).toBe("fallback");
     expect(userMessage(null, "fallback")).toBe("fallback");
+  });
+});
+
+describe("errorCode", () => {
+  test("reads the code the backend actually threw", () => {
+    let thrown: unknown;
+    try {
+      throwUserError("NOT_SIGNED_IN", "You need to sign in first.");
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(errorCode(thrown)).toBe("NOT_SIGNED_IN");
+  });
+
+  test("returns null for a ConvexError carrying no code", () => {
+    expect(errorCode(new ConvexError({ message: "This room is full." }))).toBeNull();
+    expect(errorCode(new ConvexError("a bare string"))).toBeNull();
+    expect(errorCode(new ConvexError({ code: "   " }))).toBeNull();
+    expect(errorCode(new ConvexError({ code: 404 }))).toBeNull();
+  });
+
+  test("returns null for anything that is not this backend's own error", () => {
+    expect(errorCode(new Error("boom"))).toBeNull();
+    expect(errorCode("just a string")).toBeNull();
+    expect(errorCode(undefined)).toBeNull();
+    expect(errorCode(null)).toBeNull();
   });
 });

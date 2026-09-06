@@ -5,7 +5,6 @@ import { Phone, MapTile } from "@/components/questly/frame";
 import { People, Coin, Clock, Pin, Check, Cross, Lock, Swap, Hand } from "@/components/questly/icons";
 import { ThemeToggle } from "@/components/questly/theme";
 import { Plate } from "@/components/questly/Plate";
-import { Chip } from "@/components/questly/Chip";
 import { Rail, RailNode } from "@/components/questly/Rail";
 
 /* Demonstration content. Public places are named as themselves; anything
@@ -278,10 +277,23 @@ function PlanningScreen() {
                   <span className="board text-[9px]">{c.label}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
+                  {/* Not the shared Chip: its 44px target size is a real
+                      requirement for the interactive constraint chips on
+                      /start, but this row is a static design-gallery mockup
+                      (onClick is a no-op) fitting six options in one 92px
+                      slot, which is what the old bespoke pill did. */}
                   {c.options.map((o) => (
-                    <Chip key={o} selected={o === c.value} onClick={() => {}}>
+                    <button
+                      key={o}
+                      className="num px-2.5 py-1.5 text-[13px]"
+                      style={
+                        o === c.value
+                          ? { background: "var(--accent)", color: "var(--ground)" }
+                          : { background: "var(--ground-raised)", color: "var(--text)" }
+                      }
+                    >
                       {o}
-                    </Chip>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -328,7 +340,7 @@ function RoomScreen() {
         <p className="text-[12px] leading-snug text-dim">
           Send the link. They type a first name and they are in — no account, no quiz.
         </p>
-        <Plate variant="action" label="Copy join link" />
+        <Plate variant="action" label="Copy join link" center />
       </div>
     </ScreenChrome>
   );
@@ -439,7 +451,7 @@ function MatchScreen() {
           </div>
         </div>
 
-        <Plate variant="action" label="Replay the flip" onClick={replay} />
+        <Plate variant="action" label="Replay the flip" onClick={replay} center />
       </div>
     </ScreenChrome>
   );
@@ -543,8 +555,8 @@ function BookedScreen() {
           <p className="text-[11px] leading-snug text-dim">
             Demonstration booking. No table has been held and no venue has been contacted.
           </p>
-          <Plate variant="action" label="Open Toto's in Maps" />
-          <Plate variant="raised" label="Send to the group chat" />
+          <Plate variant="action" label="Open Toto's in Maps" center />
+          <Plate variant="raised" label="Send to the group chat" center />
         </div>
       </div>
     </ScreenChrome>

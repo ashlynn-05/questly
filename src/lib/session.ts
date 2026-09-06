@@ -31,6 +31,21 @@ export function useSessionKey(code: string) {
   // `ready` separates "no key" from "have not looked yet". Without it the room
   // page redirects to /join on its first render, every time.
   const [ready, setReady] = useState(false);
+  // Which room `sessionKey`/`ready` actually describe. A caller can stay
+  // mounted and hand this hook a new `code` -- navigating from one room to
+  // another -- and the effect below only re-runs after that render commits.
+  // Without tracking this, the render in between would hand back the OLD
+  // room's key/ready state under the NEW room's code: a real key, just for
+  // the wrong room, for exactly one render. Resetting here, in the render
+  // body, means that render never reaches the screen -- React discards it
+  // and re-renders with the reset state before anything commits. This is
+  // not a second effect: the effect below still owns every actual read.
+  const [trackedCode, setTrackedCode] = useState(code);
+  if (trackedCode !== code) {
+    setTrackedCode(code);
+    setSessionKey(null);
+    setReady(false);
+  }
 
   useEffect(() => {
     setReady(false);
