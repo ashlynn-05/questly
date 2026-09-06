@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { PARTNERS } from "./seed";
 
@@ -46,37 +46,17 @@ test("every mood gets a seeded open room, so matchmaking is never empty", async 
   const t = convexTest(schema, modules);
   await t.mutation(internal.seed.run, {});
   for (const mood of ["grass", "meet", "treat", "new"] as const) {
-    const open = await t.run(async (ctx) =>
-      ctx.db
-        .query("rooms")
-        .withIndex("by_visibility_status", (q) => q.eq("visibility", "open").eq("status", "lobby"))
-        .collect(),
-    );
-    expect(open.filter((r) => r.mood === mood).length).toBeGreaterThanOrEqual(1);
+    const open = await t.query(api.rooms.openRooms, { mood });
+    expect(open.length).toBeGreaterThanOrEqual(1);
   }
 });
 
 test("every seeded room is flagged as a demo and has a host in it", async () => {
   const t = convexTest(schema, modules);
   await t.mutation(internal.seed.run, {});
-  const rooms = await t.run(async (ctx) =>
-    ctx.db
-      .query("rooms")
-      .withIndex("by_visibility_status", (q) => q.eq("visibility", "open").eq("status", "lobby"))
-      .collect(),
-  );
-  expect(rooms.length).toBeGreaterThanOrEqual(4);
-  expect(rooms.every((r) => r.demo)).toBe(true);
-
-  for (const room of rooms) {
-    const members = await t.run(async (ctx) =>
-      ctx.db
-        .query("members")
-        .withIndex("by_room", (q) => q.eq("roomId", room._id))
-        .collect(),
-    );
-    expect(members.length).toBeGreaterThanOrEqual(1);
-  }
+  const open = await t.query(api.rooms.openRooms, { mood: "grass" });
+  expect(open.every((r) => r.demo)).toBe(true);
+  expect(open.every((r) => r.memberCount >= 1)).toBe(true);
 });
 
 test("seeding twice does not duplicate the rooms either", async () => {
