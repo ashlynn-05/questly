@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
@@ -249,11 +249,42 @@ async function writeBlurbs(titles: string[], mood: string): Promise<string[]> {
 }
 
 /**
+ * Write the deck this build produced, or report that a newer build already
+ * took the room's lease out from under it. Shared by the cache path and the
+ * full build below so "the lease was lost" is reported identically either way.
+ */
+async function insertDeck(
+  ctx: ActionCtx,
+  roomId: Id<"rooms">,
+  token: string,
+  quests: Array<Infer<typeof questFields>>,
+): Promise<number> {
+  const deckSize: number | null = await ctx.runMutation(internal.deck.insert, { roomId, token, quests });
+  if (deckSize === null) {
+    // This build stalled long enough for its claim to be taken, and a newer
+    // build has since finished. The room already has a deck -- a better one --
+    // so this one goes in the bin rather than over the top of it.
+    throwUserError(
+      "BUILD_SUPERSEDED",
+      "That took too long, so someone started the deck again. The newer one is ready.",
+    );
+  }
+  return deckSize;
+}
+
+/**
  * The build itself, once the caller has been established as the host of a room
  * that is ready for one. Separated so `build` can put the room back in the
  * lobby if any of it fails.
  */
 async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Promise<number> {
+  // A second demo run asking the same question -- same mood, radius, budget and
+  // centre, within the hour -- gets the same nine cards without spending
+  // Places or OpenAI quota again. See `recentDeck` below for what "the same
+  // question" means and why it is safe to reuse.
+  const cached = await ctx.runQuery(internal.deck.recentDeck, { roomId });
+  if (cached) return insertDeck(ctx, roomId, token, cached);
+
   const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
   const free = room.budgetPerHeadCents === 0;
   const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
@@ -367,10 +398,11 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Pr
   // allowed at all.
   const blurbs = await writeBlurbs(scored.map((c) => c.title), room.mood);
 
-  const deckSize: number | null = await ctx.runMutation(internal.deck.insert, {
+  return insertDeck(
+    ctx,
     roomId,
     token,
-    quests: scored.map((c, i) => ({
+    scored.map((c, i) => ({
       rank: i,
       source: c.source,
       placeId: c.placeId,
@@ -388,18 +420,7 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Pr
       score: c.score,
       scoreBreakdown: c.breakdown,
     })),
-  });
-
-  if (deckSize === null) {
-    // This build stalled long enough for its claim to be taken, and a newer
-    // build has since finished. The room already has a deck -- a better one --
-    // so this one goes in the bin rather than over the top of it.
-    throwUserError(
-      "BUILD_SUPERSEDED",
-      "That took too long, so someone started the deck again. The newer one is ready.",
-    );
-  }
-  return deckSize;
+  );
 }
 
 export const build = action({
@@ -442,5 +463,87 @@ export const build = action({
       await ctx.runMutation(internal.deck.abandonBuild, { roomId, token });
       throw error;
     }
+  },
+});
+
+/** A cached deck goes stale after this long, so a demo run from yesterday never
+ * serves tonight's prices. An hour is generous for a live demo and short
+ * enough that nobody could call the reused cards "the wrong deck". */
+const DECK_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * What makes two rooms' decks interchangeable: the same mood (drives which
+ * Places types were queried and which partner venues are eligible), the same
+ * radius and budget (both feed `scoreQuest`), and a centre within about a
+ * kilometre of each other (`toFixed(2)` on a degree of latitude is roughly
+ * 1.1km, close enough that two rooms both centred on the Melbourne CBD collapse
+ * to one key). Two rooms sharing this key would have queried Places for the
+ * same candidates and scored them the same way, so their decks are
+ * indistinguishable -- reusing one is not a different answer, it is the same
+ * answer arriving without a second network round trip.
+ */
+const cacheKey = (r: {
+  mood: string;
+  radiusKm: number;
+  budgetPerHeadCents: number;
+  centreLat: number;
+  centreLng: number;
+}) =>
+  [r.mood, r.radiusKm, r.budgetPerHeadCents, r.centreLat.toFixed(2), r.centreLng.toFixed(2)].join("|");
+
+/**
+ * A second demo run must be instant and must not depend on the network. Places
+ * results for the same area and constraints do not meaningfully change inside
+ * an hour, so re-querying spends money to get the same nine cards. Returns the
+ * cached room's deck stripped down to exactly `deck.insert`'s `quests` shape --
+ * no `_id`, `_creationTime`, or the other room's `roomId` -- so the caller can
+ * hand it straight back to `insert` for its own room.
+ */
+export const recentDeck = internalQuery({
+  args: { roomId: v.id("rooms") },
+  returns: v.union(v.null(), v.array(questFields)),
+  handler: async (ctx, { roomId }) => {
+    const room = await ctx.db.get(roomId);
+    if (!room) return null;
+
+    const cutoff = Date.now() - DECK_TTL_MS;
+    const rooms = await ctx.db.query("rooms").collect();
+
+    for (const other of rooms) {
+      if (other._id === roomId) continue;
+      if (!other.deckBuiltAt || other.deckBuiltAt < cutoff) continue;
+      if (cacheKey(other) !== cacheKey(room)) continue;
+
+      const quests = await ctx.db
+        .query("quests")
+        .withIndex("by_room_rank", (q) => q.eq("roomId", other._id))
+        .order("asc")
+        .collect();
+      if (quests.length === 0) continue;
+
+      // Named field-by-field, not `{ _id, _creationTime, roomId, ...rest }`:
+      // that destructure names three bindings only to throw them away, which
+      // is an unused-vars warning on every one of them. Insert re-adds
+      // `roomId` for the new room; the other two are system fields `insert`
+      // never accepted in the first place.
+      return quests.map((q) => ({
+        rank: q.rank,
+        source: q.source,
+        placeId: q.placeId,
+        title: q.title,
+        blurb: q.blurb,
+        priceLabel: q.priceLabel,
+        priceCents: q.priceCents,
+        distanceKm: q.distanceKm,
+        discountPct: q.discountPct,
+        photoUrl: q.photoUrl,
+        photoName: q.photoName,
+        mapsUri: q.mapsUri,
+        websiteUri: q.websiteUri,
+        score: q.score,
+        scoreBreakdown: q.scoreBreakdown,
+      }));
+    }
+    return null;
   },
 });
