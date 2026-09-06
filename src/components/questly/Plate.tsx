@@ -138,10 +138,13 @@ export function Plate(props: Props) {
       type="button"
       onClick={props.onClick}
       disabled={props.disabled}
-      // Present only when true: most Plates are one-shot actions ("Copy join
-      // link"), not toggles, and `aria-pressed="false"` on every one of them
-      // would announce all of them as toggle buttons to a screen reader.
-      aria-pressed={selected || undefined}
+      // Keyed on whether `selected` was PASSED, not on whether it is true.
+      // A caller that passes it is describing a toggle, and an unselected
+      // toggle must still say so (`aria-pressed="false"`) or a screen reader
+      // cannot tell it is one. A caller that omits it is a one-shot action
+      // ("Copy join link"), and gets no attribute at all -- announcing every
+      // CTA in the app as a toggle button would be worse than saying nothing.
+      aria-pressed={props.selected}
       className={base}
     >
       {inner}

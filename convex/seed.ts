@@ -170,8 +170,9 @@ function nextLocalClockTime(
  * instead. If this runtime's ICU data doesn't carry the zone, fall back to
  * AEST (UTC+10, 8:30 UTC for 18:30 local) -- the best a runtime lacking the
  * zone can do. That guess is wrong by exactly the daylight-saving offset
- * from October to April, reading an hour early (5:30pm shown as 6:30pm), but
- * an hour off is a demo nobody notices; there is no honest way to do better
+ * from October to April: during AEDT (UTC+11) 8:30 UTC is 7:30pm Melbourne,
+ * so the room reads an hour LATE, not early. An hour off is a demo nobody
+ * notices; there is no honest way to do better
  * without the zone data this catch exists because we don't have.
  */
 function tonight(): number {
