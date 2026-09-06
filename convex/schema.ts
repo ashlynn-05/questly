@@ -106,6 +106,10 @@ export default defineSchema({
     // one transaction, so a second build can tell a build in flight from one
     // whose action was killed before it could hand the room back.
     buildStartedAt: v.optional(v.number()),
+    // Which build holds that claim. A stalled build whose claim was taken must
+    // not be able to overwrite the deck that replaced it, so every write checks
+    // that the room still holds ITS token, not merely that a claim exists.
+    buildToken: v.optional(v.string()),
     // Seeded rooms exist so the matchmaking lobby is never empty. They are
     // labelled everywhere they are shown: a fabricated stranger presented as a
     // real one would breach the product's honesty constraints.

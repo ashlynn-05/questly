@@ -26,6 +26,7 @@ export type ErrorCode =
   | "ROOM_WRONG_STATE"
   | "NO_CANDIDATES"
   | "BUILD_IN_PROGRESS"
+  | "BUILD_SUPERSEDED"
   | "INVALID_GOAL"
   | "QUEST_NOT_FOUND"
   | "PLAN_NOT_READY"

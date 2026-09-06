@@ -1,9 +1,10 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import type { Id } from "./_generated/dataModel";
 import { DECK_SIZE, FREE_TYPES, MOOD_TYPES } from "./lib/scoring";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -28,7 +29,7 @@ async function expectUserError(promise: Promise<unknown>, code: string, messageP
 }
 
 async function roomWithPartner(
-  t: ReturnType<typeof convexTest>,
+  t: TestConvex<typeof schema>,
   over: { mood?: "grass" | "meet" | "treat" | "new"; status?: "lobby" | "swiping" } = {},
 ) {
   return await t.run(async (ctx) => {
@@ -64,6 +65,13 @@ async function roomWithPartner(
     });
     return roomId;
   });
+}
+
+/** Take the room's build lease, the way `build` does before it writes. */
+async function lease(t: TestConvex<typeof schema>, roomId: Id<"rooms">): Promise<string> {
+  const token = await t.mutation(internal.deck.markBuilding, { roomId });
+  if (token === null) throw new Error("expected to take the build lease");
+  return token;
 }
 
 const quest = (over: Record<string, unknown>) => ({
@@ -211,10 +219,11 @@ test("deck.context returns the room and only the partners for its mood", async (
 test("insert writes the deck in rank order and flips building to swiping", async () => {
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t);
-  await t.mutation(internal.deck.markBuilding, { roomId });
+  const token = await lease(t, roomId);
 
   const size = await t.mutation(internal.deck.insert, {
     roomId,
+    token,
     quests: [
       quest({ rank: 0, source: "partner", placeId: "partner-1", title: "The Long Weekend", score: 4.2 }),
       quest({ rank: 1, placeId: "plain-1", title: "Other", score: 2.6 }),
@@ -235,8 +244,16 @@ test("insert writes the deck in rank order and flips building to swiping", async
 test("rebuilding replaces the previous deck rather than appending to it", async () => {
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t);
-  await t.mutation(internal.deck.insert, { roomId, quests: [quest({ placeId: "old" })] });
-  await t.mutation(internal.deck.insert, { roomId, quests: [quest({ placeId: "new" })] });
+  await t.mutation(internal.deck.insert, {
+    roomId, token: await lease(t, roomId), quests: [quest({ placeId: "old" })],
+  });
+
+  // A rebuild is a fresh lease, which the room only grants once it is back in
+  // the lobby -- the same door every other build comes through.
+  await t.run(async (ctx) => ctx.db.patch(roomId, { status: "lobby" }));
+  await t.mutation(internal.deck.insert, {
+    roomId, token: await lease(t, roomId), quests: [quest({ placeId: "new" })],
+  });
 
   const stored = await t.run(async (ctx) =>
     ctx.db.query("quests").withIndex("by_room_rank", (q) => q.eq("roomId", roomId)).collect(),
@@ -247,13 +264,14 @@ test("rebuilding replaces the previous deck rather than appending to it", async 
 test("abandonBuild returns a stuck room to the lobby", async () => {
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t);
-  await t.mutation(internal.deck.markBuilding, { roomId });
-  await t.mutation(internal.deck.abandonBuild, { roomId });
+  const token = await lease(t, roomId);
+  await t.mutation(internal.deck.abandonBuild, { roomId, token });
   expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("lobby");
 
   // ...and never drags a finished room backwards.
-  await t.mutation(internal.deck.insert, { roomId, quests: [quest({})] });
-  await t.mutation(internal.deck.abandonBuild, { roomId });
+  const second = await lease(t, roomId);
+  await t.mutation(internal.deck.insert, { roomId, token: second, quests: [quest({})] });
+  await t.mutation(internal.deck.abandonBuild, { roomId, token: second });
   expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
 });
 
@@ -462,12 +480,13 @@ test("markBuilding refuses a room another build already claimed", async () => {
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t);
 
-  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBe(true);
-  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBe(false);
+  const token = await t.mutation(internal.deck.markBuilding, { roomId });
+  expect(token).toEqual(expect.any(String));
+  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBeNull();
 
   // ...and refuses a room that is past building altogether.
-  await t.mutation(internal.deck.insert, { roomId, quests: [quest({})] });
-  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBe(false);
+  await t.mutation(internal.deck.insert, { roomId, token: token!, quests: [quest({})] });
+  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBeNull();
 });
 
 test("markBuilding takes over a claim whose build was killed", async () => {
@@ -480,7 +499,7 @@ test("markBuilding takes over a claim whose build was killed", async () => {
     await ctx.db.patch(roomId, { status: "building", buildStartedAt: Date.now() - 10 * 60 * 1000 });
   });
 
-  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toBe(true);
+  expect(await t.mutation(internal.deck.markBuilding, { roomId })).toEqual(expect.any(String));
 });
 
 test("a live claim survives a second host attempt with the deck intact", async () => {
@@ -600,4 +619,177 @@ test("a free room ranks against the free types, not the mood's own list", async 
   // Nothing costs money in a free room, whatever band Places reported.
   expect(stored.map((q) => q.priceCents)).toEqual([0, 0]);
   expect(stored[0].priceLabel).toBe("Free");
+});
+
+// --- The lease: a stalled build must not overwrite the deck that replaced it
+
+test("a stalled build whose lease was taken cannot destroy the newer deck", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t);
+
+  // Build one takes the room, then stalls -- long enough for its claim to go
+  // stale. It is still running; nothing has told it to stop.
+  const stalled = await lease(t, roomId);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(roomId, { buildStartedAt: Date.now() - 10 * 60 * 1000 });
+  });
+
+  // Build two takes over the stale claim and finishes. The room is swiping, and
+  // members start casting swipes against ITS deck.
+  const took = await lease(t, roomId);
+  expect(took).not.toBe(stalled);
+  expect(
+    await t.mutation(internal.deck.insert, {
+      roomId, token: took, quests: [quest({ placeId: "newer-deck" })],
+    }),
+  ).toBe(1);
+
+  const { questId, memberId } = await t.run(async (ctx) => {
+    const q = await ctx.db
+      .query("quests")
+      .withIndex("by_room_rank", (i) => i.eq("roomId", roomId))
+      .first();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (i) => i.eq("roomId", roomId))
+      .first();
+    const swipeId = await ctx.db.insert("swipes", {
+      roomId, questId: q!._id, memberId: member!._id, dir: "yes",
+    });
+    return { questId: q!._id, memberId: swipeId };
+  });
+
+  // Now build one finally comes back. Its insert deletes the whole deck before
+  // writing, so without the lease check it would destroy the deck the room is
+  // already swiping and orphan every swipe cast against it.
+  expect(
+    await t.mutation(internal.deck.insert, {
+      roomId, token: stalled, quests: [quest({ placeId: "stale-deck" })],
+    }),
+  ).toBeNull();
+
+  const stored = await t.run(async (ctx) =>
+    ctx.db.query("quests").withIndex("by_room_rank", (i) => i.eq("roomId", roomId)).collect(),
+  );
+  expect(stored.map((q) => q.placeId)).toEqual(["newer-deck"]);
+  expect(stored[0]._id).toBe(questId);
+
+  // The swipe still points at a quest that exists -- which is the whole point.
+  const swipes = await t.run(async (ctx) =>
+    ctx.db.query("swipes").withIndex("by_room_quest", (i) => i.eq("roomId", roomId)).collect(),
+  );
+  expect(swipes).toHaveLength(1);
+  expect(swipes[0].questId).toBe(questId);
+  expect(await t.run(async (ctx) => ctx.db.get(swipes[0].questId))).not.toBeNull();
+  expect(memberId).toBe(swipes[0]._id);
+
+  // ...and the room is left as build two set it, not as build one wanted it.
+  expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
+});
+
+test("a stalled build cannot hand back a room a newer build now holds", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t);
+
+  const stalled = await lease(t, roomId);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(roomId, { buildStartedAt: Date.now() - 10 * 60 * 1000 });
+  });
+  const took = await lease(t, roomId);
+
+  // Build one fails and tries to return the room to the lobby. Build two is
+  // still working; knocking the room back would strand it holding a lease on a
+  // room that says it is not being built.
+  await t.mutation(internal.deck.abandonBuild, { roomId, token: stalled });
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("building");
+  expect(room!.buildToken).toBe(took);
+});
+
+test("build tells a superseded host that a newer deck is ready", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  // The lease is stolen mid-build: Places answers, and while the action is
+  // still working someone else takes the stale claim and finishes a deck.
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) !== PLACES_URL) return json(OPENAI_BODY);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(roomId, { buildStartedAt: Date.now() - 10 * 60 * 1000 });
+    });
+    const took = await lease(t, roomId);
+    await t.mutation(internal.deck.insert, {
+      roomId, token: took, quests: [quest({ placeId: "newer-deck" })],
+    });
+    return json(PLACES_BODY);
+  });
+
+  await expectUserError(
+    asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" }),
+    "BUILD_SUPERSEDED",
+    /newer one is ready/i,
+  );
+
+  const stored = await t.run(async (ctx) =>
+    ctx.db.query("quests").withIndex("by_room_rank", (i) => i.eq("roomId", roomId)).collect(),
+  );
+  expect(stored.map((q) => q.placeId)).toEqual(["newer-deck"]);
+  // The superseded build's error handler must not have touched the room either.
+  expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
+});
+
+// A degraded build must leave a trail. Asserted rather than described, because
+// the round-1 claim that this catch logged was wrong: the replacement never
+// applied, the comment inside the catch read like a log line, and nothing
+// caught it. A test cannot be satisfied by a comment.
+test("a failed taste re-rank says so in the logs", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const roomId = await roomWithPartner(t);
+  await t.run(async (ctx) => {
+    await ctx.db.insert("profiles", {
+      userId: "u1", displayName: "Bec", tasteVector: TASTE_VECTOR,
+      tasteSentence: "coffee", moodAffinity: {}, goals: [], createdAt: 1,
+    });
+  });
+  // Places answers; the embeddings endpoint does not.
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) === PLACES_URL) return json(PLACES_BODY);
+    if (String(url) === OPENAI_URL) return json(OPENAI_BODY);
+    return new Response("rate limited", { status: 429 });
+  });
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  const result = await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+
+  // The deck is still built -- ranking without taste is worse, not broken.
+  expect(result.deckSize).toBe(DECK_SIZE);
+  expect(warn).toHaveBeenCalledWith(
+    "deck.build: taste re-rank skipped, ranking without it.",
+    expect.anything(),
+  );
+
+  const stored = await t.run(async (ctx) =>
+    ctx.db.query("quests").withIndex("by_room_rank", (i) => i.eq("roomId", roomId)).order("asc").collect(),
+  );
+  // ...and it fell back to the mood ordering rather than a half-applied one.
+  expect(stored[1].placeId).toBe("r0");
+  expect(stored[1].scoreBreakdown.tasteSimilarity).toBe(0);
+});
+
+test("a failed blurb call says so in the logs", async () => {
+  const t = convexTest(schema, modules);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  delete process.env.OPENAI_API_KEY;
+  await roomWithPartner(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+
+  expect(warn).toHaveBeenCalledWith(
+    "deck.build: no blurbs, falling back to the Places summary.",
+    expect.anything(),
+  );
 });

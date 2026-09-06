@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 
 import schema from "./schema";
 import {
@@ -79,55 +79,86 @@ export const context = internalQuery({
 const STALE_BUILD_MS = 2 * 60 * 1000;
 
 /**
- * Claim the room for one build, or refuse. Compare-and-set, because the check
+ * Take the room for one build, or refuse. Compare-and-set, because the check
  * and the write must be the same transaction: a host double-click puts two
  * actions here at once, and if both were allowed to proceed, the loser's
  * `insert` would later delete a deck the room was already swiping and orphan
  * every swipe cast against it.
  *
- * Returns whether the caller now owns the build. Only the owner may write a
- * deck, and only the owner may hand the room back.
+ * Returns a lease token on success and `null` on refusal. The token, not the
+ * "building" status, is what later writes are checked against -- because a
+ * stale claim can be taken while its build is still running, and that build
+ * must not be able to overwrite whatever replaced it. It is a concurrency
+ * discriminator, never a credential: `build` has already established that the
+ * caller is the host before anything reaches here.
  */
 export const markBuilding = internalMutation({
   args: { roomId: v.id("rooms") },
-  returns: v.boolean(),
+  returns: v.union(v.string(), v.null()),
   handler: async (ctx, { roomId }) => {
     const room = await ctx.db.get(roomId);
-    if (!room) return false;
+    if (!room) return null;
 
     if (room.status === "building") {
       // Someone else holds the claim. Take it only if it has gone stale.
       const startedAt = room.buildStartedAt ?? 0;
-      if (Date.now() - startedAt < STALE_BUILD_MS) return false;
+      if (Date.now() - startedAt < STALE_BUILD_MS) return null;
     } else if (room.status !== "lobby") {
-      return false;
+      return null;
     }
 
-    await ctx.db.patch(roomId, { status: "building", buildStartedAt: Date.now() });
-    return true;
+    const buildToken = crypto.randomUUID();
+    await ctx.db.patch(roomId, {
+      status: "building",
+      buildStartedAt: Date.now(),
+      buildToken,
+    });
+    return buildToken;
   },
 });
+
+/** Whether this room is still held by this exact build. */
+function holdsLease(room: Doc<"rooms"> | null, token: string): boolean {
+  return room?.status === "building" && room.buildToken === token;
+}
 
 /**
  * A build that found nothing must not leave the room spinning on "building"
  * forever -- it goes back to the lobby, where the host still has the button.
+ *
+ * Token-checked like every other write: a build whose stale claim was taken
+ * over must not hand back a room that now belongs to a build still in flight.
  */
 export const abandonBuild = internalMutation({
-  args: { roomId: v.id("rooms") },
+  args: { roomId: v.id("rooms"), token: v.string() },
   returns: v.null(),
-  handler: async (ctx, { roomId }) => {
+  handler: async (ctx, { roomId, token }) => {
     const room = await ctx.db.get(roomId);
-    if (room?.status === "building") {
-      await ctx.db.patch(roomId, { status: "lobby", buildStartedAt: undefined });
+    if (holdsLease(room, token)) {
+      await ctx.db.patch(roomId, {
+        status: "lobby",
+        buildStartedAt: undefined,
+        buildToken: undefined,
+      });
     }
     return null;
   },
 });
 
+/**
+ * Write the deck, if this build still holds the room.
+ *
+ * Returns the deck size, or `null` if the lease was taken while this build was
+ * running. Bailing matters more than it looks: this deletes the room's whole
+ * deck before writing, so a stalled build that wrote anyway would destroy the
+ * deck that replaced it and orphan every swipe already cast against it.
+ */
 export const insert = internalMutation({
-  args: { roomId: v.id("rooms"), quests: v.array(questFields) },
-  returns: v.number(),
-  handler: async (ctx, { roomId, quests }) => {
+  args: { roomId: v.id("rooms"), token: v.string(), quests: v.array(questFields) },
+  returns: v.union(v.number(), v.null()),
+  handler: async (ctx, { roomId, token, quests }) => {
+    if (!holdsLease(await ctx.db.get(roomId), token)) return null;
+
     const existing = await ctx.db
       .query("quests")
       .withIndex("by_room_rank", (q) => q.eq("roomId", roomId))
@@ -139,6 +170,7 @@ export const insert = internalMutation({
       status: "swiping",
       deckBuiltAt: Date.now(),
       buildStartedAt: undefined,
+      buildToken: undefined,
     });
     return quests.length;
   },
@@ -221,7 +253,7 @@ async function writeBlurbs(titles: string[], mood: string): Promise<string[]> {
  * that is ready for one. Separated so `build` can put the room back in the
  * lobby if any of it fails.
  */
-async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
+async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Promise<number> {
   const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
   const free = room.budgetPerHeadCents === 0;
   const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
@@ -318,8 +350,12 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
       scored = shortlist
         .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
         .sort((a, b) => b.score - a.score);
-    } catch {
-      // Ranking without taste is worse, not broken. Keep the shortlist order.
+    } catch (error) {
+      // Ranking without taste is worse, not broken. Keep the shortlist order --
+      // but say so. A permanent OpenAI outage would otherwise degrade every
+      // deck in the product forever, with nothing in the logs to explain why
+      // the personalisation stopped working.
+      console.warn("deck.build: taste re-rank skipped, ranking without it.", error);
     }
   }
 
@@ -331,8 +367,9 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
   // allowed at all.
   const blurbs = await writeBlurbs(scored.map((c) => c.title), room.mood);
 
-  const deckSize: number = await ctx.runMutation(internal.deck.insert, {
+  const deckSize: number | null = await ctx.runMutation(internal.deck.insert, {
     roomId,
+    token,
     quests: scored.map((c, i) => ({
       rank: i,
       source: c.source,
@@ -353,6 +390,15 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
     })),
   });
 
+  if (deckSize === null) {
+    // This build stalled long enough for its claim to be taken, and a newer
+    // build has since finished. The room already has a deck -- a better one --
+    // so this one goes in the bin rather than over the top of it.
+    throwUserError(
+      "BUILD_SUPERSEDED",
+      "That took too long, so someone started the deck again. The newer one is ready.",
+    );
+  }
   return deckSize;
 }
 
@@ -382,17 +428,18 @@ export const build = action({
     // The checks above are for the error message; THIS is the authorisation to
     // build. Everything before it was read in an earlier transaction and could
     // already be stale by now.
-    const claimed = await ctx.runMutation(internal.deck.markBuilding, { roomId });
-    if (!claimed) {
+    const token = await ctx.runMutation(internal.deck.markBuilding, { roomId });
+    if (token === null) {
       throwUserError("BUILD_IN_PROGRESS", "This deck is already being built. Give it a moment.");
     }
 
     try {
-      return { deckSize: await buildDeck(ctx, roomId) };
+      return { deckSize: await buildDeck(ctx, roomId, token) };
     } catch (error) {
       // Google 5xx, a quota wall, an empty neighbourhood: whatever it was, the
       // room must not be left spinning on "building" with no way out of it.
-      await ctx.runMutation(internal.deck.abandonBuild, { roomId });
+      // Only if we still hold it -- abandonBuild checks the token.
+      await ctx.runMutation(internal.deck.abandonBuild, { roomId, token });
       throw error;
     }
   },
