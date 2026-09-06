@@ -76,36 +76,39 @@ export const cast = mutation({
     const quest = quests.find((q) => q._id === args.questId);
     if (!quest) throwUserError("QUEST_NOT_FOUND", "That card is not in this room's deck.");
 
-    // Idempotent: a double-tap or a reconnect re-swiping the same card
-    // overwrites rather than duplicating. Two rows for one member on one card
-    // would let a single person supply another person's missing yes.
-    const onThisQuest = await ctx.db
-      .query("swipes")
-      .withIndex("by_room_quest", (q) => q.eq("roomId", room._id).eq("questId", quest._id))
-      .collect();
-    const mine = onThisQuest.find((s) => s.memberId === member._id);
-    if (!mine) {
-      await ctx.db.insert("swipes", {
-        roomId: room._id,
-        questId: quest._id,
-        memberId: member._id,
-        dir: args.dir,
-      });
-    } else if (mine.dir !== args.dir) {
-      // Changing your mind is a patch. An identical re-send writes nothing at
-      // all, so a retrying client cannot churn the row other phones subscribe to.
-      await ctx.db.patch(mine._id, { dir: args.dir });
-    }
-
     const members = await ctx.db
       .query("members")
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
       .collect();
 
+    // Every swipe in the room, read once and then kept in step with this call's
+    // own write. Bounded by MAX_ROOM_MEMBERS x the deck -- the same roster x deck
+    // read `rooms.get` already does on every update, and the reason that cap
+    // exists.
     const swipes = await ctx.db
       .query("swipes")
       .withIndex("by_room_member", (q) => q.eq("roomId", room._id))
       .collect();
+
+    // Idempotent: a double-tap or a reconnect re-swiping the same card
+    // overwrites rather than duplicating. Two rows for one member on one card
+    // would let a single person supply another person's missing yes.
+    const mine = swipes.find((s) => s.questId === quest._id && s.memberId === member._id);
+    if (!mine) {
+      const doc = {
+        roomId: room._id,
+        questId: quest._id,
+        memberId: member._id,
+        dir: args.dir,
+      };
+      const _id = await ctx.db.insert("swipes", doc);
+      swipes.push({ ...doc, _id, _creationTime: Date.now() });
+    } else if (mine.dir !== args.dir) {
+      // Changing your mind is a patch. An identical re-send writes nothing at
+      // all, so a retrying client cannot churn the row other phones subscribe to.
+      await ctx.db.patch(mine._id, { dir: args.dir });
+      mine.dir = args.dir;
+    }
 
     // Unanimity is judged against the CURRENT roster: someone who left stops
     // being required (rooms.leave takes their swipes with them), and someone
