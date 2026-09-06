@@ -31,7 +31,10 @@ export type ErrorCode =
   | "QUEST_NOT_FOUND"
   | "PLAN_NOT_READY"
   | "STOP_NOT_FOUND"
-  | "STOP_LOCKED";
+  | "STOP_LOCKED"
+  | "GROUP_NEEDS_PROPOSAL"
+  | "PROPOSAL_EXISTS"
+  | "PROPOSAL_NOT_FOUND";
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });

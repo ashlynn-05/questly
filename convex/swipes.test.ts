@@ -354,3 +354,102 @@ test("a room that has not started swiping cannot be swiped", async () => {
     /not swiping/i,
   );
 });
+
+// --- the roster is the other half of both match conditions -----------------
+//
+// Unanimity and exhaustion are both quantified over `members`, so a match
+// becomes possible when the roster shrinks just as much as when a swipe
+// arrives. Resolution therefore lives in `convex/lib/match.ts` and runs from
+// `swipes.cast`, `rooms.leave` and `rooms.removeMember` alike -- one
+// implementation, so the copies cannot drift.
+
+/** The two-person room plus a third member who has not swiped anything. */
+async function threePersonRoom(t: T, thirdKey: string) {
+  const ids = await twoPersonRoom(t);
+  const samId = await t.run(async (ctx) =>
+    ctx.db.insert("members", {
+      roomId: ids.roomId, name: "Sam", isHost: false, sessionKey: thirdKey, joinedAt: 3,
+    }),
+  );
+  return { ...ids, samId };
+}
+
+test("three people, two exhaust the deck, and the third leaving resolves the room", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, a, b } = await threePersonRoom(t, "k-sam");
+  await exhaustTheDeck(t, [a, b]);
+
+  // Nobody can swipe the room out of this: the deck is empty and Sam has not
+  // touched it. Before the shared resolver this hung on "swiping" forever.
+  expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
+
+  await t.mutation(api.rooms.leave, { code: "3333", sessionKey: "k-sam" });
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("matched");
+  expect(room!.matchedQuestId).toBe(a); // the top-scored card
+
+  await runScheduled(t);
+  const plans = await t.run(async (ctx) => ctx.db.query("plans").collect());
+  expect(plans).toHaveLength(1);
+});
+
+test("two people, one has said yes, and the other leaving makes it unanimous", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, a } = await twoPersonRoom(t);
+  await t.mutation(api.swipes.cast, { code: "3333", sessionKey: "k-bec", questId: a, dir: "yes" });
+  expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
+
+  await t.mutation(api.rooms.leave, { code: "3333", sessionKey: "k-tam" });
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("matched");
+  expect(room!.matchedQuestId).toBe(a);
+});
+
+test("leaving a room that already matched does not build a second plan", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, a } = await twoPersonRoom(t);
+  for (const sessionKey of ["k-bec", "k-tam"]) {
+    await t.mutation(api.swipes.cast, { code: "3333", sessionKey, questId: a, dir: "yes" });
+  }
+  await runScheduled(t);
+  const before = await t.run(async (ctx) => ctx.db.query("plans").collect());
+  expect(before).toHaveLength(1);
+
+  await t.mutation(api.rooms.leave, { code: "3333", sessionKey: "k-tam" });
+  await runScheduled(t);
+
+  const after = await t.run(async (ctx) => ctx.db.query("plans").collect());
+  expect(after).toHaveLength(1);
+  expect(after[0]._id).toBe(before[0]._id);
+  expect(after[0].stops).toEqual(before[0].stops);
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("matched");
+  expect(room!.matchedQuestId).toBe(a);
+});
+
+// Correction 4. A guest who double-submits `rooms.join` before any session key
+// reaches their phone leaves a member row NOBODY holds the key for. It cannot
+// swipe and it cannot leave, so it blocks unanimity and exhaustion alike -- and
+// the match may never deadlock. The host is the one person present who can
+// clear it.
+test("the host removing a stuck member unblocks a room that was waiting on it", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, a, b, samId } = await threePersonRoom(t, "k-orphan-nobody-holds");
+  await exhaustTheDeck(t, [a, b]);
+  expect((await t.run(async (ctx) => ctx.db.get(roomId)))!.status).toBe("swiping");
+
+  await t.mutation(api.rooms.removeMember, {
+    code: "3333", sessionKey: "k-bec", memberId: samId,
+  });
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("matched");
+  expect(room!.matchedQuestId).toBe(a);
+  const roster = await t.run(async (ctx) =>
+    ctx.db.query("members").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect(),
+  );
+  expect(roster.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
+});

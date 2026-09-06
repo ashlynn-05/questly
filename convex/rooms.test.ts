@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
@@ -334,6 +334,21 @@ test("leaving takes your proposal votes with you", async () => {
       .collect();
     const host = members.find((m) => m.isHost)!;
     const leaver = members.find((m) => m.sessionKey === guest.sessionKey)!;
+
+    // A real plan to edit, so the proposal's resolution below is the genuine
+    // accept path rather than "there was nothing to swap".
+    const questId = await ctx.db.insert("quests", {
+      roomId: room!._id, rank: 0, source: "places", placeId: "p", title: "T", blurb: "",
+      priceLabel: "Free", priceCents: 0, distanceKm: 1, discountPct: 0, score: 1, scoreBreakdown: {},
+    });
+    await ctx.db.insert("plans", {
+      roomId: room!._id, questId, totalPerHeadCents: 0, shareMessage: "x",
+      stops: [{
+        id: "s1", slot: "main", name: "The bench", startAt: CREATE.whenAt, durationMin: 60,
+        costPerHeadCents: 0, note: "", source: "llm", locked: false,
+      }],
+    });
+
     const proposalId = await ctx.db.insert("proposals", {
       roomId: room!._id, stopId: "s1", proposedBy: host._id, status: "open", reason: "closer",
       replacement: {
@@ -350,10 +365,16 @@ test("leaving takes your proposal votes with you", async () => {
   const votes = await t.run(async (ctx) => ctx.db.query("proposalVotes").collect());
   expect(votes).toHaveLength(1);
 
-  // The remaining vote is the host's, and the open proposal is still visible.
+  expect(votes[0].vote).toBe("yes");
+
+  // ...and the proposal does not hang. The roster it needed a majority of has
+  // shrunk to one, the host's yes already IS that majority, and nobody is left
+  // to cast the vote it would otherwise be waiting for -- so `rooms.leave`
+  // re-resolves it on the remaining roster and the swap lands. See
+  // convex/proposals.test.ts for the full re-resolution behaviour.
   const view = await asHost.query(api.rooms.get, { code, sessionKey });
-  expect(view!.proposals).toHaveLength(1);
-  expect(view!.proposals[0]).toMatchObject({ yes: 1, needed: 1, youVoted: true });
+  expect(view!.proposals).toEqual([]);
+  expect(view!.plan!.stops[0].name).toBe("Other bar");
 });
 
 test("the host cannot leave their own room, and fails with HOST_CANNOT_LEAVE", async () => {
@@ -364,5 +385,102 @@ test("the host cannot leave their own room, and fails with HOST_CANNOT_LEAVE", a
     t.mutation(api.rooms.leave, { code, sessionKey }),
     "HOST_CANNOT_LEAVE",
     /host/i,
+  );
+});
+
+// --- the host's escape hatch ----------------------------------------------
+//
+// `rooms.join` deliberately gives an unrecognisable guest a fresh row rather
+// than merging two people called Tam into one member. The cost is a row nobody
+// holds the session key for, which can neither swipe nor leave. The host can
+// clear it. `memberId` here is a TARGET, never a credential: the authority is
+// the caller's own sessionKey.
+
+/** The member row a session key stands for. */
+const memberIdOf = (t: TestConvex<typeof schema>, code: string, sessionKey: string) =>
+  t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room_session", (q) => q.eq("roomId", room!._id).eq("sessionKey", sessionKey))
+      .unique();
+    return member!._id;
+  });
+
+test("the host can remove a member, and their rows go with them", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  const memberId = await memberIdOf(t, code, guest.sessionKey);
+
+  await t.mutation(api.rooms.removeMember, { code, sessionKey, memberId });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members.map((m) => m.name)).toEqual(["Bec"]);
+  // Their key stops working, exactly as if they had left.
+  expect(await t.query(api.rooms.get, { code, sessionKey: guest.sessionKey })).toBeNull();
+});
+
+test("a member who is not the host cannot remove anyone", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const tam = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  await t.mutation(api.rooms.join, { code, name: "Sam" });
+  const hostId = await memberIdOf(t, code, sessionKey);
+
+  await expectUserError(
+    t.mutation(api.rooms.removeMember, { code, sessionKey: tam.sessionKey, memberId: hostId }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(3);
+});
+
+test("the host cannot remove themselves", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const memberId = await memberIdOf(t, code, sessionKey);
+  await expectUserError(
+    t.mutation(api.rooms.removeMember, { code, sessionKey, memberId }),
+    "HOST_CANNOT_LEAVE",
+    /host/i,
+  );
+});
+
+test("a host cannot remove a member of another room", async () => {
+  const t = convexTest(schema, modules);
+  const asBec = t.withIdentity({ subject: "u1", name: "Bec" });
+  const asKim = t.withIdentity({ subject: "u2", name: "Kim" });
+  const mine = await asBec.mutation(api.rooms.create, CREATE);
+  const theirs = await asKim.mutation(api.rooms.create, { ...CREATE, hostName: "Kim" });
+  const guest = await t.mutation(api.rooms.join, { code: theirs.code, name: "Tam" });
+  const foreignId = await memberIdOf(t, theirs.code, guest.sessionKey);
+
+  await expectUserError(
+    t.mutation(api.rooms.removeMember, {
+      code: mine.code, sessionKey: mine.sessionKey, memberId: foreignId,
+    }),
+    "NOT_A_MEMBER",
+    /not in this room/i,
+  );
+  const view = await asKim.query(api.rooms.get, { code: theirs.code, sessionKey: theirs.sessionKey });
+  expect(view!.members).toHaveLength(2);
+});
+
+test("a stranger's session key cannot remove anyone", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  const memberId = await memberIdOf(t, code, guest.sessionKey);
+
+  await expectUserError(
+    t.mutation(api.rooms.removeMember, { code, sessionKey: "k-nobody", memberId }),
+    "NOT_A_MEMBER",
+    /not a member/i,
   );
 });

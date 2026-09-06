@@ -3,9 +3,10 @@ import { mutation, query } from "./_generated/server";
 import schema, { moodValidator, stopValidator } from "./schema";
 import {
   MAX_ROOM_MEMBERS,
-  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireUserId, roomByCode, safeUserId,
+  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireMember, requireUserId, roomByCode, safeUserId,
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
+import { detachMember } from "./lib/roster";
 
 const memberViewValidator = v.object({
   _id: v.id("members"),
@@ -372,10 +373,14 @@ export const openRooms = query({
 });
 
 /**
- * Someone bails. Their swipes go with them, because unanimity is judged against
- * the current roster -- a departed member's "no" must not hold the room hostage.
- * The host cannot leave: the room is theirs, and an orphaned room has nobody to
- * start the deck.
+ * Someone bails. Their swipes and their proposal votes go with them, because
+ * unanimity and majority are both judged against the current roster -- a
+ * departed member's "no" must not hold the room hostage. The host cannot leave:
+ * the room is theirs, and an orphaned room has nobody to start the deck.
+ *
+ * Everything after the authorisation check is `detachMember`, which is shared
+ * byte-for-byte with `removeMember` below and which re-decides the two things
+ * the shrunken roster has just changed: every open proposal, and the match.
  */
 export const leave = mutation({
   args: { code: v.string(), sessionKey: v.string() },
@@ -386,26 +391,53 @@ export const leave = mutation({
     if (!member) return null; // already gone; leaving twice is not an error
     if (member.isHost) throwUserError("HOST_CANNOT_LEAVE", "The host cannot leave their own room.");
 
-    const swipes = await ctx.db
-      .query("swipes")
-      .withIndex("by_room_member", (q) => q.eq("roomId", room._id).eq("memberId", member._id))
-      .collect();
-    for (const swipe of swipes) {
-      await ctx.db.delete(swipe._id);
+    await detachMember(ctx, member);
+    return null;
+  },
+});
+
+/**
+ * The host's escape hatch: remove someone who cannot remove themselves.
+ *
+ * `rooms.join` deliberately gives an accountless guest with no prior key a
+ * fresh row, because two friends both called Tam must not be merged into one
+ * member. The cost is that a guest who submits `join` twice before their first
+ * session key reaches their phone leaves behind a member row that NOBODY holds
+ * the key for. That row cannot swipe and cannot `leave` -- and it is counted by
+ * both match conditions and by every majority -- so the room waits on a person
+ * who does not exist. The Global Constraint says the match can never deadlock,
+ * so somebody has to be able to clear it, and the only person present who can
+ * be trusted with that is the host.
+ *
+ * `memberId` is a TARGET, never a credential. The caller's authority comes from
+ * their own `sessionKey`, and the row they name must belong to the room that
+ * key is for -- otherwise a host of any room could delete a member of any other.
+ */
+export const removeMember = mutation({
+  args: { code: v.string(), sessionKey: v.string(), memberId: v.id("members") },
+  returns: v.null(),
+  handler: async (ctx, { code, sessionKey, memberId }): Promise<null> => {
+    const room = await roomByCode(ctx, code);
+    const caller = await requireMember(ctx, room._id, sessionKey);
+    if (!caller.isHost) {
+      throwUserError("NOT_THE_HOST", "Only the host can remove someone from this room.");
     }
 
-    const votes = await ctx.db
-      .query("proposalVotes")
-      .withIndex("by_member", (q) => q.eq("memberId", member._id))
-      .collect();
-    for (const vote of votes) {
-      await ctx.db.delete(vote._id);
+    const target = await ctx.db.get(memberId);
+    if (!target || target.roomId !== room._id) {
+      throwUserError("NOT_A_MEMBER", "That person is not in this room.");
+    }
+    // The host cannot remove themselves, for the same reason they cannot leave:
+    // an orphaned room has nobody to start the deck. Covers the caller's own
+    // row and any other host row, without trusting that there is exactly one.
+    if (target.isHost) {
+      throwUserError("HOST_CANNOT_LEAVE", "The host cannot remove themselves from their own room.");
     }
 
-    await ctx.db.delete(member._id);
-
-    // TODO(task 12): re-resolve any open proposal that can no longer reach a
-    // majority of the shrunken roster.
+    // Exactly what `leave` does, because a member removed and a member departed
+    // must leave the room in the same state. One implementation, so the two can
+    // never drift.
+    await detachMember(ctx, target);
     return null;
   },
 });

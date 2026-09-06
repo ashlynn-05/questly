@@ -1,8 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
 import schema, { stopValidator } from "./schema";
+import { memberCount, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
+import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
 import { isOverBudget, totalPerHeadCents } from "./lib/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
@@ -19,6 +21,13 @@ export const planContext = internalQuery({
     const quest = await ctx.db.get(questId);
     if (!room) throwUserError("ROOM_NOT_FOUND", "That room is gone.");
     if (!quest) throwUserError("QUEST_NOT_FOUND", "That quest is gone.");
+    // The pair must actually belong together. Internal-only today, so nothing
+    // can supply a mismatched pair from outside -- but a mismatch would plan
+    // another room's venue with this room's budget and party size, and it would
+    // do it silently.
+    if (quest.roomId !== roomId) {
+      throwUserError("QUEST_NOT_FOUND", "That quest belongs to another room.");
+    }
 
     const members = await ctx.db
       .query("members")
@@ -115,6 +124,93 @@ export const generate = internalAction({
       questId: args.questId,
       stops: result.stops,
       shareMessage: result.shareMessage,
+    });
+    return null;
+  },
+});
+
+/**
+ * A solo user editing their own plan.
+ *
+ * GLOBAL CONSTRAINT -- one editing path per room size, enforced here on the
+ * server rather than only in the UI. A room of one swaps a stop directly; a
+ * room of two or more can only change its plan through `proposals.open`, which
+ * the room then votes on. The two paths must never overlap: a direct write
+ * alongside an open proposal on the same stop is a race between one person's
+ * edit and the room's decision, and the room is supposed to win. The UI mirrors
+ * this later, and must never offer a control this would reject.
+ *
+ * The swap itself is `applyStopSwap`, the same call the accepted-proposal path
+ * makes, so the solo edit and the group edit cannot drift.
+ */
+export const replaceStop = mutation({
+  args: {
+    code: v.string(),
+    sessionKey: v.string(),
+    stopId: v.string(),
+    replacement: stopValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const room = await roomByCode(ctx, args.code);
+    // The sessionKey is the only authority accepted: a capability to act as one
+    // member in one room. No memberId or userId argument exists.
+    await requireMember(ctx, room._id, args.sessionKey);
+
+    if ((await memberCount(ctx, room._id)) > 1) {
+      throwUserError(
+        "GROUP_NEEDS_PROPOSAL",
+        "In a group room, changes go through a proposal the room votes on.",
+      );
+    }
+
+    await applyStopSwap(ctx, room._id, args.stopId, args.replacement);
+    return null;
+  },
+});
+
+/**
+ * Pin a stop, or unpin it.
+ *
+ * DELIBERATELY a direct edit even in a group, and NOT routed through a
+ * proposal -- do not "fix" this later. A lock changes nothing about the night:
+ * it is a signal to the room that someone cares about this stop, it is fully
+ * reversible by anyone in one tap, and it costs nobody anything. Making the
+ * room vote on a signal would be ceremony, and it would mean a stop could not
+ * be protected until a majority agreed to protect it. Content changes -- what
+ * the stop actually IS -- are the thing the room votes on, and those go through
+ * `proposals.open`.
+ *
+ * Locking is unanimous by construction: anyone can lock, anyone can unlock. It
+ * is not a permission system, and it must never become one.
+ */
+export const setLocked = mutation({
+  args: {
+    code: v.string(),
+    sessionKey: v.string(),
+    stopId: v.string(),
+    locked: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const room = await roomByCode(ctx, args.code);
+    await requireMember(ctx, room._id, args.sessionKey);
+
+    // .first(), not .unique(), for the reason documented at length in rooms.get:
+    // a duplicate plan row must not turn into a throw on every edit in the room.
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .first();
+    if (!plan) throwUserError("PLAN_NOT_READY", "There is no plan to edit yet.");
+
+    // A typo'd stop id must not report success while changing nothing.
+    if (!plan.stops.some((s) => s.id === args.stopId)) {
+      throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
+    }
+
+    await ctx.db.patch(plan._id, {
+      stops: plan.stops.map((s) => (s.id === args.stopId ? { ...s, locked: args.locked } : s)),
     });
     return null;
   },
