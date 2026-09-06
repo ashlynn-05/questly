@@ -212,6 +212,78 @@ function blend(vectors: number[][]): number[] | undefined {
   return out;
 }
 
+/** Everything `scoreQuest` needs that is a property of the candidate. */
+type Rankable = {
+  priceCents: number;
+  distanceKm: number;
+  discountPct: number;
+  partnerTier: number;
+  moodMatch: boolean;
+};
+
+/**
+ * The rest of `scoreQuest`'s input is a property of the ROOM doing the asking,
+ * never of the candidate list. One closure per build, shared by the full path
+ * and the cache path below, so a deck assembled from borrowed candidates cannot
+ * be ranked by different maths than one assembled from a fresh Places call.
+ */
+const rankFor = (room: Doc<"rooms">) => (c: Rankable, tasteSimilarity: number) =>
+  scoreQuest({
+    priceCents: c.priceCents,
+    budgetPerHeadCents: room.budgetPerHeadCents,
+    distanceKm: c.distanceKm,
+    radiusKm: room.radiusKm,
+    discountPct: c.discountPct,
+    partnerTier: c.partnerTier,
+    moodMatch: c.moodMatch,
+    tasteSimilarity,
+  });
+
+type Ranked<T> = T & { score: number; breakdown: Record<string, number> };
+
+/**
+ * Rank a candidate list for one room, taste included, best first.
+ *
+ * The taste term is the product's differentiator -- the onboarding quiz exists
+ * to fill it -- so it runs on every path that produces a deck, borrowed
+ * candidates included. With no signed-in member carrying a vector the blend is
+ * undefined, the term is a constant 0, and the embedding call is skipped.
+ */
+async function rankByTaste<T extends Rankable & { title: string; blurb: string }>(
+  ctx: ActionCtx,
+  candidates: T[],
+  vectors: number[][],
+  rank: (c: Rankable, tasteSimilarity: number) => { score: number; breakdown: Record<string, number> },
+): Promise<Array<Ranked<T>>> {
+  const byScore = (a: { score: number }, b: { score: number }) => b.score - a.score;
+  const base: Array<Ranked<T>> = candidates.map((c) => ({ ...c, ...rank(c, 0) })).sort(byScore);
+
+  // Guests contribute nothing, so the signed-in members' taste carries the
+  // room. With none at all the ranking falls back to budget, distance, mood
+  // and partner tier.
+  const roomTaste = blend(vectors);
+  if (!roomTaste) return base;
+
+  try {
+    const questVectors: number[][] = await ctx.runAction(internal.ai.embeddings.embedMany, {
+      texts: base.map((c) => `${c.title}. ${c.blurb}`),
+    });
+    return base
+      .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
+      .sort(byScore);
+  } catch (error) {
+    // Ranking without taste is worse, not broken. Keep the untasted order --
+    // but say so. A permanent OpenAI outage would otherwise degrade every
+    // deck in the product forever, with nothing in the logs to explain why
+    // the personalisation stopped working.
+    console.warn("deck.build: taste re-rank skipped, ranking without it.", error);
+    return base;
+  }
+}
+
+/** One place, so a borrowed card can never label its price differently. */
+const priceLabelFor = (cents: number) => (cents === 0 ? "Free" : `$${Math.round(cents / 100)}`);
+
 /**
  * One call, all nine blurbs. Returns an array aligned to `titles`, with an
  * empty string wherever the model gave nothing -- the caller falls back to the
@@ -272,20 +344,119 @@ async function insertDeck(
   return deckSize;
 }
 
+/** A borrowed candidate, carrying the two score inputs `quests` does not store. */
+type CachedCandidate = Infer<typeof questFields> & {
+  partnerTier: number;
+  moodMatch: boolean;
+};
+
+/**
+ * Turn a borrowed candidate list into THIS room's deck.
+ *
+ * What the cache holds is the expensive, room-independent half of a build: the
+ * Places result set and the blurbs written over it. The other half -- the
+ * ranking -- is not room-independent, so none of it is borrowed. Partner tier,
+ * offer and distance are read back off this room's own live partner rows, and
+ * `rankByTaste` runs this room's members' vectors over the borrowed titles.
+ * Serving the donor's order instead would hand one group's personalisation to
+ * another, which is precisely what the onboarding quiz exists to prevent.
+ *
+ * Returns fewer rows than it was given when a partner has since gone inactive
+ * or dropped this mood: `deck.context` filters `venues` on `active === true`,
+ * and a withdrawn offer must never reappear through the cache as a live
+ * commercial claim.
+ */
+async function deckFromCache(
+  ctx: ActionCtx,
+  room: Doc<"rooms">,
+  partners: Array<Doc<"venues">>,
+  vectors: number[][],
+  cached: Array<Infer<typeof questFields>>,
+): Promise<Array<Infer<typeof questFields>>> {
+  const partnerByPlaceId = new Map(partners.map((p) => [p.placeId, p]));
+
+  const candidates: CachedCandidate[] = [];
+  for (const q of cached) {
+    if (q.source === "partner") {
+      const venue = partnerByPlaceId.get(q.placeId);
+      // Not on this room's active-partner list any more. Drop it rather than
+      // show its offer, and drop it rather than silently restate it as a
+      // non-partner card: the offer text IS the blurb, so there is nothing
+      // honest left to say about it.
+      if (!venue) continue;
+      candidates.push({
+        ...q,
+        // The live row wins over the cached copy on every commercial field.
+        title: venue.name,
+        blurb: venue.offerText,
+        priceCents: venue.priceFromCents,
+        discountPct: venue.discountPct,
+        photoUrl: venue.photoUrl,
+        partnerTier: venue.partnerTier,
+        distanceKm: distanceKm(room.centreLat, room.centreLng, venue.lat, venue.lng),
+        // deck.context only returns partners carrying this room's mood.
+        moodMatch: true,
+      });
+      continue;
+    }
+    candidates.push({
+      ...q,
+      partnerTier: 0,
+      discountPct: 0,
+      // `moodMatch` was never stored on its own, but the term it produced was:
+      // `moodFit` is `moodMatch ? 1 : 0` times a fixed weight, and mood is part
+      // of `cacheKey`, so a borrowed row's answer is this room's answer too.
+      moodMatch: (q.scoreBreakdown.moodFit ?? 0) > 0,
+      // A Places row keeps the `distanceKm` it was built with, and that is a
+      // measurement rather than a guess: `cacheKey` matches centres exactly,
+      // so the donor measured from the same point this room measures from.
+      // The only loss is the 100m rounding applied when the row was stored --
+      // the same rounding the card displays.
+    });
+  }
+
+  const scored = (await rankByTaste(ctx, candidates, vectors, rankFor(room))).slice(0, DECK_SIZE);
+
+  return scored.map((c, i) => ({
+    rank: i,
+    source: c.source,
+    placeId: c.placeId,
+    title: c.title,
+    blurb: c.blurb,
+    priceLabel: priceLabelFor(c.priceCents),
+    priceCents: c.priceCents,
+    distanceKm: Math.round(c.distanceKm * 10) / 10,
+    discountPct: c.discountPct,
+    photoUrl: c.photoUrl,
+    photoName: c.photoName,
+    mapsUri: c.mapsUri,
+    websiteUri: c.websiteUri,
+    score: c.score,
+    scoreBreakdown: c.breakdown,
+  }));
+}
+
 /**
  * The build itself, once the caller has been established as the host of a room
  * that is ready for one. Separated so `build` can put the room back in the
  * lobby if any of it fails.
  */
 async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Promise<number> {
-  // A second demo run asking the same question -- same mood, radius, budget and
-  // centre, within the hour -- gets the same nine cards without spending
-  // Places or OpenAI quota again. See `recentDeck` below for what "the same
-  // question" means and why it is safe to reuse.
-  const cached = await ctx.runQuery(internal.deck.recentDeck, { roomId });
-  if (cached) return insertDeck(ctx, roomId, token, cached);
-
   const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
+  const rank = rankFor(room);
+
+  // A room that recently asked the same question -- same mood, radius, budget
+  // and centre, within the hour -- already paid for the two room-independent
+  // halves of a build: the Places result set and the written blurbs. Borrow
+  // those; do the ranking here, for this room. See `recentDeck` below.
+  const cached = await ctx.runQuery(internal.deck.recentDeck, { roomId });
+  if (cached) {
+    const quests = await deckFromCache(ctx, room, partners, vectors, cached);
+    // Empty only when every borrowed row was a partner offer since withdrawn.
+    // Then there is nothing left to reuse and a full build is the right answer.
+    if (quests.length > 0) return insertDeck(ctx, roomId, token, quests);
+  }
+
   const free = room.budgetPerHeadCents === 0;
   const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
 
@@ -349,48 +520,12 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Pr
 
   // Two passes. The first ranks on the cheap signals and cuts to a shortlist,
   // so the embedding call costs 15 vectors rather than every Places result.
-  const rank = (c: Candidate, tasteSimilarity: number) =>
-    scoreQuest({
-      priceCents: c.priceCents,
-      budgetPerHeadCents: room.budgetPerHeadCents,
-      distanceKm: c.distanceKm,
-      radiusKm: room.radiusKm,
-      discountPct: c.discountPct,
-      partnerTier: c.partnerTier,
-      moodMatch: c.moodMatch,
-      tasteSimilarity,
-    });
-
   const shortlist = candidates
     .map((c) => ({ ...c, ...rank(c, 0) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, SHORTLIST_SIZE);
 
-  // Taste. The room's vector is the mean of its signed-in members' vectors;
-  // guests contribute nothing, so the host's carries. With no vectors at all
-  // the term is 0 and the ranking falls back to budget, distance and partner.
-  const roomTaste = blend(vectors);
-  let scored = shortlist;
-
-  if (roomTaste) {
-    try {
-      const questVectors: number[][] = await ctx.runAction(
-        internal.ai.embeddings.embedMany,
-        { texts: shortlist.map((c) => `${c.title}. ${c.blurb}`) },
-      );
-      scored = shortlist
-        .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
-        .sort((a, b) => b.score - a.score);
-    } catch (error) {
-      // Ranking without taste is worse, not broken. Keep the shortlist order --
-      // but say so. A permanent OpenAI outage would otherwise degrade every
-      // deck in the product forever, with nothing in the logs to explain why
-      // the personalisation stopped working.
-      console.warn("deck.build: taste re-rank skipped, ranking without it.", error);
-    }
-  }
-
-  scored = scored.slice(0, DECK_SIZE);
+  const scored = (await rankByTaste(ctx, shortlist, vectors, rank)).slice(0, DECK_SIZE);
 
   // One batched call writes all nine blurbs. Batched because nine sequential
   // calls is the difference between a loading state and an abandoned room --
@@ -409,7 +544,7 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Pr
       title: c.title,
       // A partner's own offer text always wins -- it is the commercial claim.
       blurb: c.source === "partner" ? c.blurb : blurbs[i] || c.blurb,
-      priceLabel: c.priceCents === 0 ? "Free" : `$${Math.round(c.priceCents / 100)}`,
+      priceLabel: priceLabelFor(c.priceCents),
       priceCents: c.priceCents,
       distanceKm: Math.round(c.distanceKm * 10) / 10,
       discountPct: c.discountPct,
@@ -472,15 +607,34 @@ export const build = action({
 const DECK_TTL_MS = 60 * 60 * 1000;
 
 /**
- * What makes two rooms' decks interchangeable: the same mood (drives which
- * Places types were queried and which partner venues are eligible), the same
- * radius and budget (both feed `scoreQuest`), and a centre within about a
- * kilometre of each other (`toFixed(2)` on a degree of latitude is roughly
- * 1.1km, close enough that two rooms both centred on the Melbourne CBD collapse
- * to one key). Two rooms sharing this key would have queried Places for the
- * same candidates and scored them the same way, so their decks are
- * indistinguishable -- reusing one is not a different answer, it is the same
- * answer arriving without a second network round trip.
+ * How far back the lookup reaches. The TTL already bounds the index range; this
+ * bounds a busy hour, so one room's build can never read an unbounded number of
+ * rows. A bucket that has fallen off the end of this window is a cache MISS --
+ * a full build, which is slower and dearer but never a wrong answer.
+ */
+const CACHE_LOOKBACK = 50;
+
+/**
+ * What two rooms must share for one's candidate list to be usable by the other.
+ *
+ * Every component here determines the SEARCH, not the ranking: mood picks the
+ * Places types queried and which partner venues are eligible; radius is the
+ * search circle; a $0 budget swaps the type list for `FREE_TYPES` and zeroes
+ * every Places price; and the centre is both the point that circle is drawn
+ * around and the point every stored `distanceKm` was measured from.
+ *
+ * The centre is matched exactly, not rounded to two decimals. Rounding would
+ * bucket two points up to ~1.4km apart into one key, and a borrowed
+ * `distanceKm` -- printed on the card as "0.3 km" and read aloud by a screen
+ * reader -- would then be the other room's distance to a real place, which is a
+ * false claim rather than an approximation.
+ *
+ * Nothing here claims the two rooms would RANK those candidates alike, and the
+ * cache no longer assumes it. `deckFromCache` re-scores every borrowed
+ * candidate against this room's own partner rows, centre and members' taste
+ * vectors. What is reused is only the network work -- one Places call and one
+ * batch of blurb completions -- and both depend on the search alone, never on
+ * who is asking.
  */
 const cacheKey = (r: {
   mood: string;
@@ -488,16 +642,19 @@ const cacheKey = (r: {
   budgetPerHeadCents: number;
   centreLat: number;
   centreLng: number;
-}) =>
-  [r.mood, r.radiusKm, r.budgetPerHeadCents, r.centreLat.toFixed(2), r.centreLng.toFixed(2)].join("|");
+}) => [r.mood, r.radiusKm, r.budgetPerHeadCents, r.centreLat, r.centreLng].join("|");
 
 /**
- * A second demo run must be instant and must not depend on the network. Places
- * results for the same area and constraints do not meaningfully change inside
- * an hour, so re-querying spends money to get the same nine cards. Returns the
- * cached room's deck stripped down to exactly `deck.insert`'s `quests` shape --
- * no `_id`, `_creationTime`, or the other room's `roomId` -- so the caller can
- * hand it straight back to `insert` for its own room.
+ * The candidate list a recent room with the same search already paid for, or
+ * `null`. Places results for the same area and constraints do not meaningfully
+ * change inside an hour, so re-querying spends money to be told the same nine
+ * places -- and re-writing their blurbs spends more to be told the same
+ * sentences about them.
+ *
+ * These rows are CANDIDATES, not a finished deck. The caller re-ranks them for
+ * its own room; see `deckFromCache`. They come back stripped to exactly
+ * `deck.insert`'s `quests` shape -- no `_id`, `_creationTime`, or the other
+ * room's `roomId`.
  */
 export const recentDeck = internalQuery({
   args: { roomId: v.id("rooms") },
@@ -507,12 +664,20 @@ export const recentDeck = internalQuery({
     if (!room) return null;
 
     const cutoff = Date.now() - DECK_TTL_MS;
-    const rooms = await ctx.db.query("rooms").collect();
+    // Newest first, and bounded twice: the index range drops everything built
+    // before the TTL, and `take` caps the rest. Freshest wins -- handing a room
+    // the oldest deck still inside the window would put it minutes from expiry
+    // when a far newer one was sitting right there.
+    const recent = await ctx.db
+      .query("rooms")
+      .withIndex("by_deckBuiltAt", (q) => q.gte("deckBuiltAt", cutoff))
+      .order("desc")
+      .take(CACHE_LOOKBACK);
 
-    for (const other of rooms) {
+    const key = cacheKey(room);
+    for (const other of recent) {
       if (other._id === roomId) continue;
-      if (!other.deckBuiltAt || other.deckBuiltAt < cutoff) continue;
-      if (cacheKey(other) !== cacheKey(room)) continue;
+      if (cacheKey(other) !== key) continue;
 
       const quests = await ctx.db
         .query("quests")

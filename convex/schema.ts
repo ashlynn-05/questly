@@ -116,7 +116,13 @@ export default defineSchema({
     demo: v.optional(v.boolean()),
   })
     .index("by_code", ["code"])
-    .index("by_visibility_status", ["visibility", "status"]),
+    .index("by_visibility_status", ["visibility", "status"])
+    // `deck.recentDeck` looks for rooms whose deck was built inside the TTL.
+    // Without this it is a full `rooms` scan on the critical path of every
+    // build, so the whole product stops building decks the moment the table
+    // outgrows a transaction's read limit. The field already existed; this
+    // adds no shape, only an ordering.
+    .index("by_deckBuiltAt", ["deckBuiltAt"]),
 
   members: defineTable({
     roomId: v.id("rooms"),
