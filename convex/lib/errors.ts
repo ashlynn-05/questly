@@ -26,7 +26,11 @@ export type ErrorCode =
   | "ROOM_WRONG_STATE"
   | "NO_CANDIDATES"
   | "BUILD_IN_PROGRESS"
-  | "INVALID_GOAL";
+  | "INVALID_GOAL"
+  | "QUEST_NOT_FOUND"
+  | "PLAN_NOT_READY"
+  | "STOP_NOT_FOUND"
+  | "STOP_LOCKED";
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });
