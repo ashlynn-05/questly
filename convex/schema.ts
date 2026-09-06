@@ -172,7 +172,11 @@ export default defineSchema({
     proposalId: v.id("proposals"),
     memberId: v.id("members"),
     vote: v.union(v.literal("yes"), v.literal("no")),
-  }).index("by_proposal", ["proposalId"]),
+  })
+    .index("by_proposal", ["proposalId"])
+    // A departing member takes their votes with them; finding them must not be
+    // a full-table scan.
+    .index("by_member", ["memberId"]),
 
   bookings: defineTable({
     roomId: v.id("rooms"),
