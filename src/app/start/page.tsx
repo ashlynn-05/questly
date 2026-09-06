@@ -126,8 +126,15 @@ export default function StartPage() {
    * nothing happened. Moving focus to the new <h1> fixes both at once (WCAG
    * 2.4.3), which is also why there is no aria-live wrapper around the
    * sections -- a focused heading is already announced, and both together
-   * would say it twice. `cardIndex` is in the deps because the seven quiz
-   * cards are seven screens sharing one step.
+   * would say it twice.
+   *
+   * Keyed on `current` alone, not `cardIndex`: advancing a quiz card unmounts
+   * nothing (the `<h1>` and both answer plates persist across all seven
+   * cards), and the card's question text already carries `aria-live="polite"`,
+   * which announces the change on its own. Including `cardIndex` here pulled
+   * focus off the very button the user was repeatedly pressing, on every one
+   * of the seven cards. The last card's advance to "goals" still moves focus
+   * -- that transition changes `current`, which does swap the screen.
    */
   const headingRef = useRef<HTMLHeadingElement>(null);
   const announced = useRef<string | null>(null);
@@ -135,18 +142,17 @@ export default function StartPage() {
     // Nothing to focus while `profiles.me` is still in flight -- the page is
     // on the `Loading…` branch and no heading is mounted.
     if (current === null) return;
-    const screen = current === "quiz" ? `quiz-${cardIndex}` : current;
-    // Same screen as last time: a re-run that moved nothing, so move nothing.
+    // Same step as last time: a re-run that moved nothing, so move nothing.
     // (Strict Mode double-invokes mount effects; this is what stops that
     // second pass from stealing focus on arrival.)
-    if (announced.current === screen) return;
+    if (announced.current === current) return;
     const arriving = announced.current === null;
-    announced.current = screen;
+    announced.current = current;
     // The first screen is the page arriving, not a step change. Grabbing focus
     // there would cut across the browser's own announcement of a freshly
     // loaded document.
     if (!arriving) headingRef.current?.focus();
-  }, [current, cardIndex]);
+  }, [current]);
 
   /**
    * Every step change goes through here. `error` describes the step it was

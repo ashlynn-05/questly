@@ -205,7 +205,11 @@ test("an accountless guest with no prior key is a new person each time", async (
 test("a room cannot grow past the member cap", async () => {
   const t = convexTest(schema, modules);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
-  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  // headcount set above MAX_ROOM_MEMBERS so this exercises the absolute
+  // ceiling, not the headcount gate covered separately below.
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, {
+    ...CREATE, headcount: MAX_ROOM_MEMBERS + 5,
+  });
 
   // The host already occupies one seat.
   for (let i = 1; i < MAX_ROOM_MEMBERS; i++) {
@@ -220,6 +224,46 @@ test("a room cannot grow past the member cap", async () => {
   );
 });
 
+// --- capacity: the room's own planned headcount, not just the absolute cap -
+
+test("joining a room that has reached its headcount is refused with ROOM_FULL", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  // headcount 2: the host plus one guest fills it.
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, {
+    ...CREATE, headcount: 2,
+  });
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(2);
+
+  await expectUserError(
+    t.mutation(api.rooms.join, { code, name: "One too many" }),
+    "ROOM_FULL",
+    /2/,
+  );
+});
+
+test("a member of a full room re-joining with their sessionKey still gets their existing membership", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, {
+    ...CREATE, headcount: 2,
+  });
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  // The room is now exactly at its headcount. A stranger would be refused --
+  // but the gate sits after the re-entry check, so the existing member is not.
+  const again = await t.mutation(api.rooms.join, {
+    code, name: "Tam", sessionKey: guest.sessionKey,
+  });
+  expect(again.sessionKey).toBe(guest.sessionKey);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members).toHaveLength(2);
+});
+
 test("open rooms are discoverable by mood, private rooms are not", async () => {
   const t = convexTest(schema, modules);
   const asA = t.withIdentity({ subject: "u1", name: "A" });
@@ -230,6 +274,25 @@ test("open rooms are discoverable by mood, private rooms are not", async () => {
   const open = await t.query(api.rooms.openRooms, { mood: "meet" });
   expect(open).toHaveLength(1);
   expect(open[0].memberCount).toBe(1);
+});
+
+test("openRooms omits a room that has reached its headcount and keeps one that has not", async () => {
+  const t = convexTest(schema, modules);
+  const asA = t.withIdentity({ subject: "u1", name: "A" });
+  const asB = t.withIdentity({ subject: "u2", name: "B" });
+
+  // Full the moment it is created: headcount 1, one member (the host).
+  const full = await asA.mutation(api.rooms.create, {
+    ...CREATE, visibility: "open", mood: "meet", headcount: 1,
+  });
+  // Room for more.
+  const open = await asB.mutation(api.rooms.create, {
+    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+  });
+
+  const rooms = await t.query(api.rooms.openRooms, { mood: "meet" });
+  expect(rooms.map((r) => r.code)).toEqual([open.code]);
+  expect(rooms.map((r) => r.code)).not.toContain(full.code);
 });
 
 test("creating a room requires a signed-in host, and fails with NOT_SIGNED_IN", async () => {

@@ -193,6 +193,17 @@ export const join = mutation({
       );
     }
 
+    // The host's own capacity choice, not just the absolute ceiling above.
+    // `headcount` is what every string on screen ("4 of 4 in") presents as
+    // capacity, so a plan and a budget costed for four must actually stop
+    // admitting people at four.
+    if (roster.length >= room.headcount) {
+      throwUserError(
+        "ROOM_FULL",
+        `This room is already at its planned size of ${room.headcount}.`,
+      );
+    }
+
     // An accountless guest arriving with no prior key is unrecognisable by
     // construction, and deliberately so: two friends both called Tam are
     // indistinguishable from one Tam joining twice, and a name-based identity
@@ -362,7 +373,7 @@ export const openRooms = query({
       .withIndex("by_visibility_status", (q) => q.eq("visibility", "open").eq("status", "lobby"))
       .collect();
 
-    return await Promise.all(
+    const withCounts = await Promise.all(
       rooms
         .filter((r) => r.mood === mood)
         .map(async (r) => {
@@ -380,6 +391,11 @@ export const openRooms = query({
           };
         }),
     );
+
+    // A room already at its planned size is a dead end on the one screen that
+    // decides whether anyone reaches a room at all -- offering it only to
+    // refuse the tap is worse than not offering it.
+    return withCounts.filter((r) => r.memberCount < r.headcount);
   },
 });
 
