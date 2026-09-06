@@ -38,6 +38,7 @@ This is a demo-day build. That decision governs every trade below.
 |---|---|---|
 | Group model | Live multiplayer room | Convex realtime is already wired; two phones matching simultaneously is the one thing the group chat cannot do |
 | Match rule | Unanimous, fires instantly, top-card fallback on deck exhaustion | Preserves "nobody was outvoted"; the fallback means it cannot deadlock on stage |
+| Deck size | 9 cards | Long enough that a unanimous match feels earned, short enough to exhaust in about a minute |
 | Venue source | Google Places live + a partner table that boosts | Real data survives questioning; partner boost is the revenue model made visible |
 | Post-match | LLM itinerary → simulated booking → real deep link | Latency lands after the swipe, where it is free |
 | Plan editing | Any member proposes, majority accepts | User's call over host-only |
@@ -57,7 +58,7 @@ This is a demo-day build. That decision governs every trade below.
 5. **Constraints** — headcount, budget per head ($0 first), when, where (GPS-prefilled suburb + radius).
 6. **Room** — join code and share link. Guests enter a first name and are in. Live roster.
 7. **Deck** — one shared ordered deck, everyone swiping at once, presence showing who is still deciding. Buttons carry equal weight to the swipe gesture.
-8. **Match** — the instant the last yes lands, every phone resolves to the same destination.
+8. **Match** — the instant the last yes lands, every phone resolves to the same destination. Unanimity is evaluated against the members present **at the moment that yes lands**, not against everyone who was ever in the room: a member who leaves stops being required, and a member who joins mid-deck must swipe the cards already passed before they can complete a match. The roster is otherwise frozen once the room enters `swiping`.
 9. **Plan** — the itinerary, editable.
 10. **Booking** — reference, deep link out, add-to-calendar, share card.
 
@@ -93,7 +94,8 @@ Guests are `members` rows without a `userId`. That is the whole guest model — 
 **Mutations**
 - `rooms.create`, `rooms.join`, `rooms.leave`
 - `swipes.cast` — records the swipe, checks unanimity on that quest, and on a full house flips the room to `matched` and schedules `plans.generate`.
-- `plans.replaceStop`, `proposals.open`, `proposals.vote`
+- `plans.replaceStop` — **direct edit, permitted only in a room of one.** In any room with two or more members every edit goes through `proposals`; the mutation rejects a direct call otherwise, so there is one editing path per room size and no race between them.
+- `proposals.open`, `proposals.vote`
 - `bookings.confirm`
 
 **Actions**
@@ -126,7 +128,7 @@ score = w1·partnerBoost
 ## 8. Known problems this spec accepts
 
 - **Places cards are bare.** No real price, no vibe, and the current field mask requests no photos. The mask must add `photos`, `priceLevel`, `editorialSummary`, `websiteUri`, `googleMapsUri`, `currentOpeningHours`. This raises the billing SKU per query — fine at demo scale, and worth stating honestly if a judge asks about unit economics.
-- **Proposals reopen negotiation.** Chosen deliberately. Mitigated by resolving on majority the instant it is reached, one open proposal per stop, and the proposer's yes implied.
+- **Proposals reopen negotiation.** Chosen deliberately. Mitigated by resolving the instant a **strict majority of current room members** is reached — the proposer's yes counts and is recorded automatically — with one open proposal per stop at a time. A proposal that cannot reach a majority because members left resolves on the remaining roster.
 - **Solo matchmaking has a cold start.** Seed a few live-looking open rooms so the lobby is never empty.
 - **A raffle of one.** "Just me" rooms match on the first right-swipe. That is correct, not a bug.
 
