@@ -1,0 +1,90 @@
+import type { Id, Doc } from "../_generated/dataModel";
+import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
+
+type Ctx = QueryCtx | MutationCtx;
+type AnyCtx = Ctx | ActionCtx;
+
+/**
+ * Identity is always derived here, never passed in as an argument.
+ *
+ * `subject` is the Better Auth user id (the convex() plugin puts it there), so
+ * it is what rooms.hostUserId and profiles.userId store, and what
+ * t.withIdentity({ subject }) drives in tests. There is exactly one issuer, so
+ * subject is unambiguous -- do not swap this for tokenIdentifier.
+ */
+export async function safeUserId(ctx: AnyCtx): Promise<string | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  return identity?.subject ?? null;
+}
+
+export async function requireUserId(ctx: AnyCtx): Promise<string> {
+  const userId = await safeUserId(ctx);
+  if (!userId) throw new Error("You need to be signed in to do that.");
+  return userId;
+}
+
+/**
+ * Guests have no account, so they cannot be identified by auth. A sessionKey is
+ * a capability: holding it authorises acting as that one member in that one
+ * room, and nothing else. It is never an identity claim, and no function may
+ * accept a memberId or userId for authorisation in its place.
+ */
+export async function findMember(
+  ctx: Ctx,
+  roomId: Id<"rooms">,
+  sessionKey: string,
+): Promise<Doc<"members"> | null> {
+  return await ctx.db
+    .query("members")
+    .withIndex("by_room_session", (q) => q.eq("roomId", roomId).eq("sessionKey", sessionKey))
+    .unique();
+}
+
+export async function requireMember(
+  ctx: Ctx,
+  roomId: Id<"rooms">,
+  sessionKey: string,
+): Promise<Doc<"members">> {
+  const member = await findMember(ctx, roomId, sessionKey);
+  if (!member) throw new Error("You are not a member of this room.");
+  return member;
+}
+
+export async function findRoomByCode(ctx: Ctx, code: string): Promise<Doc<"rooms"> | null> {
+  return await ctx.db
+    .query("rooms")
+    .withIndex("by_code", (q) => q.eq("code", code))
+    .unique();
+}
+
+export async function roomByCode(ctx: Ctx, code: string): Promise<Doc<"rooms">> {
+  const room = await findRoomByCode(ctx, code);
+  if (!room) throw new Error(`No room with code ${code}.`);
+  return room;
+}
+
+export async function memberCount(ctx: Ctx, roomId: Id<"rooms">): Promise<number> {
+  const members = await ctx.db
+    .query("members")
+    .withIndex("by_room", (q) => q.eq("roomId", roomId))
+    .collect();
+  return members.length;
+}
+
+/** Strict majority of the current roster. */
+export function needed(members: number): number {
+  return Math.floor(members / 2) + 1;
+}
+
+const ALPHABET = "abcdefghijkmnopqrstuvwxyz23456789"; // no l/1, no o/0
+
+export function newSessionKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join("");
+}
+
+/** Four digits: short enough to read aloud across a table. */
+export function newRoomCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  return Array.from(bytes, (b) => String(b % 10)).join("");
+}
