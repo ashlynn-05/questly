@@ -22,11 +22,19 @@ export const create = mutation({
     const { hostName, ...room } = args;
 
     // Four digits collide eventually; retry rather than hand out a dead code.
+    // Never fall through to an insert on a taken code: two rooms sharing one
+    // code makes findRoomByCode's .unique() throw for both of them, forever, and
+    // rooms.get is the one subscription the whole client runs on.
     let code = newRoomCode();
+    let free = false;
     for (let i = 0; i < 10; i++) {
-      if (!(await findRoomByCode(ctx, code))) break;
+      if (!(await findRoomByCode(ctx, code))) {
+        free = true;
+        break;
+      }
       code = newRoomCode();
     }
+    if (!free) throw new Error("Could not find a free room code. Please try again.");
 
     const roomId = await ctx.db.insert("rooms", {
       ...room,
