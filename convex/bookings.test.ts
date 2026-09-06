@@ -238,6 +238,38 @@ test("a proposal opened before the booking can no longer be voted through", asyn
   expect(plan!.stops[0].name).toBe("The Long Weekend");
 });
 
+/**
+ * The freeze stops NEW decisions, not the reporting of an old one. Two phones
+ * submitting a vote at nearly the same moment is the normal case, and the loser
+ * of that race is owed the outcome rather than an error -- which stays true
+ * after the booking, because the decision was already made before it.
+ */
+test("a proposal the room already carried still reports its outcome after booking", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  const { proposalId } = await t.mutation(api.proposals.open, {
+    code: "6666", sessionKey: "k-bec", stopId: "s1",
+    replacement: REPLACEMENT, reason: "second thoughts",
+  });
+  // Two members, so Tam's yes is the majority and the swap lands.
+  const decided = await t.mutation(api.proposals.vote, {
+    code: "6666", sessionKey: "k-tam", proposalId, vote: "yes",
+  });
+  expect(decided.accepted).toBe(true);
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  // The late re-send reports, it does not throw ROOM_BOOKED.
+  const late = await t.mutation(api.proposals.vote, {
+    code: "6666", sessionKey: "k-bec", proposalId, vote: "yes",
+  });
+  expect(late.accepted).toBe(true);
+
+  // And it changed nothing: the room booked the swapped-in stop.
+  const plan = await t.run(async (ctx) => ctx.db.query("plans").first());
+  expect(plan!.stops[0].name).toBe("Somewhere else");
+});
+
 test("a plan with locked stops books normally", async () => {
   const t = convexTest(schema, modules);
   await matchedRoom(t, { locked: true });

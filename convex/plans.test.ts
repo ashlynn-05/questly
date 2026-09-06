@@ -460,7 +460,7 @@ function mockBoth(chat: unknown) {
 /** A room the caller is actually a member of, with a plan to edit. */
 async function seedMemberRoom(
   t: T,
-  over: { code?: string; budgetPerHeadCents?: number } = {},
+  over: { code?: string; budgetPerHeadCents?: number; stops?: Stop[] } = {},
 ) {
   const code = over.code ?? "4446";
   const { roomId, questId } = await seedRoom(t, {
@@ -474,7 +474,7 @@ async function seedMemberRoom(
   });
   await t.mutation(internal.plans.writePlan, {
     roomId, questId,
-    stops: [
+    stops: over.stops ?? [
       stop({ id: "a", slot: "meet", name: "Gate", durationMin: 20 }),
       stop({ id: "b", slot: "after", name: "Old nightcap", durationMin: 45, locked: true }),
     ],
@@ -668,4 +668,42 @@ test("suggestStop refuses a room whose plan has not landed yet", async () => {
     "PLAN_NOT_READY",
     /no plan to edit/i,
   );
+});
+
+/**
+ * "Suggest another" must not suggest the same place. The fallback searches for
+ * the stop it is replacing, so the venue being swapped out is the likeliest hit
+ * of all -- and a duplicate listing under a second place id is no more of an
+ * alternative than the original.
+ */
+test("the fallback never offers back the stop it is replacing", async () => {
+  const t = convexTest(schema, modules);
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) === OPENAI_URL) return new Response("upstream is unhappy", { status: 503 });
+    if (String(url) === PLACES_TEXT_URL) {
+      return json({
+        places: [
+          // The target itself, by place id.
+          { id: "p1", displayName: { text: "Bar Liberty" }, formattedAddress: "234 Johnston St" },
+          // A duplicate listing: different id, same venue.
+          { id: "p9", displayName: { text: "bar liberty " }, formattedAddress: "234 Johnston St" },
+          { id: "p2", displayName: { text: "Napier Hotel" }, formattedAddress: "210 Napier St" },
+          { id: "p3", displayName: { text: "Marion" }, formattedAddress: "53 Gertrude St" },
+        ],
+      });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const { code } = await seedMemberRoom(t, {
+    code: "4450",
+    stops: [stop({ id: "a", slot: "main", name: "Bar Liberty", placeId: "p1" })],
+  });
+
+  const { options } = await t.action(api.plans.suggestStop, {
+    code, sessionKey: "k-bec", stopId: "a",
+  });
+
+  // Two real alternatives, not three where one of them is the stop itself.
+  expect(options.map((o) => o.name)).toEqual(["Napier Hotel", "Marion"]);
 });

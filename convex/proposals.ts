@@ -114,10 +114,6 @@ export const vote = mutation({
   handler: async (ctx, args): Promise<{ accepted: boolean }> => {
     const room = await roomByCode(ctx, args.code);
     const member = await requireMember(ctx, room._id, args.sessionKey);
-    // A yes landing after the booking would apply a swap to the itinerary the
-    // group is already holding, so the vote is refused rather than counted --
-    // there is nothing left for it to decide.
-    refuseIfBooked(room);
 
     const proposal = await ctx.db.get(args.proposalId);
     // The room is checked as well as the id: `proposalId` is client-supplied,
@@ -131,6 +127,13 @@ export const vote = mutation({
     // rather than re-applying it: re-running an accepted swap would overwrite
     // whatever the room has done to that stop since.
     if (proposal.status !== "open") return { accepted: proposal.status === "accepted" };
+
+    // Below the line above, deliberately. The freeze stops NEW decisions being
+    // made after the group is holding a reference to the itinerary; it has no
+    // business breaking the reporting of a decision the room already made
+    // before the booking. Two phones submitting at once is the normal case, and
+    // the loser of that race is owed the outcome, not an error.
+    refuseIfBooked(room);
 
     const existing = await ctx.db
       .query("proposalVotes")

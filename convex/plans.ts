@@ -372,6 +372,21 @@ export const suggestStop = action({
       lng: view.room.centreLng,
       radiusKm: view.room.radiusKm,
     });
-    return { options: toOptions(found.results, target.slot, "nearby").slice(0, 3) };
+
+    // The fallback searches for the stop it is replacing, and the search is
+    // biased to the room's area, so the top hit is very often the exact venue
+    // the user asked to get rid of. A swap sheet whose first option is the stop
+    // you are trying to replace reads as broken.
+    //
+    // Both the place id and the name are checked: a duplicate Places listing
+    // carries a different id and is still not an alternative. Two real
+    // alternatives beat three where one of them is not one, so nothing is
+    // backfilled to make the count up.
+    const targetName = target.name.trim().toLowerCase();
+    const alternatives = found.results.filter(
+      (place) => place.id !== target.placeId && place.name.trim().toLowerCase() !== targetName,
+    );
+
+    return { options: toOptions(alternatives, target.slot, "nearby").slice(0, 3) };
   },
 });
