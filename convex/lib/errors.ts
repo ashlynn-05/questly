@@ -25,6 +25,7 @@ export type ErrorCode =
   | "NOT_THE_HOST"
   | "ROOM_WRONG_STATE"
   | "NO_CANDIDATES"
+  | "BUILD_IN_PROGRESS"
   | "INVALID_GOAL";
 
 export function throwUserError(code: ErrorCode, message: string): never {

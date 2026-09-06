@@ -102,6 +102,10 @@ export default defineSchema({
     code: v.string(),
     matchedQuestId: v.optional(v.id("quests")),
     deckBuiltAt: v.optional(v.number()),
+    // When the current build claimed the room. Set with status "building" in
+    // one transaction, so a second build can tell a build in flight from one
+    // whose action was killed before it could hand the room back.
+    buildStartedAt: v.optional(v.number()),
     // Seeded rooms exist so the matchmaking lobby is never empty. They are
     // labelled everywhere they are shown: a fabricated stranger presented as a
     // real one would breach the product's honesty constraints.
@@ -132,7 +136,12 @@ export default defineSchema({
     priceCents: v.number(),
     distanceKm: v.number(),
     discountPct: v.number(),
+    // A partner venue's own hosted image.
     photoUrl: v.optional(v.string()),
+    // A Google photo reference, rendered via /places/photo. Never a media URL:
+    // that would carry our API key into a stored row, where rotating the key
+    // would silently break every deck already built.
+    photoName: v.optional(v.string()),
     mapsUri: v.optional(v.string()),
     websiteUri: v.optional(v.string()),
     score: v.number(),

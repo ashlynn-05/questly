@@ -24,10 +24,7 @@ const CHAT_MODEL = "gpt-4o-mini";
  * in the browser is the right amount of detail for them. Callers that can carry
  * on without the model's answer catch it and fall back.
  */
-export async function jsonCompletion(
-  prompt: string,
-  model: string = CHAT_MODEL,
-): Promise<unknown> {
+export async function jsonCompletion(prompt: string): Promise<unknown> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set. Run: npx convex env set OPENAI_API_KEY <key>");
@@ -37,7 +34,7 @@ export async function jsonCompletion(
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model,
+      model: CHAT_MODEL,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     }),

@@ -79,7 +79,7 @@ const EXPECTED_MAPPED = [
     summary: "Specialty coffee roaster with all-day brunch.",
     mapsUri: "https://maps.google.com/?cid=1",
     websiteUri: "https://proudmarycoffee.com.au",
-    photoUrl: `https://places.googleapis.com/v1/places/place-1/photos/abc123/media?maxWidthPx=800&key=${API_KEY}`,
+    photoName: "places/place-1/photos/abc123",
     openNow: true,
   },
   {
@@ -97,7 +97,7 @@ const EXPECTED_MAPPED = [
     summary: null,
     mapsUri: null,
     websiteUri: null,
-    photoUrl: null,
+    photoName: null,
     openNow: null,
   },
 ];
@@ -183,5 +183,92 @@ test("searchNearby refuses an anonymous caller", async () => {
   const promise = t.action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 });
   await expect(promise).rejects.toBeInstanceOf(ConvexError);
   await expect(promise).rejects.toMatchObject({ data: { code: "NOT_SIGNED_IN" } });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+// The whole point of the photo route: our billed key is spendable by anyone who
+// can read it, and a PlaceResult is returned to browsers AND persisted into
+// `quests`. A direct string search over the serialised value is the assertion,
+// because it holds no matter how the shape is refactored later.
+test("no PlaceResult carries the Google key in any field", async () => {
+  const t = convexTest(schema, modules);
+
+  const result = await t.withIdentity({ subject: "u1" }).action(api.places.searchNearby, {
+    lat: -37.8136,
+    lng: 144.9631,
+    radiusKm: 2,
+  });
+
+  expect(JSON.stringify(result)).not.toContain(API_KEY);
+  expect(JSON.stringify(result)).not.toContain("key=");
+  expect(result.results[0].photoName).toBe("places/place-1/photos/abc123");
+});
+
+test("the photo route attaches the key server-side and redirects to Google", async () => {
+  const t = convexTest(schema, modules);
+  fetchMock.mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ photoUri: "https://lh3.googleusercontent.com/signed-and-keyless" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+
+  const response = await t.fetch("/places/photo?name=places/place-1/photos/abc123");
+
+  expect(response.status).toBe(302);
+  const location = response.headers.get("Location")!;
+  expect(location).toBe("https://lh3.googleusercontent.com/signed-and-keyless");
+  // Google's signed URL is what the browser sees, and it is not ours to leak.
+  expect(location).not.toContain(API_KEY);
+
+  // Our key went to Google in a header, never in the URL -- a URL is logged,
+  // cached and handed back in redirects; a header is not.
+  const [url, init] = fetchMock.mock.calls[0];
+  expect(String(url)).not.toContain(API_KEY);
+  expect(String(url)).toContain("skipHttpRedirect=true");
+  expect((init.headers as Record<string, string>)["X-Goog-Api-Key"]).toBe(API_KEY);
+});
+
+test("the photo route refuses anything that is not a Places photo reference", async () => {
+  const t = convexTest(schema, modules);
+
+  for (const name of [
+    "",
+    "../../v1/places:searchText",
+    "places/x/photos/y/../../../other",
+    "https://places.googleapis.com/v1/places/x/photos/y",
+    "places/x/photos/y?key=stolen",
+  ]) {
+    const response = await t.fetch(`/places/photo?name=${encodeURIComponent(name)}`);
+    expect(response.status).toBe(400);
+  }
+  // Never reached Google, so never spent the key.
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("the photo route will not redirect anywhere but Google", async () => {
+  const t = convexTest(schema, modules);
+  fetchMock.mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ photoUri: "https://evil.example.com/pixel.png" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+
+  // A public GET on our own domain must not become an open redirect, whatever
+  // the upstream body says.
+  const response = await t.fetch("/places/photo?name=places/place-1/photos/abc123");
+  expect(response.status).toBe(502);
+  expect(response.headers.get("Location")).toBeNull();
+});
+
+test("the photo route reports missing configuration rather than throwing", async () => {
+  delete process.env.GOOGLE_MAPS_SERVER_KEY;
+  const t = convexTest(schema, modules);
+
+  const response = await t.fetch("/places/photo?name=places/place-1/photos/abc123");
+  expect(response.status).toBe(503);
   expect(fetchMock).not.toHaveBeenCalled();
 });

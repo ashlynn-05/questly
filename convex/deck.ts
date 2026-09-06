@@ -28,6 +28,7 @@ const questFields = v.object({
   distanceKm: v.number(),
   discountPct: v.number(),
   photoUrl: v.optional(v.string()),
+  photoName: v.optional(v.string()),
   mapsUri: v.optional(v.string()),
   websiteUri: v.optional(v.string()),
   score: v.number(),
@@ -70,12 +71,40 @@ export const context = internalQuery({
   },
 });
 
+/**
+ * A build whose action is killed outright -- a deploy, a timeout, a crash --
+ * never reaches its own error handler, so the room would keep its claim
+ * forever. After this long, a claim is presumed dead and may be taken.
+ */
+const STALE_BUILD_MS = 2 * 60 * 1000;
+
+/**
+ * Claim the room for one build, or refuse. Compare-and-set, because the check
+ * and the write must be the same transaction: a host double-click puts two
+ * actions here at once, and if both were allowed to proceed, the loser's
+ * `insert` would later delete a deck the room was already swiping and orphan
+ * every swipe cast against it.
+ *
+ * Returns whether the caller now owns the build. Only the owner may write a
+ * deck, and only the owner may hand the room back.
+ */
 export const markBuilding = internalMutation({
   args: { roomId: v.id("rooms") },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (ctx, { roomId }) => {
-    await ctx.db.patch(roomId, { status: "building" });
-    return null;
+    const room = await ctx.db.get(roomId);
+    if (!room) return false;
+
+    if (room.status === "building") {
+      // Someone else holds the claim. Take it only if it has gone stale.
+      const startedAt = room.buildStartedAt ?? 0;
+      if (Date.now() - startedAt < STALE_BUILD_MS) return false;
+    } else if (room.status !== "lobby") {
+      return false;
+    }
+
+    await ctx.db.patch(roomId, { status: "building", buildStartedAt: Date.now() });
+    return true;
   },
 });
 
@@ -88,7 +117,9 @@ export const abandonBuild = internalMutation({
   returns: v.null(),
   handler: async (ctx, { roomId }) => {
     const room = await ctx.db.get(roomId);
-    if (room?.status === "building") await ctx.db.patch(roomId, { status: "lobby" });
+    if (room?.status === "building") {
+      await ctx.db.patch(roomId, { status: "lobby", buildStartedAt: undefined });
+    }
     return null;
   },
 });
@@ -104,7 +135,11 @@ export const insert = internalMutation({
     for (const stale of existing) await ctx.db.delete(stale._id);
 
     for (const q of quests) await ctx.db.insert("quests", { ...q, roomId });
-    await ctx.db.patch(roomId, { status: "swiping", deckBuiltAt: Date.now() });
+    await ctx.db.patch(roomId, {
+      status: "swiping",
+      deckBuiltAt: Date.now(),
+      buildStartedAt: undefined,
+    });
     return quests.length;
   },
 });
@@ -121,6 +156,7 @@ type Candidate = {
   /** Whether this candidate is actually the kind of place the mood asked for. */
   moodMatch: boolean;
   photoUrl?: string;
+  photoName?: string;
   mapsUri?: string;
   websiteUri?: string;
 };
@@ -132,10 +168,14 @@ const SHORTLIST_SIZE = 15;
 function blend(vectors: number[][]): number[] | undefined {
   if (!vectors.length) return undefined;
   const width = vectors[0].length;
+  // Divide by the vectors actually summed, not by every vector offered: a
+  // profile written against an older embedding model has a different width and
+  // is skipped, and dividing by the larger count would shrink the survivors
+  // toward zero -- quietly weakening the taste term instead of ignoring one row.
+  const usable = vectors.filter((vec) => vec.length === width);
   const out = new Array<number>(width).fill(0);
-  for (const vec of vectors) {
-    if (vec.length !== width) continue;
-    for (let i = 0; i < width; i++) out[i] += vec[i] / vectors.length;
+  for (const vec of usable) {
+    for (let i = 0; i < width; i++) out[i] += vec[i] / usable.length;
   }
   return out;
 }
@@ -167,9 +207,11 @@ async function writeBlurbs(titles: string[], mood: string): Promise<string[]> {
       }
     }
     return out;
-  } catch {
+  } catch (error) {
     // A missing key, a rate limit, a malformed body: none of it is worth
-    // failing a deck over. Plainer cards beat no cards.
+    // failing a deck over. Plainer cards beat no cards -- but a silent
+    // fallback that never says so is a permanent outage nobody can see.
+    console.warn("deck.build: no blurbs, falling back to the Places summary.", error);
     return empty;
   }
 }
@@ -184,7 +226,7 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
   const free = room.budgetPerHeadCents === 0;
   const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
 
-  const places = await ctx.runAction(api.places.searchNearby, {
+  const places = await ctx.runAction(internal.places.searchNearbyInternal, {
     lat: room.centreLat,
     lng: room.centreLng,
     radiusKm: room.radiusKm,
@@ -227,7 +269,9 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
       // from a near-miss -- and it is the only thing that keeps moodFit, one
       // of six weighted terms, from being a constant across the whole deck.
       moodMatch: place.primaryType !== null && includedTypes.includes(place.primaryType),
-      photoUrl: place.photoUrl ?? undefined,
+      // The opaque Google reference, never a media URL: a URL would carry our
+      // API key to the browser and into the stored quest row.
+      photoName: place.photoName ?? undefined,
       mapsUri: place.mapsUri ?? undefined,
       websiteUri: place.websiteUri ?? undefined,
     });
@@ -301,6 +345,7 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">): Promise<number> {
       distanceKm: Math.round(c.distanceKm * 10) / 10,
       discountPct: c.discountPct,
       photoUrl: c.photoUrl,
+      photoName: c.photoName,
       mapsUri: c.mapsUri,
       websiteUri: c.websiteUri,
       score: c.score,
@@ -334,7 +379,13 @@ export const build = action({
     }
 
     const roomId: Id<"rooms"> = view.room._id;
-    await ctx.runMutation(internal.deck.markBuilding, { roomId });
+    // The checks above are for the error message; THIS is the authorisation to
+    // build. Everything before it was read in an earlier transaction and could
+    // already be stale by now.
+    const claimed = await ctx.runMutation(internal.deck.markBuilding, { roomId });
+    if (!claimed) {
+      throwUserError("BUILD_IN_PROGRESS", "This deck is already being built. Give it a moment.");
+    }
 
     try {
       return { deckSize: await buildDeck(ctx, roomId) };
