@@ -47,13 +47,29 @@ export function useSessionKey(code: string) {
     setReady(false);
   }
 
+  // `localStorage` does not exist while this renders on the server, so the
+  // read cannot happen during render or in `useState`'s initialiser -- it has
+  // to be an effect, and an effect that reads a browser store has nowhere to
+  // put the result except state. That is exactly the shape
+  // `react-hooks/set-state-in-effect` flags, and here it is the correct one:
+  // the first paint (server and hydration alike) must be `ready: false`, which
+  // is what stops the room page redirecting to /join before anyone has looked.
+  // `useSyncExternalStore` would express this without an effect, but its
+  // client-side behaviour cannot be proven by this project's test setup
+  // (vitest runs the edge runtime, with no DOM), and an unproven rewrite of
+  // the redirect guard is a worse trade than a named exception.
   useEffect(() => {
-    setReady(false);
+    let stored: string | null = null;
     try {
-      setSessionKey(localStorage.getItem(keyFor(code)));
+      stored = localStorage.getItem(keyFor(code));
     } catch {
-      setSessionKey(null); // private browsing -- the room asks them to rejoin
+      stored = null; // private browsing -- the room asks them to rejoin
     }
+    // A mount-time read of a browser store has nowhere to land but state, and
+    // `ready` must start false so the room page does not redirect to /join
+    // before anyone has looked. Full reasoning above the effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSessionKey(stored);
     setReady(true);
   }, [code]);
 

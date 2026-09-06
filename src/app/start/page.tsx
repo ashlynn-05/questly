@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -59,6 +59,23 @@ function whenOptions(): Array<{ id: string; label: string; at: number }> {
   ];
 }
 
+/**
+ * When an open room is meeting. A clock face alone cannot separate tonight
+ * 6:30pm from Saturday 2pm, and the difference is the whole commitment -- so
+ * the weekday goes in front of the time for anything that is not today. Today
+ * keeps the bare time: "Sat" on a room happening in four hours would be noise.
+ */
+function roomWhenLabel(at: number): string {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
+  const now = new Date();
+  const today =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  return today ? time : `${d.toLocaleDateString("en-AU", { weekday: "short" })} ${time}`;
+}
+
 export default function StartPage() {
   const router = useRouter();
   const profile = useQuery(api.profiles.me, {});
@@ -70,7 +87,10 @@ export default function StartPage() {
   const [answers, setAnswers] = useState<Record<string, "more" | "less">>({});
   const [cardIndex, setCardIndex] = useState(0);
   const [goals, setGoals] = useState<string[]>([]);
-  const [mood, setMood] = useState<Mood>("grass");
+  // No default mood. A pre-filled choice reads as a recommendation the user
+  // never made, and it would announce as four identical stateless buttons.
+  // Null until tapped, so the type says what the screen says.
+  const [mood, setMood] = useState<Mood | null>(null);
   const [visibility, setVisibility] = useState<"private" | "open">("private");
   const [headcount, setHeadcount] = useState(4);
   const [budget, setBudget] = useState(0);
@@ -95,7 +115,49 @@ export default function StartPage() {
   const current = step ?? resumeAt;
 
   const lookingForRoom = current === "party" && visibility === "open";
-  const openRooms = useQuery(api.rooms.openRooms, lookingForRoom ? { mood } : "skip");
+  const openRooms = useQuery(
+    api.rooms.openRooms,
+    lookingForRoom && mood !== null ? { mood } : "skip",
+  );
+
+  /**
+   * A step change swaps the whole <section> out, unmounting the control that
+   * was just pressed: focus falls to <body> and a screen reader is told
+   * nothing happened. Moving focus to the new <h1> fixes both at once (WCAG
+   * 2.4.3), which is also why there is no aria-live wrapper around the
+   * sections -- a focused heading is already announced, and both together
+   * would say it twice. `cardIndex` is in the deps because the seven quiz
+   * cards are seven screens sharing one step.
+   */
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const announced = useRef<string | null>(null);
+  useEffect(() => {
+    // Nothing to focus while `profiles.me` is still in flight -- the page is
+    // on the `Loading…` branch and no heading is mounted.
+    if (current === null) return;
+    const screen = current === "quiz" ? `quiz-${cardIndex}` : current;
+    // Same screen as last time: a re-run that moved nothing, so move nothing.
+    // (Strict Mode double-invokes mount effects; this is what stops that
+    // second pass from stealing focus on arrival.)
+    if (announced.current === screen) return;
+    const arriving = announced.current === null;
+    announced.current = screen;
+    // The first screen is the page arriving, not a step change. Grabbing focus
+    // there would cut across the browser's own announcement of a freshly
+    // loaded document.
+    if (!arriving) headingRef.current?.focus();
+  }, [current, cardIndex]);
+
+  /**
+   * Every step change goes through here. `error` describes the step it was
+   * raised on -- "This room has already started" belongs to the room list, not
+   * to "What kind of night?" -- so leaving a step retires its error.
+   */
+  function goTo(next: Step) {
+    setError(null);
+    setNeedsSignIn(false);
+    setStep(next);
+  }
 
   function toggleGoal(id: string) {
     // Multi-select: leaving with a new name in your phone and coming back
@@ -119,11 +181,19 @@ export default function StartPage() {
       console.warn("saveQuiz failed; continuing without a taste vector", e);
     } finally {
       setBusy(false);
-      setStep("mood");
+      goTo("mood");
     }
   }
 
   async function openTheRoom() {
+    // The only route to this step runs through the mood picker, so `mood` is
+    // set by the time this can be pressed. Sending them back is still better
+    // than an assertion that says it cannot happen: if it ever does, the
+    // screen that asks the question is one tap away.
+    if (mood === null) {
+      goTo("mood");
+      return;
+    }
     setBusy(true);
     setError(null);
     setNeedsSignIn(false);
@@ -196,8 +266,11 @@ export default function StartPage() {
         <button
           type="button"
           disabled={busy}
-          onClick={() => setStep(backTo)}
-          className="board min-h-[44px] self-start text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:opacity-50"
+          onClick={() => goTo(backTo)}
+          // `self-start` shrinks this to its content width, and "BACK" at 11px
+          // is nowhere near the 44px target floor this project holds itself
+          // to. The padding is what makes the target, not the label.
+          className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:opacity-50"
         >
           Back
         </button>
@@ -210,7 +283,12 @@ export default function StartPage() {
               Question <span className="num">{cardIndex + 1}</span> of{" "}
               <span className="num">{TOTAL_QUESTIONS}</span>
             </p>
-            <h1 id="quiz-heading" className="display mt-3 text-[34px] text-text">
+            <h1
+              id="quiz-heading"
+              ref={headingRef}
+              tabIndex={-1}
+              className="display mt-3 text-[34px] text-text"
+            >
               More likely, or less likely?
             </h1>
           </div>
@@ -222,15 +300,26 @@ export default function StartPage() {
           </p>
 
           <div className="flex flex-col gap-2">
+            {/* Both answers are raised. An orange plate on "More likely" puts
+                the house thumb on a preference instrument, and only the "more"
+                answers reach the embedding (convex/lib/quiz.ts), so the bias
+                would ride into every recommendation that follows. */}
             {(["more", "less"] as const).map((dir) => (
               <Plate
                 key={dir}
-                variant={dir === "more" ? "action" : "raised"}
+                variant="raised"
                 label={dir === "more" ? "More likely" : "Less likely"}
                 onClick={() => {
                   setAnswers({ ...answers, [QUIZ_CARDS[cardIndex].id]: dir });
-                  if (cardIndex + 1 < QUIZ_CARDS.length) setCardIndex(cardIndex + 1);
-                  else setStep("goals");
+                  if (cardIndex + 1 < QUIZ_CARDS.length) {
+                    // Latch the step on the first answer. Until it is latched,
+                    // `current` is derived live from the `profiles.me`
+                    // subscription -- so a profile arriving mid-quiz (a second
+                    // tab finishing it) would swap this screen for the mood
+                    // picker and throw away every answer given so far.
+                    setStep("quiz");
+                    setCardIndex(cardIndex + 1);
+                  } else goTo("goals");
                 }}
               />
             ))}
@@ -245,7 +334,12 @@ export default function StartPage() {
               Question <span className="num">{TOTAL_QUESTIONS}</span> of{" "}
               <span className="num">{TOTAL_QUESTIONS}</span>
             </p>
-            <h1 id="goals-heading" className="display mt-3 text-[34px] text-text">
+            <h1
+              id="goals-heading"
+              ref={headingRef}
+              tabIndex={-1}
+              className="display mt-3 text-[34px] text-text"
+            >
               What is the night for?
             </h1>
           </div>
@@ -288,19 +382,29 @@ export default function StartPage() {
 
       {current === "mood" ? (
         <section aria-labelledby="mood-heading" className="flex flex-col gap-6">
-          <h1 id="mood-heading" className="display text-[38px] text-text">What kind of night?</h1>
+          <h1
+            id="mood-heading"
+            ref={headingRef}
+            tabIndex={-1}
+            className="display text-[38px] text-text"
+          >
+            What kind of night?
+          </h1>
           <div className="flex flex-col gap-2">
+            {/* All four raised until one is tapped, and the chosen one carries
+                a ring plus `aria-pressed` -- never a fill colour alone. */}
             {MOODS.map((m) => (
               <Plate
                 key={m.id}
-                variant={m.id === mood ? "action" : "raised"}
+                variant="raised"
+                selected={m.id === mood}
                 label={m.label}
                 sub={m.sub}
                 onClick={() => {
                   setMood(m.id);
                   // "Meet people" is the one mood whose entire point is strangers.
                   setVisibility(m.id === "meet" ? "open" : "private");
-                  setStep("party");
+                  goTo("party");
                 }}
               />
             ))}
@@ -310,26 +414,40 @@ export default function StartPage() {
 
       {current === "party" ? (
         <section aria-labelledby="party-heading" className="flex flex-col gap-6">
-          <h1 id="party-heading" className="display text-[38px] text-text">Who is coming?</h1>
+          <h1
+            id="party-heading"
+            ref={headingRef}
+            tabIndex={-1}
+            className="display text-[38px] text-text"
+          >
+            Who is coming?
+          </h1>
 
+          {/* `disabled={busy}` on all three: a tap on a room below starts a
+              join, and without this a tap here during that flight renders the
+              constraints step just before router.push drags them into the
+              room they half-chose. */}
           <div className="flex flex-col gap-2">
             <Plate
               variant="raised"
               label="With friends"
               sub="Open a room and send them the number."
-              onClick={() => { setVisibility("private"); setStep("constraints"); }}
+              disabled={busy}
+              onClick={() => { setVisibility("private"); goTo("constraints"); }}
             />
             <Plate
               variant="raised"
               label="Just me"
               sub="A solo sidequest. Same plan, no voting."
-              onClick={() => { setVisibility("private"); setHeadcount(1); setStep("constraints"); }}
+              disabled={busy}
+              onClick={() => { setVisibility("private"); setHeadcount(1); goTo("constraints"); }}
             />
             <Plate
               variant="raised"
               selected={visibility === "open"}
               label="Meet people"
               sub="Join a room that is already open."
+              disabled={busy}
               onClick={() => setVisibility("open")}
             />
           </div>
@@ -339,42 +457,61 @@ export default function StartPage() {
               <h2 className="board text-[11px] text-accent">Open rooms right now</h2>
               {openRooms === undefined ? (
                 <p className="text-[13px] text-dim">Looking…</p>
-              ) : openRooms.length === 0 ? (
-                <>
-                  <p className="text-[13px] text-dim">
-                    Nobody has a room open for this mood yet.
-                  </p>
-                  <Plate
-                    variant="action"
-                    label="Open one others can join"
-                    onClick={() => setStep("constraints")}
-                  />
-                </>
               ) : (
                 <>
-                  {openRooms.map((room) => (
-                    <Plate
-                      key={room.code}
-                      variant="raised"
-                      label={`Room ${room.code}`}
-                      sub={
-                        room.demo
-                          ? `Demonstration room · ${room.memberCount} of ${room.headcount} in`
-                          : `${room.memberCount} of ${room.headcount} in`
-                      }
-                      right={new Date(room.whenAt).toLocaleTimeString("en-AU", {
-                        hour: "numeric", minute: "2-digit",
-                      })}
-                      disabled={busy}
-                      onClick={() => void joinOpenRoom(room.code)}
-                    />
-                  ))}
-                  {openRooms.some((room) => room.demo) ? (
-                    <p className="text-[12px] leading-snug text-dim">
-                      Rooms marked as demonstration rooms are seeded examples, not
-                      other people waiting.
+                  {openRooms.length === 0 ? (
+                    <p className="text-[13px] text-dim">
+                      Nobody has a room open for this mood yet.
                     </p>
-                  ) : null}
+                  ) : (
+                    <>
+                      {openRooms.map((room) => (
+                        <Plate
+                          key={room.code}
+                          variant="raised"
+                          label={`Room ${room.code}`}
+                          sub={
+                            room.demo
+                              ? `Demonstration room · ${room.memberCount} of ${room.headcount} in`
+                              : `${room.memberCount} of ${room.headcount} in`
+                          }
+                          right={roomWhenLabel(room.whenAt)}
+                          disabled={busy}
+                          onClick={() => void joinOpenRoom(room.code)}
+                        />
+                      ))}
+                      {openRooms.some((room) => room.demo) ? (
+                        <p className="text-[12px] leading-snug text-dim">
+                          Rooms marked as demonstration rooms are seeded examples, not
+                          other people waiting.
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+
+                  {/* Below the list as well as instead of it. Four seeded
+                      demonstration rooms mean the empty branch is never taken
+                      on a seeded deployment, so hiding this control there made
+                      an open room something no real user could ever create --
+                      and the open-rooms pool something only the seed could
+                      fill. `visibility` is already "open" whenever this
+                      renders (that is what `lookingForRoom` means), so it is
+                      an open room that gets created. */}
+                  <Plate
+                    variant="action"
+                    label={
+                      openRooms.length === 0
+                        ? "Open one others can join"
+                        : "Open your own instead"
+                    }
+                    sub={
+                      openRooms.length === 0
+                        ? undefined
+                        : "It joins this list, so strangers can find it too."
+                    }
+                    disabled={busy}
+                    onClick={() => goTo("constraints")}
+                  />
                 </>
               )}
             </div>
@@ -384,16 +521,25 @@ export default function StartPage() {
 
       {current === "constraints" ? (
         <section aria-labelledby="constraints-heading" className="flex flex-col gap-7">
-          <h1 id="constraints-heading" className="display text-[38px] text-text">
+          <h1
+            id="constraints-heading"
+            ref={headingRef}
+            tabIndex={-1}
+            className="display text-[38px] text-text"
+          >
             Four answers and it is solved.
           </h1>
 
           <fieldset className="flex flex-col gap-3 border-0 p-0">
             <legend className="board text-[11px] text-accent">How many</legend>
             <div className="flex flex-wrap gap-2">
+              {/* Six, not "6+". Nothing downstream honours a plus: the room is
+                  costed and sized for the number sent, and joins are capped at
+                  MAX_ROOM_MEMBERS regardless. A label that promises more than
+                  the number does is a small lie about what was booked. */}
               {HEADCOUNTS.map((n) => (
                 <Chip key={n} selected={headcount === n} onClick={() => setHeadcount(n)}>
-                  {n === 1 ? "Just me" : n === 6 ? "6+" : n}
+                  {n === 1 ? "Just me" : n}
                 </Chip>
               ))}
             </div>
