@@ -26,6 +26,7 @@ import type * as places from "../places.js";
 import type * as plans from "../plans.js";
 import type * as profiles from "../profiles.js";
 import type * as rooms from "../rooms.js";
+import type * as swipes from "../swipes.js";
 
 import type {
   ApiFromModules,
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   plans: typeof plans;
   profiles: typeof profiles;
   rooms: typeof rooms;
+  swipes: typeof swipes;
 }>;
 
 /**
