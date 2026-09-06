@@ -58,6 +58,9 @@ export default defineSchema({
     tasteVector: v.array(v.float64()),
     tasteSentence: v.string(),
     moodAffinity: v.record(v.string(), v.number()),
+    // Optional: the table predates the goals question, and older rows never
+    // wrote one. New writes always include it (as `[]` at minimum).
+    goals: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index("by_user", ["userId"]),
 

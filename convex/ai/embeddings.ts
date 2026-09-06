@@ -42,6 +42,13 @@ export const embedMany = internalAction({
     texts.length === 0 ? [] : await embedBatch(texts),
 });
 
+/** The shared embedder. Lives here because this file already owns the client. */
+export const embedText = internalAction({
+  args: { text: v.string() },
+  returns: v.array(v.float64()),
+  handler: async (_ctx, { text }): Promise<number[]> => embed(text),
+});
+
 export const addSnippet = action({
   args: { text: v.string() },
   handler: async (ctx, { text }): Promise<null> => {
