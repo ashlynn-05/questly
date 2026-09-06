@@ -2,7 +2,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { MAX_ROOM_MEMBERS } from "./lib/access";
 import type { Id } from "./_generated/dataModel";
@@ -555,4 +555,117 @@ test("a stranger's session key cannot remove anyone", async () => {
     "NOT_A_MEMBER",
     /not a member/i,
   );
+});
+
+// --- what the room itself is allowed to claim ------------------------------
+
+test("rooms.get says a seeded room is a demonstration room", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // Exactly what `seed` writes. `openRooms` already labels these honestly; the
+  // room's own screens could not, because `get` never projected the flag.
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.patch(room!._id, { demo: true });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.room.demo).toBe(true);
+});
+
+test("a room somebody actually opened is not labelled a demonstration", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // The column is optional, so the honest projection of "never set" is false,
+  // not undefined -- a screen must never have to guess.
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.room.demo).toBe(false);
+});
+
+// --- a voter can see, and change, their own vote ---------------------------
+
+/** A matched room of `names.length` people with a two-stop plan on it. */
+async function roomWithPlan(t: TestConvex<typeof schema>, names: string[]) {
+  const asHost = t.withIdentity({ subject: "u1", name: names[0] });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, {
+    ...CREATE,
+    headcount: names.length,
+    budgetPerHeadCents: 5000,
+    hostName: names[0],
+  });
+  const keys = [sessionKey];
+  for (const name of names.slice(1)) {
+    keys.push((await t.mutation(api.rooms.join, { code, name })).sessionKey);
+  }
+
+  const roomId = await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.patch(room!._id, { status: "matched" });
+    return room!._id;
+  });
+  const questId = await t.run((ctx) =>
+    ctx.db.insert("quests", {
+      roomId, rank: 0, source: "places", placeId: "p", title: "The Long Weekend",
+      blurb: "", priceLabel: "$14", priceCents: 1400, distanceKm: 1, discountPct: 0,
+      score: 1, scoreBreakdown: {},
+    }),
+  );
+  await t.mutation(internal.plans.writePlan, {
+    roomId,
+    questId,
+    stops: [
+      {
+        id: "s1", slot: "main", name: "The Long Weekend", startAt: CREATE.whenAt,
+        durationMin: 60, costPerHeadCents: 1400, note: "", source: "llm", locked: false,
+      },
+    ],
+    shareMessage: "x",
+  });
+  return { code, keys };
+}
+
+const SWAP = {
+  id: "s1", slot: "main" as const, name: "Nightjar", startAt: CREATE.whenAt,
+  durationMin: 60, costPerHeadCents: 1600, note: "", source: "llm" as const, locked: false,
+};
+
+test("rooms.get reports which way you voted, not merely that you did", async () => {
+  const t = convexTest(schema, modules);
+  // Four people, so needed() is 3 and the proposal stays open through a no and
+  // a change of mind -- the two states a boolean could not tell apart.
+  const { code, keys } = await roomWithPlan(t, ["Bec", "Tam", "Sam", "Kim"]);
+  const [bec, tam, sam] = keys;
+
+  const { proposalId } = await t.mutation(api.proposals.open, {
+    code, sessionKey: bec, stopId: "s1", replacement: SWAP, reason: "closer to the tram",
+  });
+
+  // The proposer's own opening yes.
+  const asBec = await t.query(api.rooms.get, { code, sessionKey: bec });
+  expect(asBec!.proposals[0].yourVote).toBe("yes");
+
+  // Nobody else has voted.
+  const before = await t.query(api.rooms.get, { code, sessionKey: tam });
+  expect(before!.proposals[0].yourVote).toBeNull();
+
+  await t.mutation(api.proposals.vote, { code, sessionKey: tam, proposalId, vote: "no" });
+  const voted = await t.query(api.rooms.get, { code, sessionKey: tam });
+  expect(voted!.proposals[0].yourVote).toBe("no");
+  // A no is not a yes: the tally must not move.
+  expect(voted!.proposals[0].yes).toBe(1);
+  expect(voted!.proposals[0].needed).toBe(3);
+
+  // Changing your mind is a patch, so it shows as one vote, now the other way.
+  await t.mutation(api.proposals.vote, { code, sessionKey: tam, proposalId, vote: "yes" });
+  const changed = await t.query(api.rooms.get, { code, sessionKey: tam });
+  expect(changed!.proposals[0].yourVote).toBe("yes");
+  expect(changed!.proposals[0].yes).toBe(2);
+
+  // And one member's vote is never another's.
+  const asSam = await t.query(api.rooms.get, { code, sessionKey: sam });
+  expect(asSam!.proposals[0].yourVote).toBeNull();
 });

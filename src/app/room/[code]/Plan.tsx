@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Stop } from "@convex/lib/stops";
 import { Plate } from "@/components/questly/Plate";
-import { Rail, RailNode } from "@/components/questly/Rail";
+import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
 import { userMessage } from "@/lib/errors";
 import type { RoomView } from "./page";
 
@@ -60,12 +60,48 @@ export function Plan({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [booking, setBooking] = useState(false);
+  const [confirmBook, setConfirmBook] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const plan = view.plan;
   // The server enforces this split too. A room of one edits directly; a room of
   // two or more proposes and votes.
   const isGroup = view.members.length > 1;
+
+  /**
+   * The plan's arrival REPLACES this screen, so focus moves with it.
+   *
+   * The "It's a match" branch below is not a card changing inside a screen that
+   * stays put: when `plan` lands, that whole branch is destroyed -- including
+   * the <h1> the shell has just moved focus to, and including the live region
+   * that used to sit in it announcing nothing (its text never changed; it was
+   * unmounted, not updated). Focus fell to <body> and a screen-reader user was
+   * left on the document root while the itinerary they were promised appeared
+   * silently. `status` does not change across this transition, so the shell's
+   * policy correctly does not fire -- this is the one local move it cannot see.
+   */
+  const hadPlan = useRef(plan !== null);
+  useEffect(() => {
+    if (!plan || hadPlan.current) return;
+    hadPlan.current = true;
+    headingRef.current?.focus();
+  }, [plan, headingRef]);
+
+  /**
+   * Booking is irreversible, so its confirmation gets the same focus treatment
+   * as removing somebody: Plate renders the <button>, and takes no ref of its
+   * own, so the focus lands through the wrapper.
+   */
+  const focusFirstButton = useCallback((node: HTMLDivElement | null) => {
+    node?.querySelector("button")?.focus();
+  }, []);
+  const restoreBook = useRef(false);
+  const bookRestore = useCallback((node: HTMLDivElement | null) => {
+    if (node && restoreBook.current) {
+      restoreBook.current = false;
+      node.querySelector("button")?.focus();
+    }
+  }, []);
 
   async function loadOptions(stopId: string, which: SheetTab, text = "") {
     if (!plan) return;
@@ -137,6 +173,9 @@ export function Plan({
   }
 
   async function bookIt() {
+    // A guard rather than `disabled` on the button that currently has focus:
+    // disabling a focused control drops focus to <body>.
+    if (booking) return;
     setBooking(true);
     setError(null);
     try {
@@ -155,14 +194,32 @@ export function Plan({
         <h1 ref={headingRef} tabIndex={-1} className="board flap text-[11px] text-accent">
           It&rsquo;s a match
         </h1>
-        {/* Nobody pressed anything to get here and nothing is unmounting, so
-            the arrival of the plan is announced rather than focused. */}
-        <p aria-live="polite" className="text-[15px] leading-snug text-dim">
-          Writing the plan…
-        </p>
+        {/* This whole branch, heading included, is replaced when the plan
+            lands: the effect above moves focus onto the new heading, which is
+            what announces the itinerary. */}
+        <p className="text-[15px] leading-snug text-dim">Writing the plan…</p>
       </section>
     );
   }
+
+  /**
+   * Why an open swap sheet has closed, or null while it is still a valid thing
+   * to have open. Derived, never an effect: two phones can both have this sheet
+   * open on the same stop, and the moment one of them proposes -- or anybody
+   * locks the stop -- every option Plate in the other's sheet is a guaranteed
+   * PROPOSAL_EXISTS or STOP_LOCKED. A control that exists only to be refused is
+   * worse than no control, and a sheet that vanishes with no explanation is
+   * worse than either.
+   */
+  const sheetStop = sheetFor === null ? null : plan.stops.find((s) => s.id === sheetFor);
+  const sheetClosedBecause =
+    sheetFor === null
+      ? null
+      : view.proposals.some((p) => p.stopId === sheetFor)
+        ? "Someone else proposed a change to this stop while this was open. Their proposal is above — vote on that instead."
+        : sheetStop?.locked
+          ? "This stop was locked while this was open. Unlock it to swap it."
+          : null;
 
   return (
     <section className="flex flex-col gap-7 px-5 py-8">
@@ -184,7 +241,7 @@ export function Plan({
       <div className="relative">
         <Rail drawing />
         <ol className="m-0 flex list-none flex-col gap-7 p-0">
-          {plan.stops.map((stop) => {
+          {plan.stops.map((stop, i) => {
             const proposal = view.proposals.find((p) => p.stopId === stop.id);
             return (
               <li key={stop.id} className="relative pl-14">
@@ -245,9 +302,17 @@ export function Plan({
                     <p aria-live="polite" className="num mt-2 text-[13px] text-dim">
                       {proposal.yes} of {proposal.needed} needed
                     </p>
-                    {proposal.youVoted ? (
-                      <p className="mt-2 text-[12px] text-dim">Your vote is in.</p>
-                    ) : (
+                    {stop.locked ? (
+                      // `proposals.vote` documents this refusal as guaranteed:
+                      // the deciding yes cannot be applied to a locked stop, so
+                      // it throws STOP_LOCKED at whoever happens to cast it --
+                      // an error about somebody else's action. The unlock
+                      // toggle is directly above.
+                      <p className="mt-2 text-[12px] leading-snug text-dim">
+                        This stop was locked after the swap was proposed, so the room cannot
+                        vote it through. Unlock it first.
+                      </p>
+                    ) : proposal.yourVote === null ? (
                       <div className="mt-3 flex gap-2">
                         <Plate
                           variant="action"
@@ -264,116 +329,159 @@ export function Plan({
                           onClick={() => void castVote(proposal._id, "no")}
                         />
                       </div>
+                    ) : (
+                      // Which way you voted, and a way back. The server takes
+                      // yes|no and PATCHES the row you already have, so a
+                      // mis-tap on a group decision is correctable -- and
+                      // somebody who voted no no longer sees exactly what
+                      // somebody who has not voted sees.
+                      <div className="mt-3 flex flex-col gap-2">
+                        <p className="text-[12px] text-dim">
+                          You voted {proposal.yourVote}.
+                        </p>
+                        <Plate
+                          variant="ghost"
+                          label={proposal.yourVote === "yes" ? "Change it to no" : "Change it to yes"}
+                          disabled={saving}
+                          onClick={() =>
+                            void castVote(proposal._id, proposal.yourVote === "yes" ? "no" : "yes")
+                          }
+                        />
+                      </div>
                     )}
                   </div>
                 ) : null}
 
                 {sheetFor === stop.id ? (
                   <div className="mt-3 rounded-[6px] border border-hairline p-3">
-                    <h2 className="board text-[10px] text-accent">Instead of {stop.name}</h2>
-
-                    <div className="mt-3 flex gap-2">
-                      <Plate
-                        variant="raised"
-                        selected={tab === "ask"}
-                        label="Suggest something"
-                        onClick={() => {
-                          setTab("ask");
-                          void loadOptions(stop.id, "ask");
-                        }}
-                      />
-                      <Plate
-                        variant="raised"
-                        selected={tab === "search"}
-                        label="Pick it yourself"
-                        onClick={() => {
-                          setTab("search");
-                          setOptions([]);
-                        }}
-                      />
-                    </div>
-
-                    {tab === "search" ? (
-                      <form
-                        className="mt-3 flex gap-2"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void loadOptions(stop.id, "search", queryText);
-                        }}
-                      >
-                        <label htmlFor={`q-${stop.id}`} className="sr-only">
-                          Search for a place
-                        </label>
-                        <input
-                          id={`q-${stop.id}`}
-                          value={queryText}
-                          onChange={(e) => setQueryText(e.target.value)}
-                          placeholder="wine bar in Fitzroy"
-                          className="min-h-[44px] flex-1 rounded-[5px] border border-hairline bg-transparent px-3 text-[16px] text-text"
-                        />
-                        <button
-                          type="submit"
-                          className="board min-h-[44px] shrink-0 rounded-[5px] bg-action px-4 text-[11px] text-on-action"
-                        >
-                          Find
-                        </button>
-                      </form>
-                    ) : null}
-
-                    {isGroup ? (
-                      <div className="mt-3 flex flex-col gap-2">
-                        <label htmlFor={`why-${stop.id}`} className="board text-[10px] text-dim">
-                          Why, in a few words (optional)
-                        </label>
-                        <input
-                          id={`why-${stop.id}`}
-                          value={reason}
-                          onChange={(e) => setReason(e.target.value)}
-                          maxLength={80}
-                          placeholder="it is five minutes from the tram"
-                          className="min-h-[44px] rounded-[5px] border border-hairline bg-transparent px-3 text-[16px] text-text"
-                        />
-                      </div>
-                    ) : null}
-
-                    <div aria-live="polite" className="mt-3 flex flex-col gap-2">
-                      {loading ? <p className="text-[13px] text-dim">Looking…</p> : null}
-                      {!loading && options.length === 0 ? (
-                        <p className="text-[13px] leading-snug text-dim">
-                          {tab === "search"
-                            ? "Type what you are after."
-                            : "Nothing came back. Try picking it yourself."}
-                        </p>
-                      ) : null}
-                      {options.map((option) => (
-                        <Plate
-                          key={option.id}
-                          variant="raised"
-                          label={option.name}
-                          sub={option.note}
-                          right={money(option.costPerHeadCents)}
-                          disabled={saving}
-                          onClick={() => void choose(stop.id, option)}
-                        />
-                      ))}
-                    </div>
-
-                    <p className="mt-3 text-[12px] leading-snug text-dim">
-                      Costs are estimates, not quotes.{" "}
-                      {isGroup
-                        ? "Picking one puts it to the room."
-                        : "Picking one changes the plan."}
+                    {/* Mounted with the sheet and empty, so the sentence that
+                        arrives in it when the stop moves underneath is
+                        actually announced rather than silently swapped in. */}
+                    <p aria-live="polite" className="text-[13px] leading-snug text-dim">
+                      {sheetClosedBecause ?? ""}
                     </p>
 
-                    <Plate
-                      variant="ghost"
-                      center
-                      label="Close"
-                      className="mt-3"
-                      onClick={() => setSheetFor(null)}
-                    />
+                    {sheetClosedBecause ? (
+                      <Plate
+                        variant="ghost"
+                        center
+                        label="Close"
+                        className="mt-3"
+                        onClick={() => setSheetFor(null)}
+                      />
+                    ) : (
+                      <>
+                        <h2 className="board text-[10px] text-accent">Instead of {stop.name}</h2>
+
+                        <div className="mt-3 flex gap-2">
+                          <Plate
+                            variant="raised"
+                            selected={tab === "ask"}
+                            label="Suggest something"
+                            onClick={() => {
+                              setTab("ask");
+                              void loadOptions(stop.id, "ask");
+                            }}
+                          />
+                          <Plate
+                            variant="raised"
+                            selected={tab === "search"}
+                            label="Pick it yourself"
+                            onClick={() => {
+                              setTab("search");
+                              setOptions([]);
+                            }}
+                          />
+                        </div>
+
+                        {tab === "search" ? (
+                          <form
+                            className="mt-3 flex gap-2"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              void loadOptions(stop.id, "search", queryText);
+                            }}
+                          >
+                            <label htmlFor={`q-${stop.id}`} className="sr-only">
+                              Search for a place
+                            </label>
+                            <input
+                              id={`q-${stop.id}`}
+                              value={queryText}
+                              onChange={(e) => setQueryText(e.target.value)}
+                              placeholder="wine bar in Fitzroy"
+                              className="min-h-[44px] flex-1 rounded-[5px] border border-hairline bg-transparent px-3 text-[16px] text-text"
+                            />
+                            <button
+                              type="submit"
+                              className="board min-h-[44px] shrink-0 rounded-[5px] bg-action px-4 text-[11px] text-on-action"
+                            >
+                              Find
+                            </button>
+                          </form>
+                        ) : null}
+
+                        {isGroup ? (
+                          <div className="mt-3 flex flex-col gap-2">
+                            <label htmlFor={`why-${stop.id}`} className="board text-[10px] text-dim">
+                              Why, in a few words (optional)
+                            </label>
+                            <input
+                              id={`why-${stop.id}`}
+                              value={reason}
+                              onChange={(e) => setReason(e.target.value)}
+                              maxLength={80}
+                              placeholder="it is five minutes from the tram"
+                              className="min-h-[44px] rounded-[5px] border border-hairline bg-transparent px-3 text-[16px] text-text"
+                            />
+                          </div>
+                        ) : null}
+
+                        <div aria-live="polite" className="mt-3 flex flex-col gap-2">
+                          {loading ? <p className="text-[13px] text-dim">Looking…</p> : null}
+                          {!loading && options.length === 0 ? (
+                            <p className="text-[13px] leading-snug text-dim">
+                              {tab === "search"
+                                ? "Type what you are after."
+                                : "Nothing came back. Try picking it yourself."}
+                            </p>
+                          ) : null}
+                          {options.map((option) => (
+                            <Plate
+                              key={option.id}
+                              variant="raised"
+                              label={option.name}
+                              sub={option.note}
+                              right={money(option.costPerHeadCents)}
+                              disabled={saving}
+                              onClick={() => void choose(stop.id, option)}
+                            />
+                          ))}
+                        </div>
+
+                        <p className="mt-3 text-[12px] leading-snug text-dim">
+                          Costs are estimates, not quotes.{" "}
+                          {isGroup
+                            ? "Picking one puts it to the room."
+                            : "Picking one changes the plan."}
+                        </p>
+
+                        <Plate
+                          variant="ghost"
+                          center
+                          label="Close"
+                          className="mt-3"
+                          onClick={() => setSheetFor(null)}
+                        />
+                      </>
+                    )}
                   </div>
                 ) : null}
+
+                {/* The line ends ON the last stop: the rail is drawn on the
+                    container, so without this it ran the full height of an
+                    open sheet past the final roundel into nothing. */}
+                {i === plan.stops.length - 1 ? <RailEnd top={15} /> : null}
               </li>
             );
           })}
@@ -397,21 +505,47 @@ export function Plan({
         </p>
       ) : null}
 
-      {error ? (
-        <p role="alert" className="text-[13px] leading-snug text-danger">
-          {error}
-        </p>
-      ) : null}
+      {/* Always mounted, filled when something is refused: the same rule as
+          every other announcement on this screen. */}
+      <p role="alert" className="text-[13px] leading-snug text-danger">
+        {error ?? ""}
+      </p>
 
+      {/* Two steps, for R55's reason and more so: removing one guest is
+          undoable by sending them the link again, whereas booking closes the
+          lock, swap, propose and vote paths for everyone, permanently. The
+          ceremony has to be at least as heavy as the smaller decision's. */}
       <div className="flex flex-col gap-2">
-        <Plate
-          variant="action"
-          center
-          label={booking ? "Booking…" : "Book it"}
-          sub="Settles the plan for everyone — no more swaps after this."
-          disabled={booking}
-          onClick={() => void bookIt()}
-        />
+        {confirmBook ? (
+          <div ref={focusFirstButton} className="flex flex-col gap-2">
+            <Plate
+              variant="action"
+              center
+              label={booking ? "Booking…" : "Yes, book it"}
+              sub="Nobody can swap a stop after this."
+              onClick={() => void bookIt()}
+            />
+            <Plate
+              variant="ghost"
+              center
+              label="Not yet"
+              onClick={() => {
+                restoreBook.current = true;
+                setConfirmBook(false);
+              }}
+            />
+          </div>
+        ) : (
+          <div ref={bookRestore}>
+            <Plate
+              variant="action"
+              center
+              label="Book it"
+              sub="Settles the plan for everyone — no more swaps after this."
+              onClick={() => setConfirmBook(true)}
+            />
+          </div>
+        )}
         <p className="text-[12px] leading-snug text-dim">
           Booking here is simulated: no table is held and no venue is contacted. Costs are
           estimates, not quotes.

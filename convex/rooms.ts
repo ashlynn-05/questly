@@ -38,6 +38,13 @@ const roomViewValidator = v.union(
       centreLng: v.number(),
       radiusKm: v.number(),
       visibility: v.union(v.literal("private"), v.literal("open")),
+      // A seeded room has to announce itself INSIDE the room, not only in the
+      // funnel that offered it. `openRooms` labels a demo room honestly and
+      // then the label used to vanish at the door -- which is precisely where
+      // someone starts believing the roster, the venues and the booking are
+      // real. Projected as a plain boolean (the column is optional) so every
+      // screen in the room can say so.
+      demo: v.boolean(),
       status: v.union(
         v.literal("lobby"),
         v.literal("building"),
@@ -72,7 +79,13 @@ const roomViewValidator = v.union(
         proposedByName: v.string(),
         yes: v.number(),
         needed: v.number(),
-        youVoted: v.boolean(),
+        // WHICH way you voted, not merely that you did. `proposals.vote` takes
+        // `yes | no` and patches an existing row -- "changing your mind is a
+        // patch, never a second yes" -- so a boolean showed a member who voted
+        // no exactly what it showed a member who had not voted at all, and
+        // gave a mis-tap on a group decision no way back. `null` is "you have
+        // not voted".
+        yourVote: v.union(v.literal("yes"), v.literal("no"), v.null()),
       }),
     ),
     progress: v.object({
@@ -298,7 +311,9 @@ export const get = query({
           proposedByName: members.find((m) => m._id === p.proposedBy)?.name ?? "Someone",
           yes: votes.filter((vote) => vote.vote === "yes").length,
           needed: needed(members.length),
-          youVoted: votes.some((vote) => vote.memberId === you._id),
+          // One row per member is `proposals.vote`'s own invariant, so the
+          // first match IS this member's vote.
+          yourVote: votes.find((vote) => vote.memberId === you._id)?.vote ?? null,
         };
       }),
     );
@@ -320,6 +335,10 @@ export const get = query({
         centreLng: room.centreLng,
         radiusKm: room.radiusKm,
         visibility: room.visibility,
+        // Optional in the schema, never optional on screen: an unseeded room
+        // is honestly `false`, and the room's own screens say so when it is
+        // `true`.
+        demo: room.demo === true,
         status: room.status,
         matchedQuestId: room.matchedQuestId,
       },

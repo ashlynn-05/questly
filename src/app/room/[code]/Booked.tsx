@@ -59,9 +59,20 @@ export function Booked({
     <section className="flex flex-col gap-8 px-5 py-10">
       <div>
         <h1 ref={headingRef} tabIndex={-1} className="flex flex-col gap-2">
-          <span className="board text-[11px] text-accent">Booked</span>
+          <span className="board text-[11px] text-accent">
+            Booked <span className="text-dim">· Simulated</span>
+          </span>
           <span className="num flap text-[56px] leading-none text-text">{booking.ref}</span>
         </h1>
+        {/* At the reference, not under the itinerary. A 56px code flipping into
+            view reads as a reservation a venue has confirmed, and the sentence
+            that says otherwise used to sit below four stops -- off-screen on a
+            phone at first paint, which is exactly where somebody scrolls past
+            it and acts on the number. */}
+        <p className="mt-3 text-[13px] leading-snug text-dim">
+          Demonstration booking. No table has been held and no venue has been contacted —
+          this reference is not a reservation.
+        </p>
       </div>
 
       <dl className="m-0 flex flex-wrap gap-x-8 gap-y-3">
@@ -126,16 +137,16 @@ export function Booked({
           />
         ) : null}
 
-        {copied ? (
-          <p aria-live="polite" className="text-[12px] leading-snug break-words text-dim">
-            {copied}
-          </p>
-        ) : null}
+        {/* Mounted empty, then filled: a live region inserted into the DOM
+            with its text already in it is frequently never announced. */}
+        <p aria-live="polite" className="text-[12px] leading-snug break-words text-dim">
+          {copied ?? ""}
+        </p>
       </div>
 
       <p className="text-[12px] leading-snug text-dim">
-        Demonstration booking. No table has been held and no venue has been contacted, and the
-        costs above are estimates rather than quotes.
+        The costs above are estimates rather than quotes, and nothing here has been booked
+        with anybody.
       </p>
     </section>
   );

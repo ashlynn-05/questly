@@ -10,6 +10,26 @@ import { useCallback, useEffect, useState } from "react";
 const keyFor = (code: string) => `questly-session-${code}`;
 
 /**
+ * The same keys, in memory, for the browsers that refuse to keep them.
+ *
+ * `localStorage` THROWS in Safari's "Block All Cookies", in some embedded
+ * webviews and in a few private-browsing modes -- and /join and /room are two
+ * separate page loads that talk to each other through this store and nothing
+ * else. Swallowing that throw silently used to mean the guest was bounced
+ * straight back to /join, where `rooms.join` -- correctly unable to recognise
+ * an accountless guest who arrives with no key -- inserts ANOTHER member row.
+ * Every retry permanently raised the unanimity denominator, so the room could
+ * never match again: the exact phantom member the join flow's other guards
+ * exist to prevent.
+ *
+ * A module-level Map survives a client-side navigation within one tab, which
+ * is what /join -> /room is, so the key is readable for this session even when
+ * nothing can be persisted. It does not survive a reload, and it is not meant
+ * to: it closes the round trip, it does not pretend to be storage.
+ */
+const inMemory = new Map<string, string>();
+
+/**
  * Store a key for a room the caller has just been let into.
  *
  * The hook below cannot serve that case: the room code does not exist until
@@ -19,10 +39,31 @@ const keyFor = (code: string) => `questly-session-${code}`;
  * rather than returning null.
  */
 export function storeSessionKey(code: string, key: string) {
+  // Memory first, and unconditionally: it is the half that cannot fail, and
+  // the persisted half is the bonus.
+  inMemory.set(keyFor(code), key);
   try {
     localStorage.setItem(keyFor(code), key);
   } catch {
-    // Still works for this page's lifetime; only survival is lost.
+    // Only survival is lost -- `readSessionKey` still finds it this session.
+  }
+}
+
+/**
+ * Read back the key this device holds for one room, or null.
+ *
+ * Memory wins over the store, because memory is only ever written by a
+ * `storeSessionKey` in this page's lifetime and is therefore the newer of the
+ * two whenever they disagree -- a write that hit the quota wall would
+ * otherwise leave a stale persisted key answering for a fresh membership.
+ */
+export function readSessionKey(code: string): string | null {
+  const remembered = inMemory.get(keyFor(code));
+  if (remembered !== undefined) return remembered;
+  try {
+    return localStorage.getItem(keyFor(code));
+  } catch {
+    return null; // no store, and nothing stored this session either
   }
 }
 
@@ -59,12 +100,9 @@ export function useSessionKey(code: string) {
   // (vitest runs the edge runtime, with no DOM), and an unproven rewrite of
   // the redirect guard is a worse trade than a named exception.
   useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = localStorage.getItem(keyFor(code));
-    } catch {
-      stored = null; // private browsing -- the room asks them to rejoin
-    }
+    // Both sides of the round trip go through this one pair of functions, so
+    // the in-memory fallback closes the loop here for every caller at once.
+    const stored = readSessionKey(code);
     // A mount-time read of a browser store has nowhere to land but state, and
     // `ready` must start false so the room page does not redirect to /join
     // before anyone has looked. Full reasoning above the effect.

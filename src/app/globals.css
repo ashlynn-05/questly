@@ -211,6 +211,17 @@ body {
   );
 }
 
+/* The line ends on the last stop, not at the bottom of whatever that stop has
+   grown to hold. 5px wide over a 3px rail, and 1px to its left, so a subpixel
+   layout cannot leave a sliver of orange showing. */
+.rail-end {
+  position: absolute;
+  left: calc(var(--rail-x) - 1px);
+  bottom: 0;
+  width: 5px;
+  background: var(--ground);
+}
+
 .node {
   position: absolute;
   left: calc(var(--rail-x) + 1.5px);
