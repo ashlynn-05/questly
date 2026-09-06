@@ -151,6 +151,14 @@ export const vote = mutation({
     // churn a row every other phone in the room is subscribed to.
 
     // Resolves the instant the majority lands -- no timer, no dead air.
+    //
+    // If the deciding yes cannot be applied -- somebody locked the stop after
+    // the proposal was opened -- this throws STOP_LOCKED at the voter and the
+    // proposal survives. Deliberately different from the roster-change path in
+    // `resolveOpenProposals`, which closes such a proposal instead: there,
+    // nobody is watching and a throw would block a member from leaving; here,
+    // there is a person on the other end, the message tells them exactly what
+    // to do, and their vote is still counted once the stop is unlocked.
     const status = await settleProposal(ctx, proposal);
     return { accepted: status === "accepted" };
   },

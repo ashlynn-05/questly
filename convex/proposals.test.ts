@@ -600,3 +600,35 @@ test("a departure is not blocked by a proposal whose stop was locked after it op
   );
   expect(roster.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
 });
+
+// The deliberate asymmetry with `resolveOpenProposals`: with a person on the
+// other end, say what is wrong instead of quietly closing their proposal.
+test("locking a stop mid-vote refuses the deciding vote and leaves the proposal alive", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec", "Tam", "Sam"]);
+  const { proposalId } = await t.mutation(api.proposals.open, {
+    code: "5555", sessionKey: "k-Bec", stopId: "s2", replacement: STOP({ name: "A" }), reason: "",
+  });
+  await t.mutation(api.plans.setLocked, {
+    code: "5555", sessionKey: "k-Sam", stopId: "s2", locked: true,
+  });
+
+  await expectUserError(
+    t.mutation(api.proposals.vote, { code: "5555", sessionKey: "k-Tam", proposalId, vote: "yes" }),
+    "STOP_LOCKED",
+    /locked/i,
+  );
+  // The whole mutation rolled back, so Tam's vote is not half-recorded.
+  expect((await proposalOf(t, proposalId))!.status).toBe("open");
+  expect(await votesOf(t, proposalId)).toHaveLength(1);
+
+  // Unlock, and the same vote carries it.
+  await t.mutation(api.plans.setLocked, {
+    code: "5555", sessionKey: "k-Sam", stopId: "s2", locked: false,
+  });
+  const r = await t.mutation(api.proposals.vote, {
+    code: "5555", sessionKey: "k-Tam", proposalId, vote: "yes",
+  });
+  expect(r.accepted).toBe(true);
+  expect((await planOf(t, roomId))!.stops[1].name).toBe("A");
+});
