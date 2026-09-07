@@ -419,7 +419,7 @@ export function Plan({
                             />
                             <button
                               type="submit"
-                              className="board min-h-[44px] shrink-0 rounded-[5px] bg-action px-4 text-[11px] text-on-action"
+                              className="board min-h-[44px] shrink-0 rounded-[5px] border border-action-edge bg-action px-4 text-[11px] text-on-action"
                             >
                               Find
                             </button>

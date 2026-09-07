@@ -14,6 +14,13 @@ export function ThemeToggle() {
 
   useEffect(() => {
     const stored = localStorage.getItem("questly-theme") as Mode | null;
+    // `localStorage` does not exist during SSR, so this read cannot move into
+    // render or a useState initialiser without breaking hydration -- and the
+    // first paint must be "system", which is what the server rendered. Reading
+    // an external store once at mount is what an effect is for; the lint rule
+    // is guarding against cascading renders, and this runs once with an empty
+    // dependency list. Same resolution as `src/lib/session.ts`.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (stored) setMode(stored);
   }, []);
 

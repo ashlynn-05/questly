@@ -16,7 +16,12 @@ const SURFACE: Record<Variant, string> = {
   // ink in light (15.97:1 on cornsilk, 4.92:1 on the fill), clearing 3:1 on
   // both sides of the line it draws. See globals.css.
   action: "bg-action text-on-action border border-action-edge",
-  quiet: "bg-action-quiet text-on-action",
+  // Same edge, same reason, and worse without it: in LIGHT mode `--action-quiet`
+  // is jonquil, which measures 1.38:1 on cornsilk -- a control with no visible
+  // boundary at all. The ink edge puts that at 15.77:1 against the ground and
+  // 11.43:1 against the fill. (Dark mode's deep orange already clears 3:1 on
+  // iris at 3.87:1; it carries the edge for consistency, not to be rescued.)
+  quiet: "bg-action-quiet text-on-action border border-action-edge",
   raised: "bg-ground-raised text-text",
   ghost: "bg-transparent text-text border border-hairline",
 };

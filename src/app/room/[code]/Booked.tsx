@@ -123,7 +123,7 @@ export function Booked({
           href={booking.deepLink}
           target="_blank"
           rel="noreferrer"
-          className="board flex min-h-[44px] items-center justify-center rounded-[6px] bg-action px-4 text-[11px] text-on-action"
+          className="board flex min-h-[44px] items-center justify-center rounded-[6px] border border-action-edge bg-action px-4 text-[11px] text-on-action"
         >
           Open in Maps<span className="sr-only"> (opens in a new tab)</span>
         </a>
