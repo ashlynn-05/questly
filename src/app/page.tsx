@@ -3,6 +3,7 @@ import { api } from "@convex/_generated/api";
 import { fetchAuthQuery } from "@/lib/auth-server";
 import { Screen } from "@/components/questly/Screen";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
+import { InstallHint } from "@/components/questly/InstallHint";
 
 /**
  * Whether this visitor already has an account, read on the server.
@@ -113,6 +114,12 @@ export default async function Home() {
       >
         Design reference
       </Link>
+
+      {/* A closed `<dialog>`, so its position in the flow is not its position
+          on screen -- it opens centred over the page. Opens for nobody but an
+          iOS Safari visitor who has not installed Questly and has not already
+          dismissed it. */}
+      <InstallHint />
     </Screen>
   );
 }

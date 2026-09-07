@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { resolveThemeMode, THEME_STORAGE_KEY, type ThemeMode } from "@/lib/theme";
+import { applyThemeColor, resolveThemeMode, THEME_STORAGE_KEY, type ThemeMode } from "@/lib/theme";
 import { MenuRoundel } from "./MenuRoundel";
 
 /**
@@ -98,11 +98,33 @@ export function ThemeToggle() {
     } catch {
       // Nothing to recover: the page keeps whatever mode it painted in.
     }
+
+    // In "system" the browser's own furniture has to follow the OS the way the
+    // stylesheet already does: `prefers-color-scheme` re-resolves `--ground` by
+    // itself, but the `theme-color` meta is a fixed string and would sit at
+    // last night's colour when the phone flips to Day at sunrise with the tab
+    // still open. Only "system" listens -- an explicit choice is not the OS's
+    // to change. Returned as this effect's cleanup, so a remount does not stack
+    // listeners.
+    if (resolved !== "system") return;
+    try {
+      const query = matchMedia("(prefers-color-scheme: light)");
+      const sync = () => applyThemeColor("system");
+      query.addEventListener("change", sync);
+      return () => query.removeEventListener("change", sync);
+    } catch {
+      // No matchMedia (or it is locked down): the tint stays where the
+      // pre-paint script put it, which is right for the mode the page loaded in.
+    }
   }, []);
 
   function choose(next: ThemeMode) {
     setMode(next);
     const root = document.documentElement;
+    // The browser's status bar and title bar are part of this switch's job:
+    // leave them and picking Day on a dark phone paints a cornsilk page under
+    // an iris status bar. Outside the try below because it has its own.
+    applyThemeColor(next);
     try {
       if (next === "system") {
         root.removeAttribute("data-theme");
