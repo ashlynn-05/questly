@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Questly</title>
+  <rect width="512" height="512" fill="#3b3686"/>
+    <path d="M123 405H235V277H347V149" fill="none" stroke="#e0652b" stroke-width="44"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="347" cy="149" r="64" fill="#edba40"/>
+    <circle cx="347" cy="149" r="26" fill="#3b3686"/>
+</svg>
