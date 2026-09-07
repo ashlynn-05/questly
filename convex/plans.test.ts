@@ -23,6 +23,8 @@ const INPUT = {
   venueName: "Princes Park",
   headcount: 4,
   budgetPerHeadCents: 0,
+  // What the matched card says the venue costs, never a share of the budget.
+  anchorPriceCents: 0,
   startAt: START,
   mood: "grass" as const,
 };
@@ -84,12 +86,65 @@ test("prose instead of JSON degrades into a usable plan rather than throwing", (
  * is slow.
  */
 test("the degraded plan describes the room's real venue, not a placeholder", () => {
-  const paid = { ...INPUT, venueName: "The Long Weekend", budgetPerHeadCents: 4000 };
+  const paid = {
+    ...INPUT,
+    venueName: "The Long Weekend",
+    budgetPerHeadCents: 4000,
+    anchorPriceCents: 1800,
+  };
   const { stops, shareMessage } = parsePlanResponse("no json here", paid);
   expect(stops.some((s) => s.name.includes("The Long Weekend"))).toBe(true);
   expect(shareMessage).toContain("The Long Weekend");
-  expect(shareMessage).toContain("$40");
+  // $18 -- what the venue costs -- and NOT $40, the budget. The message is
+  // pasted into a group chat, so the number in it has to be the night's.
+  expect(shareMessage).toContain("$18");
+  expect(shareMessage).not.toContain("$40");
   expect(shareMessage).not.toMatch(/your quest/i);
+});
+
+/**
+ * HONESTY, and the reason `anchorPriceCents` exists at all. The fallback used
+ * to price the anchor at 70% of the budget, so the SAME venue on the SAME night
+ * cost $21 a head for a $30 room and $49 for a $70 one -- and that number went
+ * on to become `plans.totalPerHeadCents` and then the booking total. A budget is
+ * what a group will pay, never evidence of what anything costs.
+ */
+test("the fallback prices the anchor from the venue, not from the group's budget", () => {
+  const cheapRoom = fallbackPlan({ ...INPUT, budgetPerHeadCents: 3000, anchorPriceCents: 1800 });
+  const richRoom = fallbackPlan({ ...INPUT, budgetPerHeadCents: 7000, anchorPriceCents: 1800 });
+
+  const anchorOf = (p: { stops: Stop[] }) => p.stops.find((s) => s.slot === "main")!;
+  expect(anchorOf(cheapRoom).costPerHeadCents).toBe(1800);
+  expect(anchorOf(richRoom).costPerHeadCents).toBe(1800);
+  // 70% of 3000 and of 7000 -- the two numbers this used to produce.
+  expect(anchorOf(cheapRoom).costPerHeadCents).not.toBe(2100);
+  expect(anchorOf(richRoom).costPerHeadCents).not.toBe(4900);
+});
+
+test("a venue with no known price is not priced at all, and the plan says so", () => {
+  const { stops, shareMessage } = fallbackPlan({
+    ...INPUT,
+    venueName: "Some Gallery",
+    budgetPerHeadCents: 5000,
+    anchorPriceCents: null,
+  });
+
+  const anchor = stops.find((s) => s.slot === "main")!;
+  expect(anchor.costPerHeadCents).toBe(0);
+  // 0 in the total would otherwise read as "this stop is free".
+  expect(anchor.note).toMatch(/could not get a price/i);
+  // And the share message must not say "free" either.
+  expect(shareMessage).toMatch(/price to confirm/i);
+  expect(shareMessage).not.toMatch(/free/i);
+});
+
+test("the prompt states the anchor's real price, and refuses one when there is none", () => {
+  expect(buildPlanPrompt({ ...INPUT, budgetPerHeadCents: 7000, anchorPriceCents: 1800 })).toContain(
+    "$18 per head",
+  );
+  const unpriced = buildPlanPrompt({ ...INPUT, anchorPriceCents: null });
+  expect(unpriced).toMatch(/do not have a price/i);
+  expect(unpriced).toMatch(/do not guess/i);
 });
 
 test("a garbage slot or duration is coerced, not trusted", () => {
@@ -116,12 +171,15 @@ test("a $0 room never produces a plan that costs money", () => {
   expect(fallbackPlan(INPUT).stops.every((s) => s.costPerHeadCents === 0)).toBe(true);
 });
 
-test("a paid fallback stays in whole cents and under the room's budget", () => {
-  const { stops } = fallbackPlan({ ...INPUT, budgetPerHeadCents: 3333 });
+test("a paid fallback stays in whole cents", () => {
+  const { stops } = fallbackPlan({ ...INPUT, budgetPerHeadCents: 3333, anchorPriceCents: 2501 });
   for (const stop of stops) {
     expect(Number.isInteger(stop.costPerHeadCents)).toBe(true);
   }
-  expect(stops.reduce((sum, s) => sum + s.costPerHeadCents, 0)).toBeLessThanOrEqual(3333);
+  // No longer "under the budget by construction": the anchor is priced at what
+  // the venue costs, which the group is allowed to decide to overspend on.
+  // `rooms.get` projects `plan.overBudget` so they decide knowingly.
+  expect(stops.reduce((sum, s) => sum + s.costPerHeadCents, 0)).toBe(2501);
 });
 
 // --- writePlan ------------------------------------------------------------
@@ -156,11 +214,31 @@ async function seedRoom(
   });
 }
 
+/**
+ * Write a plan the way `plans.generate` does: take the lease first, then write
+ * under it. Going through `markGenerating` rather than fabricating a token
+ * keeps every test on the same path production uses -- which is the point of
+ * the token, since a build whose lease was taken must not be able to write.
+ */
+async function writePlanUnderLease(
+  t: T,
+  args: {
+    roomId: Id<"rooms">;
+    questId: Id<"quests">;
+    stops: Stop[];
+    shareMessage: string;
+  },
+) {
+  const token = await t.mutation(internal.plans.markGenerating, { roomId: args.roomId });
+  expect(token).not.toBeNull();
+  return await t.mutation(internal.plans.writePlan, { ...args, token: token as string });
+}
+
 test("writePlan stores the plan and totals the cost", async () => {
   const t = convexTest(schema, modules);
   const { roomId, questId } = await seedRoom(t);
 
-  await t.mutation(internal.plans.writePlan, {
+  await writePlanUnderLease(t, {
     roomId, questId,
     stops: [
       { id: "s1", slot: "meet", name: "Gate", startAt: START, durationMin: 20,
@@ -186,8 +264,8 @@ test("writePlan twice updates the one plan rather than adding a second", async (
     id: "s1", slot: "main" as const, name: "A", startAt: START, durationMin: 30,
     costPerHeadCents: 0, note: "", source: "llm" as const, locked: false,
   };
-  await t.mutation(internal.plans.writePlan, { roomId, questId, stops: [stop], shareMessage: "one" });
-  await t.mutation(internal.plans.writePlan, { roomId, questId, stops: [stop], shareMessage: "two" });
+  await writePlanUnderLease(t, { roomId, questId, stops: [stop], shareMessage: "one" });
+  await writePlanUnderLease(t, { roomId, questId, stops: [stop], shareMessage: "two" });
 
   const plans = await t.run(async (ctx) => ctx.db.query("plans").collect());
   expect(plans).toHaveLength(1);
@@ -279,7 +357,12 @@ test("a matched room still gets a plan when OPENAI_API_KEY is missing", async ()
   expect(plan!.stops.some((s) => s.name.includes("The Long Weekend"))).toBe(true);
   expect(plan!.shareMessage).toContain("The Long Weekend");
   expect(plan!.totalPerHeadCents).toBeLessThanOrEqual(4000);
-  expect(fetchMock).not.toHaveBeenCalled();
+  // The canned night's own shape, not "fetch was not called" -- the key is read
+  // before the client is constructed, so that assertion could never have
+  // failed. The test above, with the key set, is the positive control that this
+  // same path does call the model when it can.
+  expect(plan!.stops[0].name).toMatch(/^Meet outside /);
+  expect(plan!.stops.every((s) => Number.isInteger(s.costPerHeadCents))).toBe(true);
 });
 
 test("an OpenAI outage still leaves the room with a plan", async () => {
@@ -316,6 +399,176 @@ test("generate running twice leaves one plan, not two", async () => {
   expect(plans).toHaveLength(1);
 });
 
+// --- the plan lease and the host's retry ----------------------------------
+//
+// A matched room used to have exactly one chance at a plan. `resolveMatch`
+// scheduled `generate` once and nothing scheduled it again, so a build killed
+// mid-flight -- a deploy, a timeout, the action simply dying -- left the room
+// on "Writing the plan..." forever, with no plan, no error, and no way out
+// short of a developer opening the database. These are the two halves of the
+// cure: a claim that expires, and a host who can ask again.
+
+/**
+ * Run the work `retry` handed off. `finishInProgressScheduledFunctions` drains
+ * only jobs already in flight, and a `runAfter(0)` posted from a mutation is
+ * still pending when that mutation returns -- so without driving the timers the
+ * build never starts and the assertion passes over an empty table.
+ */
+async function runScheduled(t: T) {
+  vi.useFakeTimers();
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  vi.useRealTimers();
+}
+
+/** A matched room with a host and a guest, and no plan written yet. */
+async function unplannedRoom(t: T, over: { code?: string } = {}) {
+  const code = over.code ?? "4460";
+  const { roomId, questId } = await seedRoom(t, { code });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("members", {
+      roomId, name: "Bec", userId: "u1", isHost: true, sessionKey: "k-bec", joinedAt: 1,
+    });
+    await ctx.db.insert("members", {
+      roomId, name: "Tam", isHost: false, sessionKey: "k-tam", joinedAt: 2,
+    });
+    await ctx.db.patch(roomId, { matchedQuestId: questId });
+  });
+  return { roomId, questId, code };
+}
+
+test("the host can ask again for a plan that never arrived", async () => {
+  const t = convexTest(schema, modules);
+  delete process.env.OPENAI_API_KEY; // the canned night, so nothing goes near the wire
+  const { roomId, code } = await unplannedRoom(t);
+
+  await t.mutation(api.plans.retry, { code, sessionKey: "k-bec" });
+  await runScheduled(t);
+
+  const plan = await storedPlan(t, roomId);
+  expect(plan).not.toBeNull();
+  expect(plan!.stops.length).toBeGreaterThanOrEqual(2);
+  // And the claim is released again, so the room is not left mid-build.
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.planStartedAt).toBeUndefined();
+});
+
+test("only the host can ask again", async () => {
+  const t = convexTest(schema, modules);
+  const { code } = await unplannedRoom(t);
+
+  await expectUserError(
+    t.mutation(api.plans.retry, { code, sessionKey: "k-tam" }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  await expectUserError(
+    t.mutation(api.plans.retry, { code, sessionKey: "k-nobody" }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+});
+
+// Idempotent, not an error. The button is on a screen the whole room can see
+// mid-build; by the time a second tap lands the plan is often already there,
+// and telling that host they did something wrong would be a lie.
+test("asking again once the plan has landed changes nothing", async () => {
+  const t = convexTest(schema, modules);
+  delete process.env.OPENAI_API_KEY;
+  const { roomId, questId, code } = await unplannedRoom(t);
+  await writePlanUnderLease(t, {
+    roomId, questId,
+    stops: [stop({ id: "s1", slot: "main", name: "The night they already have" })],
+    shareMessage: "already here",
+  });
+
+  await t.mutation(api.plans.retry, { code, sessionKey: "k-bec" });
+  await runScheduled(t);
+
+  const plans = await t.run(async (ctx) => ctx.db.query("plans").collect());
+  expect(plans).toHaveLength(1);
+  expect(plans[0].shareMessage).toBe("already here");
+});
+
+test("asking again while a build is genuinely in flight is refused, not queued", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await unplannedRoom(t);
+  // A build that started a moment ago and has not finished.
+  await t.mutation(internal.plans.markGenerating, { roomId });
+
+  await expectUserError(
+    t.mutation(api.plans.retry, { code, sessionKey: "k-bec" }),
+    "PLAN_IN_PROGRESS",
+    /still being written/i,
+  );
+});
+
+test("a claim older than the staleness bound may be retried", async () => {
+  const t = convexTest(schema, modules);
+  delete process.env.OPENAI_API_KEY;
+  const { roomId, code } = await unplannedRoom(t);
+  await t.mutation(internal.plans.markGenerating, { roomId });
+  // The build that took this claim is gone; nothing will ever release it.
+  await t.run(async (ctx) => {
+    await ctx.db.patch(roomId, { planStartedAt: Date.now() - 10 * 60 * 1000 });
+  });
+
+  await t.mutation(api.plans.retry, { code, sessionKey: "k-bec" });
+  await runScheduled(t);
+
+  expect(await storedPlan(t, roomId)).not.toBeNull();
+});
+
+// The reason the token exists at all. A stalled build is not stopped when its
+// claim is taken -- it is still running, and it still thinks it owns the room.
+test("a build whose claim was taken cannot write over the plan that replaced it", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { roomId, questId } = await unplannedRoom(t);
+
+  const stalled = await t.mutation(internal.plans.markGenerating, { roomId });
+  await t.run(async (ctx) => {
+    await ctx.db.patch(roomId, { planStartedAt: Date.now() - 10 * 60 * 1000 });
+  });
+  const live = await t.mutation(internal.plans.markGenerating, { roomId });
+  expect(live).not.toBeNull();
+  expect(live).not.toBe(stalled);
+
+  await t.mutation(internal.plans.writePlan, {
+    roomId, questId, token: live as string,
+    stops: [stop({ id: "s1", slot: "main", name: "The night that won" })],
+    shareMessage: "the newer plan",
+  });
+
+  // The zombie finally finishes and tries to write its own answer.
+  const dropped = await t.mutation(internal.plans.writePlan, {
+    roomId, questId, token: stalled as string,
+    stops: [stop({ id: "s1", slot: "main", name: "The night nobody is on" })],
+    shareMessage: "the stale plan",
+  });
+
+  expect(dropped).toBeNull();
+  const plans = await t.run(async (ctx) => ctx.db.query("plans").collect());
+  expect(plans).toHaveLength(1);
+  expect(plans[0].shareMessage).toBe("the newer plan");
+});
+
+// A build that dies inside its own handler must hand the room back, or the
+// retry it needs is refused for a further minute for no reason.
+test("a build that throws releases the room instead of holding it", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { roomId, questId } = await unplannedRoom(t);
+  // The quest is gone, so `planContext` throws after the claim is taken.
+  await t.run(async (ctx) => ctx.db.delete(questId));
+
+  await expect(t.action(internal.plans.generate, { roomId, questId })).rejects.toBeInstanceOf(
+    ConvexError,
+  );
+
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.planStartedAt).toBeUndefined();
+});
+
 test("planContext refuses a room that has been deleted", async () => {
   const t = convexTest(schema, modules);
   const { roomId, questId } = await seedRoom(t);
@@ -325,6 +578,23 @@ test("planContext refuses a room that has been deleted", async () => {
     t.query(internal.plans.planContext, { roomId, questId }),
     "ROOM_NOT_FOUND",
     /room is gone/i,
+  );
+});
+
+// The pair has to belong together. Nothing outside the backend can supply a
+// mismatched one today, but a mismatch would plan ANOTHER room's venue against
+// this room's budget, party size and start time -- and write it into this
+// room's plan without a word. Delete the guard and this is the only thing that
+// notices.
+test("planContext refuses a quest that belongs to a different room", async () => {
+  const t = convexTest(schema, modules);
+  const mine = await seedRoom(t, { code: "4444" });
+  const theirs = await seedRoom(t, { code: "5555", title: "Someone else's night" });
+
+  await expectUserError(
+    t.query(internal.plans.planContext, { roomId: mine.roomId, questId: theirs.questId }),
+    "QUEST_NOT_FOUND",
+    /another room/i,
   );
 });
 
@@ -341,7 +611,7 @@ const stop = (over: Partial<Stop> = {}): Stop => ({
 
 async function seedPlan(t: T, stops: Stop[]) {
   const { roomId, questId } = await seedRoom(t);
-  await t.mutation(internal.plans.writePlan, { roomId, questId, stops, shareMessage: "hi" });
+  await writePlanUnderLease(t, { roomId, questId, stops, shareMessage: "hi" });
   return roomId;
 }
 
@@ -479,7 +749,7 @@ async function seedMemberRoom(
       roomId, name: "Bec", userId: "u1", isHost: true, sessionKey: "k-bec", joinedAt: 1,
     });
   });
-  await t.mutation(internal.plans.writePlan, {
+  await writePlanUnderLease(t, {
     roomId, questId,
     stops: over.stops ?? [
       stop({ id: "a", slot: "meet", name: "Gate", durationMin: 20 }),
@@ -878,7 +1148,10 @@ test("a $0 room's mood fallback asks for free places, not restaurants and spas",
     code, sessionKey: "k-bec", stopId: "a",
   });
 
-  expect(textQueries[1]).toBe("park hiking area beach garden tourist attraction");
+  // `tourist_attraction` is not on this list any more: Google hangs it on
+  // ticketed venues as readily as on public parks, so it was quietly letting
+  // paid places into a $0 room.
+  expect(textQueries[1]).toBe("park hiking area beach garden");
   expect(textQueries[1]).not.toMatch(/restaurant|spa/);
   expect(options.map((o) => o.name)).toEqual(["Carlton Gardens"]);
 });

@@ -5,6 +5,7 @@ import { stopValidator } from "./schema";
 import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { settleProposal } from "./lib/proposals";
+import { sanitizeClientStop } from "./lib/stops";
 
 /**
  * How a group of two or more changes its plan.
@@ -79,7 +80,12 @@ export const open = mutation({
       roomId: room._id,
       stopId: args.stopId,
       proposedBy: member._id,
-      replacement: args.replacement,
+      // Sanitised at the door rather than when the proposal is applied, so the
+      // room votes on the same object that would be stored -- a proposal the
+      // room accepts must never then be refused at the swap. See
+      // `sanitizeClientStop` for what is still trusted here and why the full
+      // fix (server-stored candidates referenced by id) is deferred.
+      replacement: sanitizeClientStop(args.replacement, room.budgetPerHeadCents),
       reason: args.reason,
       status: "open",
     });

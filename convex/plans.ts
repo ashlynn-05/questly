@@ -1,13 +1,14 @@
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { action, internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import schema, { slotValidator, stopValidator } from "./schema";
 import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
 import { FREE_TYPES, MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
-import { isOverBudget, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
+import { isOverBudget, sanitizeClientStop, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
 
 export const planContext = internalQuery({
@@ -43,23 +44,107 @@ export const planContext = internalQuery({
 });
 
 /**
+ * A plan build whose action is killed outright -- a deploy, a timeout, a crash
+ * -- never reaches its own error handler, so the room would keep its claim
+ * forever. After this long, a claim is presumed dead and may be taken.
+ *
+ * Shorter than `deck.ts`'s `STALE_BUILD_MS` because this build is one bounded
+ * OpenAI round trip (see `CHAT_TIMEOUT_MS` in `lib/openai.ts`) rather than a
+ * Places search, an embedding batch and a blurb batch -- and because a matched
+ * room is staring at "Writing the plan..." with nothing else to do, so a minute
+ * of it is already the outer edge of what a group will sit through.
+ */
+const STALE_PLAN_MS = 60 * 1000;
+
+/**
+ * Take the room for one plan build, or refuse. Compare-and-set, because the
+ * check and the write must be the same transaction: a match and a host retry
+ * can put two builds here at once, and two builds both writing would leave the
+ * room's plan flipping between two answers under everyone reading it.
+ *
+ * Returns a lease token on success and `null` on refusal. The token, not the
+ * mere presence of a claim, is what later writes are checked against -- a stale
+ * claim can be taken while its build is still running, and that build must not
+ * be able to overwrite whatever replaced it.
+ *
+ * It is a concurrency discriminator, never a credential, and it is never
+ * returned to a client: authorisation for a retry is established in
+ * `plans.retry` before anything reaches here, exactly as `deck.build`
+ * establishes it before `deck.markBuilding`.
+ *
+ * Deliberately NOT gated on `room.status`. The status rules for starting a plan
+ * build belong to the callers -- `retry` refuses anything but `matched`, and
+ * `generate` re-reads the room through `planContext` -- and keeping them out of
+ * here means the lease means one thing only: who is allowed to write next.
+ */
+export const markGenerating = internalMutation({
+  args: { roomId: v.id("rooms") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { roomId }) => {
+    const room = await ctx.db.get(roomId);
+    if (!room) return null;
+
+    // Someone else holds the claim. Take it only if it has gone stale.
+    if (room.planStartedAt !== undefined && Date.now() - room.planStartedAt < STALE_PLAN_MS) {
+      return null;
+    }
+
+    const planToken = crypto.randomUUID();
+    await ctx.db.patch(roomId, { planStartedAt: Date.now(), planToken });
+    return planToken;
+  },
+});
+
+/** Whether this room's plan is still writable by this exact build. */
+function holdsPlanLease(room: Doc<"rooms"> | null, token: string): boolean {
+  return room !== null && room.planToken === token;
+}
+
+/**
+ * Release the claim without writing a plan, so a build that failed outright
+ * does not block the retry for a further `STALE_PLAN_MS`.
+ *
+ * Clears `planStartedAt` only. `planToken` stays, so a build whose claim was
+ * taken over cannot come back to life and write over the room later.
+ */
+export const abandonPlan = internalMutation({
+  args: { roomId: v.id("rooms"), token: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { roomId, token }) => {
+    const room = await ctx.db.get(roomId);
+    if (holdsPlanLease(room, token)) {
+      await ctx.db.patch(roomId, { planStartedAt: undefined });
+    }
+    return null;
+  },
+});
+
+/**
  * Upsert, never insert.
  *
  * `generate` is scheduled, so a retry or a second match can put two of them on
  * this room. A second row would leave `rooms.get` -- the single subscription the
  * client runs on -- showing whichever plan `.first()` happens to land on, which
  * is the plan quietly reverting for everyone in the room.
+ *
+ * `token` is the lease from `markGenerating` and is checked here rather than
+ * only at the start of the build, because the whole point of a staleness bound
+ * is that a claim can be taken WHILE its build is still running. Without the
+ * check, the build that was given up for dead would come back and overwrite the
+ * plan the group is already reading.
  */
 export const writePlan = internalMutation({
   args: {
     roomId: v.id("rooms"),
     questId: v.id("quests"),
+    token: v.string(),
     stops: v.array(stopValidator),
     shareMessage: v.string(),
   },
-  // Null when the write was dropped because the room is already booked.
+  // Null when the write was dropped: either the room is already booked, or this
+  // build's lease was taken while it was running.
   returns: v.union(v.id("plans"), v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, { token, ...args }) => {
     // The last door into a booked plan, and the only one that is not a user
     // action: `generate` is SCHEDULED, so a build already in flight when the
     // room books is not stopped by anything -- `resolveMatch` only declines to
@@ -78,6 +163,16 @@ export const writePlan = internalMutation({
       return null;
     }
 
+    // Checked after the booked read so the two refusals log distinctly, and
+    // before any write so a superseded build changes nothing at all.
+    if (!holdsPlanLease(room, token)) {
+      console.warn(
+        `plans.writePlan: room ${room?.code ?? args.roomId}: this build's lease was taken while ` +
+          `it was running; dropping the plan write in favour of the build that replaced it.`,
+      );
+      return null;
+    }
+
     // .first() rather than .unique(): rooms.get reads this row the same way, and
     // a duplicate must not turn into a throw on every write for that room.
     const existing = await ctx.db
@@ -86,11 +181,18 @@ export const writePlan = internalMutation({
       .first();
 
     const doc = { ...args, totalPerHeadCents: totalPerHeadCents(args.stops) };
+    let planId: Id<"plans">;
     if (existing) {
       await ctx.db.patch(existing._id, doc);
-      return existing._id;
+      planId = existing._id;
+    } else {
+      planId = await ctx.db.insert("plans", doc);
     }
-    return await ctx.db.insert("plans", doc);
+
+    // The claim is released, so a later failure could be retried; the token
+    // stays as the record of which build won. See the schema comment.
+    await ctx.db.patch(args.roomId, { planStartedAt: undefined });
+    return planId;
   },
 });
 
@@ -106,45 +208,139 @@ export const generate = internalAction({
   args: { roomId: v.id("rooms"), questId: v.id("quests") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { room, quest, headcount } = await ctx.runQuery(internal.plans.planContext, args);
-
-    const input: PlanInput = {
-      venueName: quest.title,
-      headcount,
-      budgetPerHeadCents: room.budgetPerHeadCents,
-      startAt: room.whenAt,
-      mood: room.mood,
-    };
-
-    // Start from the usable night, then improve on it if the model cooperates.
-    let result = fallbackPlan(input);
-
-    try {
-      const raw = await jsonCompletion(buildPlanPrompt(input));
-      // `jsonCompletion` already parsed the body; re-serialising keeps every
-      // untrusted model answer going through the one coercing, never-throwing
-      // entry point rather than a second hand-rolled one here.
-      const parsed = parsePlanResponse(JSON.stringify(raw), input);
-
-      if (isOverBudget(parsed.stops, room.budgetPerHeadCents)) {
-        // A $30 room being handed a $80 night -- or a free room being handed a
-        // paid one -- is worse than the plainer plan we already have.
-        console.warn("plans.generate: model plan was over budget; keeping the canned night.");
-      } else {
-        result = parsed;
-      }
-    } catch (error) {
-      // Never leave a matched room without a plan because a third party was
-      // slow -- but never fall back silently either, or the outage is invisible.
-      console.warn("plans.generate: no model plan, using the canned night.", error);
+    // The lease first, before any work is done or any money is spent. Both ways
+    // in -- `resolveMatch` scheduling the first build, and `plans.retry`
+    // scheduling a replacement -- come through here, so this one call is what
+    // stops two builds running over each other however they were started.
+    const token = await ctx.runMutation(internal.plans.markGenerating, { roomId: args.roomId });
+    if (token === null) {
+      // A live build already holds the room. Not an error: the group is about
+      // to get a plan from whoever holds it.
+      console.warn(
+        `plans.generate: room ${args.roomId} is already having its plan written; standing down.`,
+      );
+      return null;
     }
 
-    await ctx.runMutation(internal.plans.writePlan, {
-      roomId: args.roomId,
-      questId: args.questId,
-      stops: result.stops,
-      shareMessage: result.shareMessage,
-    });
+    try {
+      const { room, quest, headcount } = await ctx.runQuery(internal.plans.planContext, args);
+
+      const input: PlanInput = {
+        venueName: quest.title,
+        headcount,
+        budgetPerHeadCents: room.budgetPerHeadCents,
+        // HONESTY -- the anchor stop is priced at what the matched card says the
+        // venue costs, never at a share of what the group said they could spend.
+        // `null` is a venue Google gave no price signal for, and it stays null
+        // all the way to the stop rather than becoming a number nobody quoted.
+        anchorPriceCents: quest.priceCents ?? null,
+        startAt: room.whenAt,
+        mood: room.mood,
+      };
+
+      // Start from the usable night, then improve on it if the model cooperates.
+      let result = fallbackPlan(input);
+
+      try {
+        const raw = await jsonCompletion(buildPlanPrompt(input));
+        // `jsonCompletion` already parsed the body; re-serialising keeps every
+        // untrusted model answer going through the one coercing, never-throwing
+        // entry point rather than a second hand-rolled one here.
+        const parsed = parsePlanResponse(JSON.stringify(raw), input);
+
+        if (isOverBudget(parsed.stops, room.budgetPerHeadCents)) {
+          // A $30 room being handed a $80 night -- or a free room being handed a
+          // paid one -- is worse than the plainer plan we already have.
+          console.warn("plans.generate: model plan was over budget; keeping the canned night.");
+        } else {
+          result = parsed;
+        }
+      } catch (error) {
+        // Never leave a matched room without a plan because a third party was
+        // slow -- but never fall back silently either, or the outage is invisible.
+        console.warn("plans.generate: no model plan, using the canned night.", error);
+      }
+
+      await ctx.runMutation(internal.plans.writePlan, {
+        roomId: args.roomId,
+        questId: args.questId,
+        token,
+        stops: result.stops,
+        shareMessage: result.shareMessage,
+      });
+    } catch (error) {
+      // The room or the quest is gone, or the write itself failed. Hand the
+      // claim back rather than making the group wait out STALE_PLAN_MS before
+      // the host's retry button will do anything.
+      await ctx.runMutation(internal.plans.abandonPlan, { roomId: args.roomId, token });
+      throw error;
+    }
+    return null;
+  },
+});
+
+/**
+ * The host asks for the plan to be written again.
+ *
+ * This exists because a killed action cannot run its own error handler. If the
+ * platform stops `generate` mid-flight -- a deploy, a wall-clock limit, a crash
+ * -- the room sits on `matched` with no plan row, `rooms.get` returns
+ * `plan: null`, and nothing else in the backend ever schedules another build:
+ * `resolveMatch` deliberately refuses to re-decide a matched room. Without this
+ * the night is over.
+ *
+ * Authorisation is modelled on `deck.build`: the `sessionKey` capability proves
+ * membership of this one room, and the host check is the same one that guards
+ * starting the deck. No `userId` or `memberId` is accepted. Host-only because
+ * this spends OpenAI quota and because a whole room tapping "try again" at once
+ * should not become a queue of builds -- though `markGenerating` would refuse
+ * them anyway.
+ */
+export const retry = mutation({
+  args: { code: v.string(), sessionKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const room = await roomByCode(ctx, args.code);
+    const member = await requireMember(ctx, room._id, args.sessionKey);
+    if (!member.isHost) {
+      throwUserError("NOT_THE_HOST", "Only the host can ask for the plan again.");
+    }
+
+    // `matchedQuestId` is written in the same transaction as `status: "matched"`
+    // (`lib/match.ts`), so the two are never apart -- but the plan build needs
+    // the quest id, and a `!` here would hide a real backend fault behind a
+    // crash rather than a sentence.
+    if (room.status !== "matched" || !room.matchedQuestId) {
+      throwUserError(
+        "ROOM_WRONG_STATE",
+        "There is nothing to write a plan for yet -- the room has not matched.",
+      );
+    }
+    const questId = room.matchedQuestId;
+
+    // Already has one. Idempotent rather than an error: a host double-tapping
+    // as the plan lands should see the plan, not a failure. .first(), not
+    // .unique(), for the reason documented at length in rooms.get.
+    const existing = await ctx.db
+      .query("plans")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .first();
+    if (existing) return null;
+
+    // The staleness bound doubles as the "give it a moment" rule: for the first
+    // STALE_PLAN_MS after the match the original build is presumed alive, and
+    // the honest answer is to wait for it rather than start a second one.
+    if (room.planStartedAt !== undefined && Date.now() - room.planStartedAt < STALE_PLAN_MS) {
+      throwUserError(
+        "PLAN_IN_PROGRESS",
+        "The plan is still being written. Give it a few more seconds.",
+      );
+    }
+
+    // Scheduled, not run inline: this is a mutation and the build makes a
+    // network call. `generate` takes the lease itself, so the two entry points
+    // into a plan build stay identical.
+    await ctx.scheduler.runAfter(0, internal.plans.generate, { roomId: room._id, questId });
     return null;
   },
 });
@@ -185,7 +381,35 @@ export const replaceStop = mutation({
       );
     }
 
-    await applyStopSwap(ctx, room._id, args.stopId, args.replacement);
+    // A room of one can still be holding an open proposal: a two-person room
+    // where B proposed and then left leaves the proposal open (the departing
+    // member's opening yes goes with them, but the remaining member's undecided
+    // vote can still carry it). A direct swap here followed by the survivor
+    // voting on that proposal would apply the departed member's replacement
+    // over the survivor's own edit -- the exact overlap between the two editing
+    // paths this rule exists to prevent, reached from the other side.
+    //
+    // `by_room_stop` narrows to this room's proposals for this one stop -- a
+    // handful of rows -- and status is filtered off that, as in `proposals.open`.
+    const openOnThisStop = await ctx.db
+      .query("proposals")
+      .withIndex("by_room_stop", (q) => q.eq("roomId", room._id).eq("stopId", args.stopId))
+      .filter((q) => q.eq(q.field("status"), "open"))
+      .first();
+    if (openOnThisStop) {
+      throwUserError(
+        "PROPOSAL_EXISTS",
+        "There is still an open proposal for that stop. Settle that first.",
+      );
+    }
+
+    await applyStopSwap(
+      ctx,
+      room._id,
+      args.stopId,
+      // The client authored this object; see `sanitizeClientStop`.
+      sanitizeClientStop(args.replacement, room.budgetPerHeadCents),
+    );
     return null;
   },
 });
@@ -266,19 +490,32 @@ function toOptions(
   slot: Slot,
   prefix: string,
 ): Stop[] {
-  return results.slice(0, 6).map((place, i) => ({
-    id: `${prefix}_${i}`,
-    slot,
-    placeId: place.id,
-    name: place.name,
-    // startAt is rewritten by applyStopSwap, so a placeholder is correct here.
-    startAt: 0,
-    durationMin: 60,
-    costPerHeadCents: priceLevelToCents(place.priceLevel),
-    note: place.summary ?? place.address,
-    source: "manual" as const,
-    locked: false,
-  }));
+  return results.slice(0, 6).map((place, i) => {
+    const banded = priceLevelToCents(place.priceLevel);
+    return {
+      id: `${prefix}_${i}`,
+      slot,
+      placeId: place.id,
+      name: place.name,
+      // startAt is rewritten by applyStopSwap, so a placeholder is correct here.
+      startAt: 0,
+      durationMin: 60,
+      // A stop must carry a number -- the itinerary totals them -- but an
+      // unpriced venue has no number to carry. It contributes 0, which
+      // understates the night, and the note says so in the one place the person
+      // choosing it will read. That is the lesser of the two errors available:
+      // the alternative is inventing a band, which is what put $35 on a public
+      // park, and an invented number would be indistinguishable from a real one
+      // in `plan.totalPerHeadCents` and in the booking total.
+      costPerHeadCents: banded ?? 0,
+      note:
+        banded === null
+          ? `Price unknown -- ${place.summary ?? place.address}`
+          : (place.summary ?? place.address),
+      source: "manual" as const,
+      locked: false,
+    };
+  });
 }
 
 /** "Pick it yourself" -- a typed search, biased to the room's area. */

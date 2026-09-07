@@ -81,9 +81,12 @@ async function roomWithPlan(t: T, memberNames: string[]) {
     return { roomId, questId };
   });
 
+  // Through the lease, exactly as `plans.generate` does.
+  const token = await t.mutation(internal.plans.markGenerating, { roomId: ids.roomId });
   await t.mutation(internal.plans.writePlan, {
     roomId: ids.roomId,
     questId: ids.questId,
+    token: token as string,
     stops: [
       {
         id: "s1", slot: "main", name: "The bench", startAt: START, durationMin: 30,
@@ -147,6 +150,80 @@ test("a swap keeps the stop id so open proposals still point at it", async () =>
   expect(plan!.stops[1].id).toBe("s2");
 });
 
+// --- what the client is allowed to author ---------------------------------
+//
+// `replacement` is a whole Stop, typed only by the schema validator, so the
+// browser is the author of a row we store and later quote money from. The full
+// fix is server-stored candidates referenced by id; until then the two fields
+// that can do real damage are pinned here.
+
+test("a client-authored stop is always recorded as a manual choice", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec"]);
+
+  await t.mutation(api.plans.replaceStop, {
+    code: "5555", sessionKey: "k-Bec", stopId: "s2",
+    // The browser claims the model chose this. It did not.
+    replacement: STOP({ name: "Somewhere they typed", source: "llm" }),
+  });
+
+  const plan = await planOf(t, roomId);
+  expect(plan!.stops[1].source).toBe("manual");
+});
+
+test("a proposal's replacement is stamped manual too, before the room votes on it", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec"]);
+
+  await t.mutation(api.proposals.open, {
+    code: "5555", sessionKey: "k-Bec", stopId: "s2",
+    replacement: STOP({ name: "Their pick", source: "llm" }),
+    reason: "closer to the tram",
+  });
+
+  const plan = await planOf(t, roomId);
+  expect(plan!.stops[1].source).toBe("manual");
+});
+
+// A stop's price is added up and shown to the room as what the night costs, so
+// a number typed into a request becomes a number the group budgets against.
+// Anything outside a plausible range for one stop is refused outright rather
+// than clamped, because a silently corrected price is still a wrong price.
+test("an absurd stop price is refused and nothing is written", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec"]);
+
+  for (const costPerHeadCents of [-1, 1.5, 5_000_000]) {
+    await expectUserError(
+      t.mutation(api.plans.replaceStop, {
+        code: "5555", sessionKey: "k-Bec", stopId: "s2",
+        replacement: STOP({ name: "X", costPerHeadCents }),
+      }),
+      "STOP_PRICE_INVALID",
+      /price/i,
+    );
+  }
+
+  const plan = await planOf(t, roomId);
+  expect(plan!.stops[1].name).toBe("The Long Weekend");
+  expect(plan!.totalPerHeadCents).toBe(1400);
+});
+
+test("a price a group could plausibly spend on one stop still goes through", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec"]);
+
+  await t.mutation(api.plans.replaceStop, {
+    code: "5555", sessionKey: "k-Bec", stopId: "s2",
+    // Over this $30 room's budget, which is the group's call to make -- the
+    // plan reports `overBudget` and they decide knowingly.
+    replacement: STOP({ name: "The expensive one", costPerHeadCents: 12_000 }),
+  });
+
+  const plan = await planOf(t, roomId);
+  expect(plan!.totalPerHeadCents).toBe(12_000);
+});
+
 // GLOBAL CONSTRAINT: the two editing paths must not overlap. A room of two or
 // more has exactly one write path into its plan, and it is `proposals`.
 test("in a group room, a direct swap is refused and must go through a proposal", async () => {
@@ -169,6 +246,36 @@ test("the group refusal is enforced before anything is written", async () => {
       code: "5555", sessionKey: "k-Bec", stopId: "s2", replacement: STOP({ name: "X" }),
     }),
   ).rejects.toThrow();
+  const plan = await planOf(t, roomId);
+  expect(plan!.stops[1].name).toBe("The Long Weekend");
+});
+
+// The overlap reached from the other side. A room of one is allowed the direct
+// swap -- but a proposal opened while the room still had two people in it is
+// still open, and its yes vote is still countable. Swapping directly and then
+// settling that proposal would apply a departed member's replacement over the
+// survivor's own edit.
+test("a room of one still cannot swap around a proposal that is open on that stop", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await roomWithPlan(t, ["Bec", "Tam"]);
+
+  // Two people, so Tam's proposal needs a second yes and stays open.
+  const { accepted } = await t.mutation(api.proposals.open, {
+    code: "5555", sessionKey: "k-Tam", stopId: "s2",
+    replacement: STOP({ name: "Tam's pick" }), reason: "closer",
+  });
+  expect(accepted).toBe(false);
+
+  await t.mutation(api.rooms.leave, { code: "5555", sessionKey: "k-Tam" });
+
+  await expectUserError(
+    t.mutation(api.plans.replaceStop, {
+      code: "5555", sessionKey: "k-Bec", stopId: "s2",
+      replacement: STOP({ name: "Bec's own pick" }),
+    }),
+    "PROPOSAL_EXISTS",
+    /open proposal/i,
+  );
   const plan = await planOf(t, roomId);
   expect(plan!.stops[1].name).toBe("The Long Weekend");
 });
