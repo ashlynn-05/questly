@@ -680,3 +680,113 @@ test("rooms.get reports which way you voted, not merely that you did", async () 
   const asSam = await t.query(api.rooms.get, { code, sessionKey: sam });
   expect(asSam!.proposals[0].yourVote).toBeNull();
 });
+
+// --- the picture beside the name ------------------------------------------
+//
+// `memberFaces` in convex/lib/roster.ts states the rule these pin down: an
+// account with a picture shows it, and everybody else shows a name. The profile
+// rows are inserted directly rather than through `saveQuiz`, which is an action
+// that reaches OpenAI for an embedding -- none of which this is about.
+
+/** A profile with a picture attached, the way a finished upload would leave it. */
+async function profileWithPicture(
+  t: TestConvex<typeof schema>,
+  userId: string,
+  displayName: string,
+) {
+  return await t.run(async (ctx) => {
+    const avatarId = await ctx.storage.store(new Blob([new Uint8Array(64)]));
+    await ctx.db.insert("profiles", {
+      userId,
+      displayName,
+      tasteVector: [],
+      tasteSentence: "",
+      moodAffinity: {},
+      goals: [],
+      createdAt: 1_700_000_000_000,
+      avatarId,
+    });
+    return avatarId;
+  });
+}
+
+test("a signed-in member's picture reaches the room, and a guest's name stands alone", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  await profileWithPicture(t, "u1", "Bec");
+
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  const bec = view!.members.find((m) => m.name === "Bec")!;
+  const tam = view!.members.find((m) => m.name === "Tam")!;
+
+  expect(bec.avatarUrl).toEqual(expect.any(String));
+  // Not undefined, and not a drawn stand-in: a guest established no identity
+  // the room could put a face to.
+  expect(tam.avatarUrl).toBeNull();
+  // `you` carries it too -- the deck names you back to yourself.
+  expect(view!.you.avatarUrl).toBe(bec.avatarUrl);
+});
+
+test("a signed-in member with no picture is a name, like a guest", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members[0].avatarUrl).toBeNull();
+});
+
+test("a deleted account shows no picture in a room it still holds a seat in", async () => {
+  // account.deleteAccount detaches every seat, so this is the narrow case: a
+  // read racing the delete. The rule profiles.me states holds here too.
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  await profileWithPicture(t, "u1", "Bec");
+
+  // The room is opened first: `rooms.create` refuses a tombstoned account
+  // outright, so the only way to reach this state is to be deleted while
+  // already seated -- which is exactly the state being pinned.
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.run(async (ctx) => {
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", "u1"))
+      .unique();
+    await ctx.db.patch(profile!._id, { deletedAt: Date.now() });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members[0].avatarUrl).toBeNull();
+});
+
+test("a picture whose file is gone falls back to the name rather than throwing", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const avatarId = await profileWithPicture(t, "u1", "Bec");
+  await t.run(async (ctx) => ctx.storage.delete(avatarId));
+
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members[0].avatarUrl).toBeNull();
+});
+
+test("two seats for two accounts get two different pictures", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const asOther = t.withIdentity({ subject: "u2", name: "Ari" });
+  await profileWithPicture(t, "u1", "Bec");
+  await profileWithPicture(t, "u2", "Ari");
+
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  await asOther.mutation(api.rooms.join, { code, name: "Ari" });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  // Both resolved, and neither borrowed the other's row. The URLs themselves
+  // are not compared: convex-test's `getUrl` is a stand-in and hands back the
+  // same string for every id, which says nothing about the product.
+  expect(view!.members).toHaveLength(2);
+  expect(view!.members.every((m) => typeof m.avatarUrl === "string")).toBe(true);
+});

@@ -6,13 +6,21 @@ import {
   findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireLiveUserId, requireMember, roomByCode, safeUserId,
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
-import { detachMember } from "./lib/roster";
+import { detachMember, memberFaces } from "./lib/roster";
 import { isOverBudget } from "./lib/stops";
 
 const memberViewValidator = v.object({
   _id: v.id("members"),
   name: v.string(),
   isHost: v.boolean(),
+  /**
+   * The member's picture, or null. Null for every guest, by design -- see
+   * `memberFaces` in `convex/lib/roster.ts`. A URL rather than a storage id
+   * because a client cannot resolve one, and `v.union(v.string(), v.null())`
+   * rather than optional so a screen cannot mistake "no picture" for "this
+   * field has not been sent yet".
+   */
+  avatarUrl: v.union(v.string(), v.null()),
 });
 
 /**
@@ -279,6 +287,8 @@ export const get = query({
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
       .collect();
 
+    const faces = await memberFaces(ctx, members);
+
     const quests = await ctx.db
       .query("quests")
       .withIndex("by_room_rank", (q) => q.eq("roomId", room._id))
@@ -359,8 +369,13 @@ export const get = query({
         status: room.status,
         matchedQuestId: room.matchedQuestId,
       },
-      you: { _id: you._id, name: you.name, isHost: you.isHost },
-      members: members.map((m) => ({ _id: m._id, name: m.name, isHost: m.isHost })),
+      you: { _id: you._id, name: you.name, isHost: you.isHost, avatarUrl: faces.get(you._id) ?? null },
+      members: members.map((m) => ({
+        _id: m._id,
+        name: m.name,
+        isHost: m.isHost,
+        avatarUrl: faces.get(m._id) ?? null,
+      })),
       quests,
       plan: plan
         ? {

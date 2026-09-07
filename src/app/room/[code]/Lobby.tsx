@@ -160,10 +160,30 @@ export function Lobby({
                 <RailNode top={16} state={member ? "locked" : "open"} />
                 <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
                   {member ? (
-                    <span className="text-[16px] text-text">
+                    <span className="flex items-center gap-2 text-[16px] text-text">
+                      {/* Only for a member with an account AND a picture --
+                          `memberFaces` in convex/lib/roster.ts says why a guest
+                          gets the name alone rather than a drawn stand-in. The
+                          roundel leads the name inside the same span so the two
+                          read as one thing, which is what stops a mixed roster
+                          looking like two different lists.
+
+                          `next/image` is wrong here for the reason
+                          `AccountBadge` states: Convex signs these URLs per
+                          read, so the optimiser has nothing stable to cache and
+                          would re-fetch on every roster tick -- and this query
+                          ticks on every swipe in the room. */}
+                      {member.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={member.avatarUrl}
+                          alt=""
+                          className="size-[28px] shrink-0 rounded-full border border-action-edge object-cover"
+                        />
+                      ) : null}
                       {member.name}
                       {member.isHost ? (
-                        <span className="board ml-2 text-[10px] text-accent">Host</span>
+                        <span className="board text-[10px] text-accent">Host</span>
                       ) : null}
                     </span>
                   ) : (

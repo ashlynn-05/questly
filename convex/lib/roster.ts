@@ -1,5 +1,5 @@
 import type { Doc } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { resolveMatch } from "./match";
 import { resolveOpenProposals } from "./proposals";
 
@@ -74,4 +74,58 @@ export async function detachMember(ctx: MutationCtx, member: Doc<"members">): Pr
     await resolveOpenProposals(ctx, member.roomId);
   }
   await resolveMatch(ctx, member.roomId);
+}
+
+/**
+ * The picture beside each name in a room, for the members who have one.
+ *
+ * WHAT A ROOM KNEW ABOUT ITS PEOPLE BEFORE THIS: a string. The lobby drew
+ * twelve identical stops on the line with twelve names beside them, and the
+ * account screen was the only place in the product a picture was ever shown --
+ * uploaded, cropped to a roundel, and then never seen by anybody the person was
+ * going out with. This is the one screen where knowing which of two Bens is in
+ * the room is worth anything.
+ *
+ * ONLY MEMBERS WITH AN ACCOUNT GET ONE, and that is the design, not a
+ * limitation. A guest joined with a first name typed at the door and no account
+ * behind it -- `rooms.join` takes `userId` only when it happens to be there --
+ * so there is no picture to show and nothing to invent. A drawn stand-in would
+ * be worse than the name alone: initials on a coloured disc read as a photo at
+ * a glance and would quietly claim an identity the room never established.
+ *
+ * A TOMBSTONED ACCOUNT SHOWS NOTHING. `account.deleteAccount` detaches every
+ * seat, so this is a narrow window -- a seat in a room the delete could not
+ * reach, or a read racing the delete -- but the rule `profiles.me` states holds
+ * here too: to the rest of the product a deleted account has no profile.
+ *
+ * COST. One indexed lookup and one `getUrl` per SIGNED-IN member, on a roster
+ * `rooms.join` caps at MAX_ROOM_MEMBERS, inside the one subscription the whole
+ * product runs on. Bounded, and deduped by `userId` so the same account read
+ * twice costs one lookup -- which matters less than it reads, since a second
+ * seat for one account is exactly what `rooms.join` refuses to create.
+ */
+export async function memberFaces(
+  ctx: QueryCtx,
+  members: Doc<"members">[],
+): Promise<Map<string, string | null>> {
+  const byUser = new Map<string, string | null>();
+
+  for (const userId of new Set(members.flatMap((m) => (m.userId ? [m.userId] : [])))) {
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+
+    const url =
+      profile && profile.deletedAt === undefined && profile.avatarId
+        ? // Null for an id whose file is gone -- a purge, a failed upload. The
+          // row falls back to the name, which is the same thing it does for a
+          // guest, so there is nothing here worth throwing over.
+          await ctx.storage.getUrl(profile.avatarId)
+        : null;
+
+    byUser.set(userId, url);
+  }
+
+  return new Map(members.map((m) => [m._id, (m.userId ? byUser.get(m.userId) : null) ?? null]));
 }
