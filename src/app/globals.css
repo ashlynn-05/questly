@@ -311,3 +311,15 @@ body {
     transition-duration: 1ms !important;
   }
 }
+
+/* --- Dialog backdrop --------------------------------------------------------
+   `<dialog>`'s UA backdrop is a flat black wash, which on the iris ground reads
+   as a rendering fault rather than as depth. This dims toward --ground-deep --
+   the colour the page's own margins are already painted -- so the screen
+   behind a help dialog recedes into the ground it is sitting on.
+
+   Not a token: --ground-deep is the token, and mixing it here keeps the one
+   place it is used at partial alpha next to the one rule that needs it. */
+dialog::backdrop {
+  background: color-mix(in srgb, var(--ground-deep) 76%, transparent);
+}

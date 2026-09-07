@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
-import { PURGE_WINDOW_DAYS } from "@convex/lib/account";
 import { AVATAR_TYPES, MAX_AVATAR_MB, refuseAvatar } from "@convex/lib/avatar";
 import { initialsFor } from "@/lib/avatar";
 import { authClient } from "@/lib/auth-client";
@@ -16,7 +15,9 @@ import { userMessage } from "@/lib/errors";
 import { Plate } from "@/components/questly/Plate";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
+import { Hint } from "@/components/questly/Hint";
 import { Input } from "@/components/ui";
+import type { HelpTopic } from "@/lib/help";
 
 /**
  * The account screen the product did not have.
@@ -56,6 +57,78 @@ function roomWhen(at: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/**
+ * A block of this screen, and the one place a section's help now lives.
+ *
+ * The screen used to be six flat stacks whose only separator was a flex gap,
+ * each ending in a paragraph of dim prose. That gave every explanation a
+ * different home -- under a button here, under a list there -- so there was no
+ * single place to look for "what does this do". The rule now is that a section
+ * has a rule under its name, and if the section needs explaining the question
+ * mark is at the right-hand end of that rule. Help for one CONTROL rather than
+ * a whole section goes on the control's own row instead; see `Field` below and
+ * the two rows in "Leaving".
+ */
+function Section({
+  id,
+  title,
+  topic,
+  children,
+}: {
+  id: string;
+  title: string;
+  topic?: HelpTopic;
+  children: ReactNode;
+}) {
+  const headingId = `${id}-heading`;
+  return (
+    <section id={id} aria-labelledby={headingId} className="flex flex-col gap-3">
+      {/* `--hairline` is 1.44:1 and cannot carry meaning on its own, which is
+          why it rules a heading that is already there rather than standing in
+          for one. It groups; the words identify. */}
+      <div className="flex items-center justify-between gap-3 border-b border-hairline pb-2">
+        <h2 id={headingId} className="board text-[11px] text-accent">
+          {title}
+        </h2>
+        {topic ? <Hint topic={topic} /> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * A labelled input whose label row can also carry the field's question mark.
+ *
+ * The `<label>` keeps its `htmlFor` and stays a real label -- the help trigger
+ * is a sibling in the row, never inside the label, because a button inside a
+ * label is a click on the label and would open the dialog every time somebody
+ * aimed at the field.
+ */
+function Field({
+  htmlFor,
+  label,
+  topic,
+  children,
+}: {
+  htmlFor: string;
+  label: string;
+  topic: HelpTopic;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={htmlFor} className="board text-[11px] text-accent">
+          {label}
+        </label>
+        <Hint topic={topic} />
+      </div>
+      {children}
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -193,9 +266,7 @@ export default function SettingsPage() {
   }
 
   if (user === undefined) {
-    return (
-      <ScreenPending />
-    );
+    return <ScreenPending />;
   }
 
   if (user === null) {
@@ -204,8 +275,8 @@ export default function SettingsPage() {
         <h1 className="display text-[38px] text-text">Settings</h1>
         <p className="text-[15px] leading-snug text-dim">
           These are the settings for an account, and this browser is not signed in to one.
-          Rooms you were let into as a guest need no account and are not listed here — they
-          live at the link you were sent.
+          A room you were let into as a guest needs no account and is not listed here — it
+          lives at the link you were sent.
         </p>
         <Plate variant="action" center href="/sign-in?redirect=%2Fsettings" label="Sign in" />
       </Screen>
@@ -223,10 +294,7 @@ export default function SettingsPage() {
         {error ?? ""}
       </p>
 
-      <section aria-labelledby="who-heading" className="flex flex-col gap-3">
-        <h2 id="who-heading" className="board text-[11px] text-accent">
-          Signed in as
-        </h2>
+      <Section id="you" title="You">
         <p className="text-[15px] leading-snug text-text">{user.email ?? user.name}</p>
 
         {/* The picture, at the size it is actually used, next to the controls
@@ -234,7 +302,7 @@ export default function SettingsPage() {
             IS the artwork -- a 200px crop that looks fine and a 44px roundel
             that turns to mush are the same file, and only one of them is what
             anybody will see. */}
-        <div className="mt-2 flex items-center gap-4">
+        <div className="flex items-center gap-4">
           <span
             className="board flex size-[44px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-action-edge bg-action text-[11px] text-on-action"
             aria-hidden="true"
@@ -247,7 +315,7 @@ export default function SettingsPage() {
             )}
           </span>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-1 flex-wrap items-center gap-3">
             {/* A real file input, visually replaced by a Plate-shaped label
                 rather than hidden behind a button that clicks it: a label IS
                 the input's control, so it keeps the keyboard behaviour, the
@@ -281,30 +349,22 @@ export default function SettingsPage() {
               </button>
             ) : null}
           </div>
-        </div>
-        <p className="text-[12px] leading-snug text-dim">
-          PNG, JPEG, WebP or GIF, under <span className="num">{MAX_AVATAR_MB}</span>MB. Without
-          one your roundel shows your initials.
-        </p>
 
-        <label htmlFor="display-name" className="board mt-2 text-[11px] text-accent">
-          Display name
-        </label>
-        <Input
-          id="display-name"
-          value={displayName}
-          onChange={(e) => {
-            setName(e.target.value);
-            setSaved(false);
-          }}
-          maxLength={40}
-          autoComplete="name"
-        />
-        <p className="text-[12px] leading-snug text-dim">
-          What a room calls you when you open one. The name people see inside a room is
-          the one typed at its door, so changing this does not rename you in a room you
-          are already in.
-        </p>
+          <Hint topic="picture" />
+        </div>
+
+        <Field htmlFor="display-name" label="Display name" topic="name">
+          <Input
+            id="display-name"
+            value={displayName}
+            onChange={(e) => {
+              setName(e.target.value);
+              setSaved(false);
+            }}
+            maxLength={40}
+            autoComplete="name"
+          />
+        </Field>
         <Plate
           variant="raised"
           center
@@ -312,19 +372,15 @@ export default function SettingsPage() {
           disabled={busy || !displayName.trim() || displayName.trim() === profile?.displayName}
           onClick={() => void saveName()}
         />
-      </section>
+      </Section>
 
-      <section aria-labelledby="answers-heading" className="flex flex-col gap-3">
-        <h2 id="answers-heading" className="board text-[11px] text-accent">
-          Your answers
-        </h2>
-
+      <Section id="answers" title="Your answers" topic="answers">
         {profile === undefined ? (
           <p className="text-[13px] text-dim">Looking…</p>
         ) : profile === null ? (
           <p className="text-[13px] leading-snug text-dim">
-            You have not answered the quiz yet. Until you do, rooms are ranked on budget,
-            distance and mood alone.
+            Nothing yet. Until you take the quiz, rooms are ranked on budget, distance and
+            mood alone.
           </p>
         ) : (
           <>
@@ -334,19 +390,21 @@ export default function SettingsPage() {
             {profile.answers === undefined ? (
               <p className="text-[13px] leading-snug text-dim">
                 This profile predates the answers being kept, so there is nothing to show
-                — but retaking the quiz will store them.
+                — retaking the quiz will store them.
               </p>
             ) : (
-              <ul className="flex flex-col gap-2">
+              <ul className="flex flex-col">
                 {QUIZ_CARDS.map((card) => {
                   const answer = profile.answers?.[card.id];
                   return (
                     <li
                       key={card.id}
-                      className="flex items-baseline justify-between gap-3 border-b border-hairline pb-2"
+                      className="flex items-baseline justify-between gap-3 border-b border-hairline py-2 last:border-b-0"
                     >
                       <span className="text-[14px] leading-snug text-text">{card.text}</span>
-                      <span className="board shrink-0 text-[11px] text-dim">
+                      {/* Fixed width so seven answers read as one column down
+                          the right edge rather than seven ragged endings. */}
+                      <span className="board w-[42px] shrink-0 text-right text-[11px] text-dim">
                         {answer === "more" ? "More" : answer === "less" ? "Less" : "—"}
                       </span>
                     </li>
@@ -355,7 +413,9 @@ export default function SettingsPage() {
               </ul>
             )}
 
-            <h3 className="board mt-2 text-[11px] text-accent">What the night is for</h3>
+            <div className="flex items-baseline justify-between gap-3 pt-2">
+              <h3 className="board text-[11px] text-accent">What the night is for</h3>
+            </div>
             <p className="text-[14px] leading-snug text-text">
               {profile.goals && profile.goals.length > 0
                 ? QUIZ_GOALS.filter((g) => profile.goals?.includes(g.id))
@@ -366,26 +426,15 @@ export default function SettingsPage() {
           </>
         )}
 
-        <Plate
-          variant="raised"
-          center
-          href="/start?retake=1"
-          label="Retake the quiz"
-          sub="Your current answers are the starting point, so you only change what has changed."
-        />
-      </section>
+        <Plate variant="raised" center href="/start?retake=1" label="Retake the quiz" />
+      </Section>
 
-      <section aria-labelledby="rooms-heading" className="flex flex-col gap-3">
-        <h2 id="rooms-heading" className="board text-[11px] text-accent">
-          Your rooms
-        </h2>
-
+      <Section id="rooms" title="Your rooms" topic="rooms">
         {rooms === undefined ? (
           <p className="text-[13px] text-dim">Looking…</p>
         ) : rooms.length === 0 ? (
           <p className="text-[13px] leading-snug text-dim">
-            No rooms yet. Ones you were let into as a guest, before signing in, are not
-            listed here — those live at the link you were sent.
+            No rooms yet. Start one and it will be here.
           </p>
         ) : (
           <div className="flex flex-col gap-2">
@@ -403,63 +452,51 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
-        <p className="text-[12px] leading-snug text-dim">
-          A room opens on the device that holds its seat. On a new device, join again with
-          the room number — you will be given the same seat back, not a second one.
-        </p>
-      </section>
+      </Section>
 
       {/* `id` as well as the heading's own: the account menu's "Delete
           account" navigates to /settings#leaving rather than deleting from a
           dropdown, and this is what it lands on. */}
-      <section id="leaving" aria-labelledby="leaving-heading" className="flex flex-col gap-4">
-        <h2 id="leaving-heading" className="board text-[11px] text-accent">
-          Leaving
-        </h2>
+      <Section id="leaving" title="Leaving">
+        {/* Each row is control-then-question-mark, so the two things that end a
+            session sit on the same line as the sentence explaining what they
+            cost. They used to be a button followed by a paragraph, which put
+            the warning BELOW the control it was warning about. */}
+        <div className="flex items-center justify-between gap-3">
+          <ConfirmButton
+            label="Sign out"
+            confirmLabel="Yes, sign out"
+            cancelLabel="Stay signed in"
+            onConfirm={async () => {
+              await signOut();
+              return "gone";
+            }}
+          />
+          <Hint topic="signout" />
+        </div>
 
-        <ConfirmButton
-          label="Sign out"
-          confirmLabel="Yes, sign out"
-          cancelLabel="Stay signed in"
-          onConfirm={async () => {
-            await signOut();
-            return "gone";
-          }}
-        />
-        <p className="text-[12px] leading-snug text-dim">
-          Signing out also drops the seats this browser is holding. You can take them back
-          by joining with the room number again.
-        </p>
-
-        <ConfirmButton
-          label="Delete my account"
-          confirmLabel="Yes, delete it"
-          cancelLabel="Keep my account"
-          onConfirm={async () => {
-            setError(null);
-            try {
-              await deleteAccount({});
-            } catch (e) {
-              setError(
-                userMessage(e, "Could not delete the account. Please try again."),
-              );
-              return "trigger";
-            }
-            clearLocalState();
-            await authClient.signOut();
-            router.push("/");
-            return "gone";
-          }}
-        />
-        <p className="text-[12px] leading-snug text-dim">
-          Your seat in every room goes immediately, along with the swipes and votes you
-          cast there, and that part cannot be undone. Everything else is kept for{" "}
-          <span className="num">{PURGE_WINDOW_DAYS}</span> days — sign back in within that
-          time and the account comes back as it was. After that it is erased. You cannot
-          delete while you are still hosting a night that has not been booked and has not
-          yet passed; the room would have no one who could start it.
-        </p>
-      </section>
+        <div className="flex items-center justify-between gap-3">
+          <ConfirmButton
+            label="Delete my account"
+            confirmLabel="Yes, delete it"
+            cancelLabel="Keep my account"
+            onConfirm={async () => {
+              setError(null);
+              try {
+                await deleteAccount({});
+              } catch (e) {
+                setError(userMessage(e, "Could not delete the account. Please try again."));
+                return "trigger";
+              }
+              clearLocalState();
+              await authClient.signOut();
+              router.push("/");
+              return "gone";
+            }}
+          />
+          <Hint topic="deletion" />
+        </div>
+      </Section>
 
       <Link
         href="/start"
