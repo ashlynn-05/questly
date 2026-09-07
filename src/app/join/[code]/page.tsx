@@ -1,13 +1,33 @@
 "use client";
 
-import { use, useState } from "react";
+import { Suspense, use, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
+import { ThemeToggle } from "@/components/questly/theme";
+import { isJoinReason, type JoinReason } from "@/lib/room";
 import { useSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
+
+/**
+ * What the room shell knows and this screen used to not be told.
+ *
+ * Everybody bounced out of /room landed here and, on a room that had started,
+ * read "This room has already started, so it is closed to new people." That is
+ * right for a stranger following a link and wrong for both of the people who
+ * actually hit it: a member the host has just removed, and a guest whose
+ * browser refuses to keep the key that proves they belong. `?from=` says which,
+ * and it is validated rather than rendered -- it arrives in a URL anybody can
+ * type.
+ */
+const WHY: Record<JoinReason, string> = {
+  "no-key":
+    "This device is not holding a seat in this room. That is normal if you have not joined yet — and it also happens when a browser is set to block site storage, in which case joining again gives you a fresh seat.",
+  dropped:
+    "This room no longer recognises this device. Either the host took the seat back, or the room has moved on without it.",
+};
 
 /**
  * The failures where "try again" is not the answer. A full room, a room that
@@ -24,9 +44,10 @@ const NO_WAY_IN = new Set(["ROOM_FULL", "ROOM_CLOSED", "ROOM_NOT_FOUND"]);
  * it is what someone opens from a group chat while the rest of the room is
  * already swiping.
  */
-export default function JoinPage({ params }: PageProps<"/join/[code]">) {
-  const { code } = use(params);
+function JoinForm({ code }: { code: string }) {
   const router = useRouter();
+  const from = useSearchParams().get("from");
+  const why = isJoinReason(from) ? WHY[from] : null;
   const join = useMutation(api.rooms.join);
   const { sessionKey, store } = useSessionKey(code);
 
@@ -60,10 +81,20 @@ export default function JoinPage({ params }: PageProps<"/join/[code]">) {
 
   return (
     <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-7 bg-ground px-5 py-10">
+      {/* The guest journey -- tap a link in a group chat, land here -- never
+          passes the landing page, so until now a guest could not reach the day
+          palette at all. */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="board text-[11px] text-accent">Questly</p>
+        <ThemeToggle />
+      </div>
+
       <h1 className="flex flex-col gap-2">
         <span className="board text-[11px] text-accent">Join room</span>
         <span className="num text-[52px] leading-none text-text">{code}</span>
       </h1>
+
+      {why ? <p className="text-[13px] leading-snug text-dim">{why}</p> : null}
 
       <form
         className="flex flex-col gap-3"
@@ -115,5 +146,19 @@ export default function JoinPage({ params }: PageProps<"/join/[code]">) {
         />
       </form>
     </main>
+  );
+}
+
+/**
+ * `useSearchParams` client-side renders the tree up to the nearest Suspense
+ * boundary, so it gets one of its own. `use(params)` stays out here in the page
+ * itself, which is where Next 16 hands the route's params in.
+ */
+export default function JoinPage({ params }: PageProps<"/join/[code]">) {
+  const { code } = use(params);
+  return (
+    <Suspense>
+      <JoinForm code={code} />
+    </Suspense>
   );
 }

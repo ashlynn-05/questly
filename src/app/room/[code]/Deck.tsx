@@ -8,6 +8,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { MapTile } from "@/components/questly/frame";
+import { photoSrc } from "@/lib/photo";
 import { userMessage } from "@/lib/errors";
 import type { RoomView } from "./page";
 
@@ -15,17 +16,13 @@ import type { RoomView } from "./page";
  * Where a Places photo is fetched from. The card stores Google's opaque photo
  * name, never a media URL, and this endpoint attaches the key inside the
  * deployment -- so no API key of ours ever reaches the browser.
+ *
+ * The URL itself is built in `src/lib/photo.ts`, not here, because the query
+ * string it produces is a contract with a validator-less `httpAction` that no
+ * type checker can see across. `src/lib/photo.test.ts` drives the real handler
+ * with a request built by that function, so the two ends fail together.
  */
 const CONVEX_SITE = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
-
-function photoSrc(quest: RoomView["quests"][number]): string | null {
-  // A partner's own hosted image wins; it is the picture they supplied.
-  if (quest.photoUrl) return quest.photoUrl;
-  if (quest.photoName && CONVEX_SITE) {
-    return `${CONVEX_SITE}/places/photo?name=${encodeURIComponent(quest.photoName)}&maxWidthPx=800`;
-  }
-  return null;
-}
 
 /** "Tam", "Tam and Bec", "Tam, Bec and Sam" -- read out, not comma-jammed. */
 function nameList(names: string[]): string {
@@ -243,7 +240,7 @@ export function Deck({
     );
   }
 
-  const src = photoSrc(quest);
+  const src = photoSrc(quest, CONVEX_SITE);
   // Google prices most parks, gardens, beaches and trails at nothing at all --
   // the whole `grass` mood -- so an unpriced card is the ordinary case, not an
   // error. `priceLabel` says "Price unknown" for those, which reads badly the

@@ -6,7 +6,9 @@ import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
+import { ThemeToggle } from "@/components/questly/theme";
 import { errorCode, userMessage } from "@/lib/errors";
+import { roomRedirect, statusTransition } from "@/lib/room";
 import { useSessionKey } from "@/lib/session";
 import { Lobby } from "./Lobby";
 import { Deck } from "./Deck";
@@ -74,14 +76,21 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
     leaving.current = value;
   }, []);
 
-  // Two different nothings. `ready` is false until the session store has
-  // actually been read, and redirecting before then bounces every visitor to
-  // /join on their first render -- including the ones who are already members.
-  // `view === null` is the room itself saying it does not recognise this key.
+  // Three different nothings, and /join is told which one it is looking at --
+  // a device holding no key and a key the room refused used to land on the
+  // same screen and be told the same wrong thing. The decision itself is in
+  // `src/lib/room.ts`, where it can be tested; this is only the wiring.
+  const answer = view === undefined ? "loading" : view === null ? "refused" : "yours";
   useEffect(() => {
-    if (leaving.current) return;
-    if ((ready && !sessionKey) || view === null) router.replace(`/join/${code}`);
-  }, [ready, sessionKey, view, code, router]);
+    const to = roomRedirect({
+      code,
+      ready,
+      hasKey: sessionKey !== null,
+      answer,
+      leaving: leaving.current,
+    });
+    if (to) router.replace(to);
+  }, [ready, sessionKey, answer, code, router]);
 
   /**
    * The recovery the backend already built, finally reachable.
@@ -131,11 +140,9 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
   const announced = useRef<string | null>(null);
   const status = view?.room.status ?? null;
   useEffect(() => {
-    if (status === null) return;
-    if (announced.current === status) return;
-    const arriving = announced.current === null;
-    announced.current = status;
-    if (!arriving) headingRef.current?.focus();
+    const { seen, moveFocus } = statusTransition(announced.current, status);
+    announced.current = seen;
+    if (moveFocus) headingRef.current?.focus();
   }, [status]);
 
   if (!ready || !sessionKey || view === undefined || view === null) {
@@ -162,6 +169,14 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
           is really waiting, no venue has agreed to anything, and any booking is simulated.
         </p>
       ) : null}
+
+      {/* One mode control for all four room screens. Without it the day
+          palette was unreachable from anywhere inside the product: a guest who
+          taps a group-chat link goes /join -> /room and never passes the
+          landing page, which is the only other screen that had one. */}
+      <div className="flex justify-end px-5 pt-4">
+        <ThemeToggle />
+      </div>
 
       {view.room.status === "lobby" ? (
         <Lobby
