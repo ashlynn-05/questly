@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -9,10 +9,22 @@ import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
 import type { Mood } from "@convex/lib/scoring";
 import { Plate } from "@/components/questly/Plate";
 import { Chip } from "@/components/questly/Chip";
+import { ThemeToggle } from "@/components/questly/theme";
 import { storeSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
-
-type Step = "quiz" | "goals" | "mood" | "party" | "constraints";
+import {
+  BUDGETS,
+  EMPTY_DRAFT,
+  HEADCOUNTS,
+  RADII,
+  forgetDraft,
+  noDraft,
+  restoredDraft,
+  subscribeToDraft,
+  writeDraft,
+  type FunnelDraft,
+  type Step,
+} from "@/lib/funnel";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
   { id: "grass", label: "Touch grass", sub: "Outside, free, no booking needed." },
@@ -20,10 +32,6 @@ const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
   { id: "treat", label: "Treat yourself", sub: "One good thing, properly." },
   { id: "new", label: "Do something new", sub: "Something you have not done before." },
 ];
-
-const BUDGETS = [0, 2000, 3000, 5000, 8000];
-const HEADCOUNTS = [1, 2, 3, 4, 5, 6];
-const RADII = [2, 5, 10, 20];
 
 /**
  * The seven more/less cards plus the goals question. The board line says
@@ -83,18 +91,30 @@ export default function StartPage() {
   const createRoom = useMutation(api.rooms.create);
   const joinRoom = useMutation(api.rooms.join);
 
-  const [step, setStep] = useState<Step | null>(null);
-  const [answers, setAnswers] = useState<Record<string, "more" | "less">>({});
-  const [cardIndex, setCardIndex] = useState(0);
-  const [goals, setGoals] = useState<string[]>([]);
-  // No default mood. A pre-filled choice reads as a recommendation the user
-  // never made, and it would announce as four identical stateless buttons.
-  // Null until tapped, so the type says what the screen says.
-  const [mood, setMood] = useState<Mood | null>(null);
-  const [visibility, setVisibility] = useState<"private" | "open">("private");
-  const [headcount, setHeadcount] = useState(4);
-  const [budget, setBudget] = useState(0);
-  const [radiusKm, setRadiusKm] = useState(5);
+  /**
+   * The whole funnel in one value, and the reason a sign-in round trip no
+   * longer costs twelve taps.
+   *
+   * `restoredDraft` is read once, on the client only, and frozen; `noDraft`
+   * is what the server and the hydration render see, so the first paint is
+   * identical on both sides and there is no effect syncing a browser store
+   * into state. `edited` takes over the moment anything is tapped, so the
+   * restore point is a starting position rather than a store this page has to
+   * stay in sync with.
+   */
+  const restored = useSyncExternalStore(subscribeToDraft, restoredDraft, noDraft);
+  const [edited, setEdited] = useState<FunnelDraft | null>(null);
+  const draft = edited ?? restored ?? EMPTY_DRAFT;
+
+  /** Change one or more answers, and write the funnel down as we go. */
+  function edit(patch: Partial<FunnelDraft>) {
+    const next = { ...draft, ...patch };
+    setEdited(next);
+    writeDraft(next);
+  }
+
+  const { answers, cardIndex, goals, mood, visibility, headcount, budget, radiusKm } = draft;
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A signed-out visitor can browse the whole quiz, but opening a room needs
@@ -102,17 +122,17 @@ export default function StartPage() {
   // a sentence for -- without a way onward, that sentence is a dead end.
   const [needsSignIn, setNeedsSignIn] = useState(false);
 
-  // One source for the three times on offer. State holds the id, never a second
-  // copy of the option, so the timestamp sent to the server is always the one
-  // rendered next to the label.
+  // One source for the three times on offer. The draft holds the id, never a
+  // second copy of the option, so the timestamp sent to the server is always
+  // the one rendered next to the label -- and a draft restored tomorrow gets
+  // tomorrow's "Tonight", not yesterday's stale timestamp.
   const whens = useMemo(() => whenOptions(), []);
-  const [whenId, setWhenId] = useState(whens[0].id);
-  const when = whens.find((w) => w.id === whenId) ?? whens[0];
+  const when = whens.find((w) => w.id === draft.whenId) ?? whens[0];
 
   // The quiz is shown once per account and never again: a returning host lands
   // straight on the mood step.
   const resumeAt: Step | null = profile === undefined ? null : profile ? "mood" : "quiz";
-  const current = step ?? resumeAt;
+  const current = draft.step ?? resumeAt;
 
   const lookingForRoom = current === "party" && visibility === "open";
   const openRooms = useQuery(
@@ -159,36 +179,54 @@ export default function StartPage() {
    * raised on -- "This room has already started" belongs to the room list, not
    * to "What kind of night?" -- so leaving a step retires its error.
    */
-  function goTo(next: Step) {
+  function goTo(next: Step, patch: Partial<FunnelDraft> = {}) {
     setError(null);
     setNeedsSignIn(false);
-    setStep(next);
+    edit({ ...patch, step: next });
   }
 
   function toggleGoal(id: string) {
     // Multi-select: leaving with a new name in your phone and coming back
     // calmer are not mutually exclusive.
-    setGoals((chosen) =>
-      chosen.includes(id) ? chosen.filter((g) => g !== id) : [...chosen, id],
-    );
+    edit({
+      goals: goals.includes(id) ? goals.filter((g) => g !== id) : [...goals, id],
+    });
   }
 
-  async function finishQuiz() {
-    setBusy(true);
-    setError(null);
+  /**
+   * Store the quiz answers against the account, when there is one.
+   *
+   * Two failures, and they are not the same failure. NOT_SIGNED_IN is a KNOWN
+   * STATE, not an error: a signed-out visitor is allowed to browse the whole
+   * quiz, and the answers ride the draft through sign-in and are stored on the
+   * way back (see `openTheRoom`). Anything else is a degraded embedding, which
+   * must not block the night -- the room works without it, only the
+   * recommendations get blunter -- so it is logged and stepped over, and
+   * `quizSaved` records that it did not happen.
+   *
+   * Returns whether the answers are now stored.
+   */
+  async function storeTheQuiz(): Promise<boolean> {
     try {
       // No displayName: the server refuses one and derives the name from the
       // authenticated identity instead. Goals are required and validated
       // against GOAL_IDS, so only ids from QUIZ_GOALS may be sent.
       await saveQuiz({ answers, goals });
+      return true;
     } catch (e) {
-      // A failed embedding must not block the night -- the room works without
-      // it, only the recommendations get blunter. Degraded, so it is logged.
-      console.warn("saveQuiz failed; continuing without a taste vector", e);
-    } finally {
-      setBusy(false);
-      goTo("mood");
+      if (errorCode(e) !== "NOT_SIGNED_IN") {
+        console.warn("saveQuiz failed; continuing without a taste vector", e);
+      }
+      return false;
     }
+  }
+
+  async function finishQuiz() {
+    setBusy(true);
+    setError(null);
+    const quizSaved = await storeTheQuiz();
+    setBusy(false);
+    goTo("mood", { quizSaved });
   }
 
   async function openTheRoom() {
@@ -204,6 +242,13 @@ export default function StartPage() {
     setError(null);
     setNeedsSignIn(false);
     try {
+      // The other half of the round trip. A visitor who answered the quiz
+      // signed out reaches here with `quizSaved: false` and, by now, an
+      // identity -- so the answers they gave before signing in finally reach
+      // their profile instead of being quietly thrown away.
+      if (!draft.quizSaved && Object.keys(answers).length > 0) {
+        if (await storeTheQuiz()) edit({ quizSaved: true });
+      }
       const { code, sessionKey } = await createRoom({
         mood,
         headcount,
@@ -216,6 +261,8 @@ export default function StartPage() {
         hostName: profile?.displayName ?? "Host",
       });
       storeSessionKey(code, sessionKey);
+      // The funnel has become a room. Nothing left to restore.
+      forgetDraft();
       router.push(`/room/${code}`);
     } catch (e) {
       setError(userMessage(e, "Could not open the room. Please try again."));
@@ -231,6 +278,7 @@ export default function StartPage() {
     try {
       const joined = await joinRoom({ code, name: profile?.displayName ?? "Someone" });
       storeSessionKey(joined.code, joined.sessionKey);
+      forgetDraft();
       router.push(`/room/${joined.code}`);
     } catch (e) {
       setError(userMessage(e, "Could not join that room. Please try again."));
@@ -251,20 +299,33 @@ export default function StartPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col gap-8 bg-ground px-5 py-10">
-      {error ? (
-        <p role="alert" className="text-[13px] text-danger">
-          {error}
-          {needsSignIn ? (
-            <>
-              {" "}
-              <Link href="/sign-in" className="underline">
-                Sign in
-              </Link>{" "}
-              to open a room.
-            </>
-          ) : null}
-        </p>
-      ) : null}
+      {/* The first in-product screen most people see, and until now the whole
+          product had no way to reach the day palette from inside itself. */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="board text-[11px] text-accent">Questly</p>
+        <ThemeToggle />
+      </div>
+
+      {/* Always mounted, filled when something is refused: a live region
+          inserted into the DOM with its text already in it is frequently never
+          announced. `empty:-mb-8` takes back the flex gap an empty paragraph
+          would otherwise leave at the top of every step -- `display: none`
+          would take it out of the accessibility tree and be no better than not
+          rendering it at all. */}
+      <p role="alert" className="text-[13px] text-danger empty:-mb-8">
+        {error ?? ""}
+        {error && needsSignIn ? (
+          <>
+            {" "}
+            {/* Carries the funnel's own URL, so signing in comes back to the
+                twelve answers already given rather than to the top. */}
+            <Link href="/sign-in?redirect=%2Fstart" className="text-text underline underline-offset-4">
+              Sign in
+            </Link>{" "}
+            to open a room.
+          </>
+        ) : null}
+      </p>
 
       {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
           otherwise strands you: nothing later in the flow returns to them. */}
@@ -316,16 +377,15 @@ export default function StartPage() {
                 variant="raised"
                 label={dir === "more" ? "More likely" : "Less likely"}
                 onClick={() => {
-                  setAnswers({ ...answers, [QUIZ_CARDS[cardIndex].id]: dir });
+                  const answered = { ...answers, [QUIZ_CARDS[cardIndex].id]: dir };
                   if (cardIndex + 1 < QUIZ_CARDS.length) {
                     // Latch the step on the first answer. Until it is latched,
                     // `current` is derived live from the `profiles.me`
                     // subscription -- so a profile arriving mid-quiz (a second
                     // tab finishing it) would swap this screen for the mood
                     // picker and throw away every answer given so far.
-                    setStep("quiz");
-                    setCardIndex(cardIndex + 1);
-                  } else goTo("goals");
+                    edit({ answers: answered, step: "quiz", cardIndex: cardIndex + 1 });
+                  } else goTo("goals", { answers: answered });
                 }}
               />
             ))}
@@ -406,12 +466,13 @@ export default function StartPage() {
                 selected={m.id === mood}
                 label={m.label}
                 sub={m.sub}
-                onClick={() => {
-                  setMood(m.id);
+                onClick={() =>
                   // "Meet people" is the one mood whose entire point is strangers.
-                  setVisibility(m.id === "meet" ? "open" : "private");
-                  goTo("party");
-                }}
+                  goTo("party", {
+                    mood: m.id,
+                    visibility: m.id === "meet" ? "open" : "private",
+                  })
+                }
               />
             ))}
           </div>
@@ -439,14 +500,14 @@ export default function StartPage() {
               label="With friends"
               sub="Open a room and send them the number."
               disabled={busy}
-              onClick={() => { setVisibility("private"); goTo("constraints"); }}
+              onClick={() => goTo("constraints", { visibility: "private" })}
             />
             <Plate
               variant="raised"
               label="Just me"
               sub="A solo sidequest. Same plan, no voting."
               disabled={busy}
-              onClick={() => { setVisibility("private"); setHeadcount(1); goTo("constraints"); }}
+              onClick={() => goTo("constraints", { visibility: "private", headcount: 1 })}
             />
             <Plate
               variant="raised"
@@ -454,9 +515,26 @@ export default function StartPage() {
               label="Meet people"
               sub="Join a room that is already open."
               disabled={busy}
-              onClick={() => setVisibility("open")}
+              onClick={() => edit({ visibility: "open" })}
             />
           </div>
+
+          {/* Tapping "Meet people" leaves all three Plates mounted and reveals
+              a list underneath them. Nothing is unmounted, so focus correctly
+              does not move -- which leaves a live region as the only thing
+              that can say anything happened, and until now there was none.
+              Mounted with the section and empty, because a region inserted
+              into the DOM with its text already inside it announces nothing.
+              `sr-only` is absolutely positioned, so it costs no layout. */}
+          <p aria-live="polite" className="sr-only">
+            {!lookingForRoom
+              ? ""
+              : openRooms === undefined
+                ? "Looking for open rooms."
+                : openRooms.length === 0
+                  ? "No rooms are open for this mood yet. You can open one others can join."
+                  : `${openRooms.length} open ${openRooms.length === 1 ? "room" : "rooms"} for this mood.`}
+          </p>
 
           {lookingForRoom ? (
             <div className="flex flex-col gap-2">
@@ -544,7 +622,7 @@ export default function StartPage() {
                   MAX_ROOM_MEMBERS regardless. A label that promises more than
                   the number does is a small lie about what was booked. */}
               {HEADCOUNTS.map((n) => (
-                <Chip key={n} selected={headcount === n} onClick={() => setHeadcount(n)}>
+                <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
                   {n === 1 ? "Just me" : n}
                 </Chip>
               ))}
@@ -555,7 +633,7 @@ export default function StartPage() {
             <legend className="board text-[11px] text-accent">Budget per head</legend>
             <div className="flex flex-wrap gap-2">
               {BUDGETS.map((cents) => (
-                <Chip key={cents} selected={budget === cents} onClick={() => setBudget(cents)}>
+                <Chip key={cents} selected={budget === cents} onClick={() => edit({ budget: cents })}>
                   {cents === 0 ? "$0" : `$${cents / 100}`}
                 </Chip>
               ))}
@@ -566,7 +644,7 @@ export default function StartPage() {
             <legend className="board text-[11px] text-accent">When</legend>
             <div className="flex flex-wrap gap-2">
               {whens.map((w) => (
-                <Chip key={w.id} selected={when.id === w.id} onClick={() => setWhenId(w.id)}>
+                <Chip key={w.id} selected={when.id === w.id} onClick={() => edit({ whenId: w.id })}>
                   {w.label}
                 </Chip>
               ))}
@@ -577,7 +655,7 @@ export default function StartPage() {
             <legend className="board text-[11px] text-accent">How far</legend>
             <div className="flex flex-wrap gap-2">
               {RADII.map((km) => (
-                <Chip key={km} selected={radiusKm === km} onClick={() => setRadiusKm(km)}>
+                <Chip key={km} selected={radiusKm === km} onClick={() => edit({ radiusKm: km })}>
                   {km} km
                 </Chip>
               ))}
