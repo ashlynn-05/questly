@@ -24,7 +24,8 @@ const questFields = v.object({
   title: v.string(),
   blurb: v.string(),
   priceLabel: v.string(),
-  priceCents: v.number(),
+  // `null` is "Google gave no price signal". See the schema comment.
+  priceCents: v.union(v.number(), v.null()),
   distanceKm: v.number(),
   discountPct: v.number(),
   photoUrl: v.optional(v.string()),
@@ -41,6 +42,9 @@ export const context = internalQuery({
     room: schema.doc("rooms"),
     partners: v.array(schema.doc("venues")),
     vectors: v.array(v.array(v.float64())),
+    // The room's appetite for its own mood, blended across the members who
+    // have answered the quiz. 0 when nobody has -- see `moodAffinityMultiplier`.
+    moodAffinity: v.number(),
   }),
   handler: async (ctx, { roomId }) => {
     const room = await ctx.db.get(roomId);
@@ -57,6 +61,7 @@ export const context = internalQuery({
 
     // Guests have no profile, so the signed-in members' taste carries the room.
     const vectors: number[][] = [];
+    const affinities: number[] = [];
     for (const member of members) {
       if (!member.userId) continue;
       const userId = member.userId;
@@ -64,10 +69,21 @@ export const context = internalQuery({
         .query("profiles")
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .unique();
-      if (profile?.tasteVector.length) vectors.push(profile.tasteVector);
+      if (!profile) continue;
+      if (profile.tasteVector.length) vectors.push(profile.tasteVector);
+      // The mean, so one enthusiast does not speak for the room and one
+      // sceptic does not veto it. Members without a profile are not counted as
+      // indifferent -- they are not counted at all, because a guest has told us
+      // nothing and averaging in a 0 for them would quietly flatten the answer
+      // of the people who did fill the quiz in.
+      const affinity = profile.moodAffinity[room.mood];
+      if (typeof affinity === "number") affinities.push(affinity);
     }
+    const moodAffinity = affinities.length
+      ? affinities.reduce((a, b) => a + b, 0) / affinities.length
+      : 0;
 
-    return { room, partners, vectors };
+    return { room, partners, vectors, moodAffinity };
   },
 });
 
@@ -103,6 +119,17 @@ export const markBuilding = internalMutation({
       // Someone else holds the claim. Take it only if it has gone stale.
       const startedAt = room.buildStartedAt ?? 0;
       if (Date.now() - startedAt < STALE_BUILD_MS) return null;
+    } else if (room.status === "swiping") {
+      // A swiping room with cards is off limits: rebuilding would delete the
+      // deck out from under swipes already cast against it. A swiping room with
+      // NO cards never started, cannot have a swipe, and has no other way out
+      // -- see `deck.build`. Read in this transaction, alongside the status, so
+      // the two cannot disagree.
+      const anyQuest = await ctx.db
+        .query("quests")
+        .withIndex("by_room_rank", (q) => q.eq("roomId", roomId))
+        .first();
+      if (anyQuest) return null;
     } else if (room.status !== "lobby") {
       return null;
     }
@@ -159,6 +186,23 @@ export const insert = internalMutation({
   handler: async (ctx, { roomId, token, quests }) => {
     if (!holdsLease(await ctx.db.get(roomId), token)) return null;
 
+    // An empty deck is the one room state with no way out of it. This is the
+    // only writer of `status: "swiping"`, and a swiping room with no cards can
+    // neither be rebuilt (`build` refuses), joined (`join` refuses), nor swiped
+    // (there is no card to tap), while `waitingOn` computes "waiting on nobody"
+    // for everyone -- so a solo host lands in a room that displays as finished
+    // and is permanently stuck. Both callers already guarantee a non-empty list
+    // by arithmetic; the guarantee belongs here, one line from the write it
+    // protects, rather than in two callers a refactor away from changing.
+    //
+    // A throw rather than `return null`, and not user-actionable: `null` already
+    // means "a newer build holds the room", which `insertDeck` reports to the
+    // user as exactly that. An empty deck is not that -- it is a backend fault,
+    // and the transaction rolling back is the correct outcome.
+    if (quests.length === 0) {
+      throw new Error("deck.insert: refusing to open swiping on an empty deck.");
+    }
+
     const existing = await ctx.db
       .query("quests")
       .withIndex("by_room_rank", (q) => q.eq("roomId", roomId))
@@ -181,7 +225,8 @@ type Candidate = {
   placeId: string;
   title: string;
   blurb: string;
-  priceCents: number;
+  /** `null` when Google gave no price signal. Partners always carry a real one. */
+  priceCents: number | null;
   distanceKm: number;
   discountPct: number;
   partnerTier: number;
@@ -214,7 +259,7 @@ function blend(vectors: number[][]): number[] | undefined {
 
 /** Everything `scoreQuest` needs that is a property of the candidate. */
 type Rankable = {
-  priceCents: number;
+  priceCents: number | null;
   distanceKm: number;
   discountPct: number;
   partnerTier: number;
@@ -227,17 +272,19 @@ type Rankable = {
  * and the cache path below, so a deck assembled from borrowed candidates cannot
  * be ranked by different maths than one assembled from a fresh Places call.
  */
-const rankFor = (room: Doc<"rooms">) => (c: Rankable, tasteSimilarity: number) =>
-  scoreQuest({
-    priceCents: c.priceCents,
-    budgetPerHeadCents: room.budgetPerHeadCents,
-    distanceKm: c.distanceKm,
-    radiusKm: room.radiusKm,
-    discountPct: c.discountPct,
-    partnerTier: c.partnerTier,
-    moodMatch: c.moodMatch,
-    tasteSimilarity,
-  });
+const rankFor =
+  (room: Doc<"rooms">, moodAffinity: number) => (c: Rankable, tasteSimilarity: number) =>
+    scoreQuest({
+      priceCents: c.priceCents,
+      budgetPerHeadCents: room.budgetPerHeadCents,
+      distanceKm: c.distanceKm,
+      radiusKm: room.radiusKm,
+      discountPct: c.discountPct,
+      partnerTier: c.partnerTier,
+      moodMatch: c.moodMatch,
+      moodAffinity,
+      tasteSimilarity,
+    });
 
 type Ranked<T> = T & { score: number; breakdown: Record<string, number> };
 
@@ -281,8 +328,16 @@ async function rankByTaste<T extends Rankable & { title: string; blurb: string }
   }
 }
 
-/** One place, so a borrowed card can never label its price differently. */
-const priceLabelFor = (cents: number) => (cents === 0 ? "Free" : `$${Math.round(cents / 100)}`);
+/**
+ * One place, so a borrowed card can never label its price differently.
+ *
+ * "Price unknown" is a real answer, not a formatting failure: Google has no
+ * price signal for most parks, gardens and trails, and the card has to say that
+ * rather than print a band nobody quoted. The screen wraps whatever comes back
+ * in its own "Est. each" framing (`src/app/room/[code]/Deck.tsx`).
+ */
+const priceLabelFor = (cents: number | null) =>
+  cents === null ? "Price unknown" : cents === 0 ? "Free" : `$${Math.round(cents / 100)}`;
 
 /**
  * One call, all nine blurbs. Returns an array aligned to `titles`, with an
@@ -371,6 +426,7 @@ async function deckFromCache(
   room: Doc<"rooms">,
   partners: Array<Doc<"venues">>,
   vectors: number[][],
+  moodAffinity: number,
   cached: Array<Infer<typeof questFields>>,
 ): Promise<Array<Infer<typeof questFields>>> {
   const partnerByPlaceId = new Map(partners.map((p) => [p.placeId, p]));
@@ -415,7 +471,10 @@ async function deckFromCache(
     });
   }
 
-  const scored = (await rankByTaste(ctx, candidates, vectors, rankFor(room))).slice(0, DECK_SIZE);
+  const scored = (await rankByTaste(ctx, candidates, vectors, rankFor(room, moodAffinity))).slice(
+    0,
+    DECK_SIZE,
+  );
 
   return scored.map((c, i) => ({
     rank: i,
@@ -442,19 +501,36 @@ async function deckFromCache(
  * lobby if any of it fails.
  */
 async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Promise<number> {
-  const { room, partners, vectors } = await ctx.runQuery(internal.deck.context, { roomId });
-  const rank = rankFor(room);
+  const { room, partners, vectors, moodAffinity } = await ctx.runQuery(internal.deck.context, {
+    roomId,
+  });
+  const rank = rankFor(room, moodAffinity);
 
   // A room that recently asked the same question -- same mood, radius, budget
   // and centre, within the hour -- already paid for the two room-independent
   // halves of a build: the Places result set and the written blurbs. Borrow
   // those; do the ranking here, for this room. See `recentDeck` below.
-  const cached = await ctx.runQuery(internal.deck.recentDeck, { roomId });
+  const cached = await ctx.runQuery(internal.deck.recentDeck, { roomId, now: Date.now() });
   if (cached) {
-    const quests = await deckFromCache(ctx, room, partners, vectors, cached);
-    // Empty only when every borrowed row was a partner offer since withdrawn.
-    // Then there is nothing left to reuse and a full build is the right answer.
-    if (quests.length > 0) return insertDeck(ctx, roomId, token, quests);
+    const quests = await deckFromCache(ctx, room, partners, vectors, moodAffinity, cached);
+    // The cache path drops borrowed partner rows whose venue has since gone
+    // inactive or dropped this mood, so a hit can come back much thinner than
+    // it went in: eight withdrawn offers out of nine leaves a "personalised
+    // deck" of one card, which the room matches or exhausts on the instant it
+    // opens. That reads as a broken build rather than a fast one.
+    //
+    // The floor is deliberately relative to what was BORROWED rather than to
+    // DECK_SIZE. A donor that only ever had two cards is a thin neighbourhood,
+    // not an attrition problem -- a full rebuild there would spend a Places
+    // call and a batch of blurbs to be handed the same two places. What is
+    // worth rejecting is heavy LOSS, and that is what this measures.
+    if (quests.length >= Math.ceil(cached.length / 2)) {
+      return insertDeck(ctx, roomId, token, quests);
+    }
+    console.warn(
+      `deck.build: room ${room.code}: only ${quests.length} of ${cached.length} borrowed cards ` +
+        `survived this room's live partner list; building from scratch instead.`,
+    );
   }
 
   const free = room.budgetPerHeadCents === 0;
@@ -488,12 +564,33 @@ async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: string): Pr
   for (const place of places.results) {
     if (partnerIds.has(place.id)) continue; // never show a partner twice
     if (place.lat === null || place.lng === null) continue;
+
+    const banded = priceLevelToCents(place.priceLevel);
+    // Whether this place is genuinely free, as opposed to merely unpriced.
+    // Google says so outright with PRICE_LEVEL_FREE; failing that, a place with
+    // no price signal AT ALL whose own primary type is one of the free
+    // categories (a park, a beach) is free by the nature of the category.
+    const genuinelyFree =
+      banded === 0 ||
+      (banded === null && place.primaryType !== null && FREE_TYPES.includes(place.primaryType));
+
+    // HONESTY -- in a $0 room this is a FILTER, never an overwrite. It used to
+    // stamp `0` on every Places result because the room had said $0, so a group
+    // with nothing to spend was shown Eureka Skydeck labelled "Free" and would
+    // have found out at the door. A room that can spend nothing is shown only
+    // places that genuinely cost nothing; the alternative is not a cheaper
+    // night, it is a wrong one.
+    if (free && !genuinelyFree) continue;
+
     candidates.push({
       source: "places",
       placeId: place.id,
       title: place.name,
       blurb: place.summary ?? place.type ?? "",
-      priceCents: free ? 0 : priceLevelToCents(place.priceLevel),
+      // A free-by-category place with no band is 0 -- that is a claim about the
+      // category, which we can stand behind. Everything else keeps whatever
+      // Google actually said, `null` included.
+      priceCents: genuinelyFree ? 0 : banded,
       distanceKm: distanceKm(room.centreLat, room.centreLng, place.lat, place.lng),
       discountPct: 0,
       partnerTier: 0,
@@ -576,7 +673,15 @@ export const build = action({
     }
     // "building" is allowed so a build that died halfway can be retried. Past
     // that, a rebuild would silently invalidate swipes, a match, or a booking.
-    if (view.room.status !== "lobby" && view.room.status !== "building") {
+    //
+    // "swiping" with an EMPTY deck is admitted for the same reason "building"
+    // is: it is a room that never actually started, not one in progress. Cards
+    // are the only thing a swiping room can invalidate, and there are none --
+    // no swipe, no match and no booking can exist without one. `deck.insert`
+    // now refuses to create that state at all, so this is the way out for any
+    // room already in it, and it costs nothing to leave open.
+    const stuckMidBuild = view.room.status === "swiping" && view.quests.length === 0;
+    if (view.room.status !== "lobby" && view.room.status !== "building" && !stuckMidBuild) {
       throwUserError("ROOM_WRONG_STATE", "This room has already started swiping.");
     }
 
@@ -657,13 +762,18 @@ const cacheKey = (r: {
  * room's `roomId`.
  */
 export const recentDeck = internalQuery({
-  args: { roomId: v.id("rooms") },
+  // `now` is an argument rather than a `Date.now()` read inside the handler.
+  // Queries are not re-run merely because time advances, so a wall-clock read
+  // here would be a cached result quietly ageing past its own TTL -- and it
+  // costs query-cache reuse for every room asking the same question. The one
+  // caller is an action, which has a clock.
+  args: { roomId: v.id("rooms"), now: v.number() },
   returns: v.union(v.null(), v.array(questFields)),
-  handler: async (ctx, { roomId }) => {
+  handler: async (ctx, { roomId, now }) => {
     const room = await ctx.db.get(roomId);
     if (!room) return null;
 
-    const cutoff = Date.now() - DECK_TTL_MS;
+    const cutoff = now - DECK_TTL_MS;
     // Newest first, and bounded twice: the index range drops everything built
     // before the TTL, and `take` caps the rest. Freshest wins -- handing a room
     // the oldest deck still inside the window would put it minutes from expiry

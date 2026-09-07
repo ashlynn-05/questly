@@ -23,8 +23,16 @@ export const MOOD_TYPES: Record<Mood, string[]> = {
   new: ["art_gallery", "museum", "tourist_attraction", "bowling_alley"],
 };
 
-/** Types that are genuinely free to enter, for a $0 budget. */
-export const FREE_TYPES = ["park", "hiking_area", "beach", "garden", "tourist_attraction"];
+/**
+ * Types that are genuinely free to walk into, for a $0 budget.
+ *
+ * `tourist_attraction` is deliberately NOT here, though Google groups it with
+ * these: Eureka Skydeck, SEA LIFE and ArtVo are all `tourist_attraction` and all
+ * charge at the door. Listing it here priced them at $0 and printed "Free" on
+ * the card for a group who had said they had nothing to spend. A type earns a
+ * place on this list only if the whole category is free to enter.
+ */
+export const FREE_TYPES = ["park", "hiking_area", "beach", "garden"];
 
 const PRICE_BANDS: Record<string, number> = {
   PRICE_LEVEL_FREE: 0,
@@ -37,10 +45,22 @@ const PRICE_BANDS: Record<string, number> = {
 /**
  * Places gives a band, never a real price. Partner venues carry a real price
  * and skip this entirely.
+ *
+ * HONESTY -- `null` means "Google told us nothing about the price", and that is
+ * NOT the same as any number. This used to default to `PRICE_LEVEL_MODERATE`,
+ * so every venue Google has no price signal for -- which is most parks, gardens,
+ * beaches and trails, i.e. the entire `grass` mood -- was stamped at $35 a head,
+ * displayed as "$35", and quoted at $35 x the roster if the room booked it. A
+ * venue with no price signal has no price. It does not have a default one.
+ *
+ * `0` is equally wrong as a default in the other direction: it would rank an
+ * unpriced restaurant above every genuinely affordable option and print "Free"
+ * on it. So the absence travels all the way to the card, which says so, and to
+ * `scoreQuest`, which scores it neutrally. See `ScoreInput.priceCents`.
  */
-export function priceLevelToCents(level: string | null | undefined): number {
+export function priceLevelToCents(level: string | null | undefined): number | null {
   if (level && level in PRICE_BANDS) return PRICE_BANDS[level];
-  return PRICE_BANDS.PRICE_LEVEL_MODERATE;
+  return null;
 }
 
 /** Haversine, in kilometres. */
@@ -56,7 +76,8 @@ export function distanceKm(aLat: number, aLng: number, bLat: number, bLng: numbe
 }
 
 export type ScoreInput = {
-  priceCents: number;
+  /** `null` when Google gave no price signal. See `priceLevelToCents`. */
+  priceCents: number | null;
   budgetPerHeadCents: number;
   distanceKm: number;
   radiusKm: number;
@@ -64,9 +85,42 @@ export type ScoreInput = {
   /** 0 = not a partner. Higher tiers rank higher. This is the revenue lever. */
   partnerTier: number;
   moodMatch: boolean;
+  /**
+   * How much this room's members actually want tonight's mood, blended from
+   * their quiz answers. 0 for a room of guests, which is neutral -- see
+   * `moodAffinityMultiplier`.
+   */
+  moodAffinity: number;
   /** Cosine similarity against the room's blended taste vector, -1..1. */
   tasteSimilarity: number;
 };
+
+/**
+ * The quiz's mood answers, turned into a multiplier on `moodFit`.
+ *
+ * `lib/quiz.ts` scores each mood by counting the cards a person said "more" to
+ * and subtracting the ones they said "less" to, so a single person's answer for
+ * one mood lands in roughly -2..+2. Blended across the room's members with a
+ * profile, that becomes this number.
+ *
+ * It scales the mood term rather than adding a term of its own, because it is
+ * a statement about the SAME thing `moodFit` measures -- how well a card suits
+ * the night the room chose -- and adding it separately would let a card that
+ * matches nothing outrank one that does, purely because the room likes the mood.
+ *
+ * Deliberately gentle (0.5x to 1.5x on a weight of 1.2, so at most +/-0.6 on a
+ * score whose other terms span about 6): personalisation should break ties
+ * between comparable places, never bury a closer, cheaper, better-matched one.
+ * And a room of guests, who have answered no quiz, scores exactly as before --
+ * 0 maps to 1.0 -- so the absence of a profile costs nobody anything.
+ */
+export const MAX_MOOD_AFFINITY = 2;
+export const MOOD_AFFINITY_SWING = 0.5;
+
+export function moodAffinityMultiplier(affinity: number): number {
+  const clamped = Math.max(-MAX_MOOD_AFFINITY, Math.min(MAX_MOOD_AFFINITY, affinity));
+  return 1 + (clamped / MAX_MOOD_AFFINITY) * MOOD_AFFINITY_SWING;
+}
 
 const W = {
   partnerBoost: 1.4,
@@ -84,7 +138,17 @@ export function scoreQuest(input: ScoreInput): {
   // Budget. Under budget is good; over budget is punished hard enough that a
   // cheap mediocre option always beats an unaffordable great one.
   let budgetFit: number;
-  if (input.budgetPerHeadCents === 0) {
+  if (input.priceCents === null) {
+    // No price signal at all. Neutral -- neither rewarded nor punished -- and
+    // that is the only honest weight available: scoring an unknown price as $0
+    // would float it above every genuinely affordable option on a fact we do
+    // not have, and scoring it at a made-up band would bury an actually-free
+    // park underneath a bar we do know the price of. Zero leaves the card to be
+    // ranked on distance, mood and taste, which we DO know, and the card itself
+    // says the price is unknown so the group decides with the same information
+    // the ranker had.
+    budgetFit = 0;
+  } else if (input.budgetPerHeadCents === 0) {
     budgetFit = input.priceCents === 0 ? 1 : -2;
   } else if (input.priceCents <= input.budgetPerHeadCents) {
     budgetFit = 1 - (input.priceCents / input.budgetPerHeadCents) * 0.35;
@@ -96,7 +160,9 @@ export function scoreQuest(input: ScoreInput): {
   const distanceDecay = Math.max(0, 1 - input.distanceKm / Math.max(input.radiusKm, 0.1));
   const discountFit = Math.min(1, input.discountPct / 40);
   const partnerBoost = Math.min(1, input.partnerTier / 3);
-  const moodFit = input.moodMatch ? 1 : 0;
+  // A card that does not match the mood scores 0 here however much the room
+  // likes the mood -- affinity scales a match, it cannot manufacture one.
+  const moodFit = input.moodMatch ? moodAffinityMultiplier(input.moodAffinity) : 0;
   const tasteSimilarity = Math.max(-1, Math.min(1, input.tasteSimilarity));
 
   const breakdown = {

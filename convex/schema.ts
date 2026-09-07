@@ -32,26 +32,12 @@ export const stopValidator = v.object({
   locked: v.boolean(),
 });
 
+// The `events` and `snippets` tables were Create-Next-App scaffolding and are
+// gone, along with `convex/events.ts` and `convex/ai/store.ts`. Both were
+// reachable from public, unauthenticated functions -- `events.remove` let any
+// signed-in user delete any row, and the snippet actions spent OpenAI quota for
+// anyone holding the deployment URL. Neither had a product feature underneath.
 export default defineSchema({
-  // Realtime smoke test: proves Convex subscriptions push to every open client.
-  events: defineTable({
-    title: v.string(),
-    createdBy: v.string(),
-    createdByName: v.string(),
-    createdAt: v.number(),
-  }).index("by_createdAt", ["createdAt"]),
-
-  // --- AI layer (isolated) -------------------------------------------------
-  // Delete this table together with convex/ai/ to remove the OpenAI dependency.
-  snippets: defineTable({
-    text: v.string(),
-    embedding: v.array(v.float64()),
-  }).vectorIndex("by_embedding", {
-    vectorField: "embedding",
-    dimensions: 1536, // text-embedding-3-small
-  }),
-  // -------------------------------------------------------------------------
-
   profiles: defineTable({
     userId: v.string(),
     displayName: v.string(),
@@ -110,6 +96,18 @@ export default defineSchema({
     // not be able to overwrite the deck that replaced it, so every write checks
     // that the room still holds ITS token, not merely that a claim exists.
     buildToken: v.optional(v.string()),
+    // The same two fields for the plan build, and for the same reason: a killed
+    // `plans.generate` never reaches its own error handler, so without a claim
+    // that can go stale a matched room would show "Writing the plan..." forever
+    // with nothing able to start a second one. See `plans.markGenerating`.
+    //
+    // `planStartedAt` is the claim and is CLEARED when the build ends, so a
+    // retry is possible again. `planToken` identifies which build made the
+    // claim and is NOT cleared: it stays as the record of who last wrote the
+    // plan, so a zombie build revived after its claim was taken is still
+    // refused rather than being let back in by an empty field.
+    planStartedAt: v.optional(v.number()),
+    planToken: v.optional(v.string()),
     // Seeded rooms exist so the matchmaking lobby is never empty. They are
     // labelled everywhere they are shown: a fabricated stranger presented as a
     // real one would breach the product's honesty constraints.
@@ -143,7 +141,14 @@ export default defineSchema({
     title: v.string(),
     blurb: v.string(),
     priceLabel: v.string(),
-    priceCents: v.number(),
+    // `null` when Google gave this place no price signal at all. NOT zero and
+    // not a default band: an unpriced venue is a fact we do not have, and
+    // storing a number here is what put "$35" on a public park and then quoted
+    // it at $35 a head in a booking. `priceLabel` says so on the card and
+    // `lib/scoring.ts` scores it neutrally. A union rather than v.optional so
+    // "unknown" is a value every reader has to handle, not a field they can
+    // forget exists.
+    priceCents: v.union(v.number(), v.null()),
     distanceKm: v.number(),
     discountPct: v.number(),
     // A partner venue's own hosted image.

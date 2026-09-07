@@ -1,12 +1,37 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
-import { expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 const START = 1_800_000_000_000;
+
+// This file drives a real match and then runs the scheduled `plans.generate`,
+// which reaches OpenAI for real. Unstubbed, on any machine that happens to have
+// OPENAI_API_KEY set -- a reviewer's laptop, CI -- `npm test` was making a live
+// billable call, and `generate` swallows failures by design so nothing ever
+// said so. No key, and a `fetch` that shouts if anything tries the wire.
+const originalFetch = globalThis.fetch;
+let fetchMock: ReturnType<typeof vi.fn>;
+const savedKey = process.env.OPENAI_API_KEY;
+
+beforeEach(() => {
+  delete process.env.OPENAI_API_KEY;
+  fetchMock = vi.fn(async (url: string) => {
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = savedKey;
+});
 
 /**
  * The schema-aware handle. `ReturnType<typeof convexTest>` silently drops the
@@ -51,8 +76,11 @@ async function matchedRoom(
     return { roomId, questId };
   });
 
+  // Through the lease, exactly as `plans.generate` does -- a plan write without
+  // one is refused, and seeding around that would test a path nothing uses.
+  const token = await t.mutation(internal.plans.markGenerating, { roomId: ids.roomId });
   await t.mutation(internal.plans.writePlan, {
-    roomId: ids.roomId, questId: ids.questId,
+    roomId: ids.roomId, questId: ids.questId, token: token as string,
     stops: [{
       id: "s1", slot: "main", name: "The Long Weekend", startAt: START, durationMin: 60,
       costPerHeadCents: 1400, note: "", source: "llm", locked: over.locked ?? false,
@@ -436,14 +464,17 @@ test("a departure never resolves a proposal in a booked room, however it got the
 
 // --- the sixth door: a plan build already in flight -----------------------
 //
-// `plans.generate` is SCHEDULED, so a build in flight when the room books is
-// not stopped by anything -- `resolveMatch` only declines to schedule a NEW
-// one. Booking before the plan lands is deliberate (the booking honestly
-// quotes the quest price), so the two windows overlap by design.
+// `plans.generate` is SCHEDULED, so it is still in flight for a few seconds
+// after the room matches. Booking inside that window used to be allowed, and
+// the booking quoted the QUEST price -- one venue -- while the night the group
+// could see was a whole itinerary. The reference said $28 and the plan said
+// $40, and the plan that landed afterwards was then dropped to stop the two
+// disagreeing further. Both halves of that are now gone: you cannot book a
+// night that has not been written yet.
 
-test("a plan landing after the booking is dropped rather than written underneath it", async () => {
+test("booking is refused until the plan the group can see actually exists", async () => {
   const t = convexTest(schema, modules);
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.useFakeTimers();
   try {
     const questId = await t.run(async (ctx) => {
@@ -470,23 +501,26 @@ test("a plan landing after the booking is dropped rather than written underneath
     expect(matched).toBe(true);
     expect(await t.run(async (ctx) => ctx.db.query("plans").first())).toBeNull();
 
-    // Booked inside that window, so the total honestly quotes the quest price.
-    await t.mutation(api.bookings.confirm, { code: "9191", sessionKey: "k-bec" });
-    const booking = await t.run(async (ctx) => ctx.db.query("bookings").first());
-    expect(booking!.totalCents).toBe(2800);
+    // Inside that window there is nothing to quote, so the answer is a sentence
+    // asking them to wait -- not a reference for a night nobody has written.
+    await expectUserError(
+      t.mutation(api.bookings.confirm, { code: "9191", sessionKey: "k-bec" }),
+      "PLAN_NOT_READY",
+      /still being written/i,
+    );
+    expect(await t.run(async (ctx) => ctx.db.query("bookings").first())).toBeNull();
 
     // Now let the build finish. `finishInProgressScheduledFunctions` does not
-    // run a runAfter(0) job in convex-test 0.0.56; this does.
+    // run a runAfter(0) job in convex-test 0.0.56; this does. No OPENAI_API_KEY
+    // is set, so this is the canned night and never touches the wire.
     await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const plan = await t.run(async (ctx) => ctx.db.query("plans").first());
+    expect(plan).not.toBeNull();
 
-    // No plan at all, which is the honest outcome: the group booked a night
-    // priced from the quest, and nothing may appear underneath that reference.
-    expect(await t.run(async (ctx) => ctx.db.query("plans").first())).toBeNull();
-    const after = await t.run(async (ctx) => ctx.db.query("bookings").first());
-    expect(after!.totalCents).toBe(2800);
-
-    // Dropped loudly -- a plan silently vanishing would be worse than the bug.
-    expect(warn.mock.calls.some((c) => /writePlan.*9191/.test(String(c[0])))).toBe(true);
+    // And now the booking totals the night the group is actually looking at.
+    await t.mutation(api.bookings.confirm, { code: "9191", sessionKey: "k-bec" });
+    const booking = await t.run(async (ctx) => ctx.db.query("bookings").first());
+    expect(booking!.totalCents).toBe(plan!.totalPerHeadCents * 2);
   } finally {
     vi.useRealTimers();
     vi.restoreAllMocks();

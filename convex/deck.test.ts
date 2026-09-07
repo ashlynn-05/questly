@@ -67,6 +67,18 @@ async function roomWithPartner(
   });
 }
 
+/** One card in the room, so it counts as a deck that is actually being played. */
+async function seedQuest(t: TestConvex<typeof schema>, roomId: Id<"rooms">) {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("quests", {
+      roomId, rank: 0, source: "partner", placeId: "partner-1",
+      title: "The Long Weekend", blurb: "Carlton", priceLabel: "$14",
+      priceCents: 1400, distanceKm: 0.2, discountPct: 25,
+      score: 1, scoreBreakdown: {},
+    }),
+  );
+}
+
 /** Take the room's build lease, the way `build` does before it writes. */
 async function lease(t: TestConvex<typeof schema>, roomId: Id<"rooms">): Promise<string> {
   const token = await t.mutation(internal.deck.markBuilding, { roomId });
@@ -85,7 +97,15 @@ const quest = (over: Record<string, unknown>) => ({
  * type Places surfaces under a restaurant query but the mood never asked for).
  * That split is the whole point: it is what makes `moodFit` discriminate.
  */
-const rawPlace = (id: string, primaryType: string, i: number) => ({
+// `priceLevel` is an override because Google frequently sends no price signal
+// at all, and "no signal" is a different case from every band it does send.
+// Pass `null` to model a place Google would not price.
+const rawPlace = (
+  id: string,
+  primaryType: string,
+  i: number,
+  priceLevel: string | null = "PRICE_LEVEL_INEXPENSIVE",
+) => ({
   id,
   displayName: { text: `Place ${id}` },
   formattedAddress: `${i} Smith St, Fitzroy VIC`,
@@ -93,7 +113,7 @@ const rawPlace = (id: string, primaryType: string, i: number) => ({
   primaryType,
   primaryTypeDisplayName: { text: primaryType },
   types: [primaryType, "restaurant"],
-  priceLevel: "PRICE_LEVEL_INEXPENSIVE",
+  ...(priceLevel === null ? {} : { priceLevel }),
   editorialSummary: { text: `A summary for ${id}.` },
   photos: [{ name: `places/${id}/photos/photo-${id}` }],
 });
@@ -214,6 +234,34 @@ test("deck.context returns the room and only the partners for its mood", async (
   expect(out.partners.map((p) => p.placeId)).toEqual(["partner-1"]);
   // The guest member has no userId, so contributes no vector.
   expect(out.vectors).toEqual([[0.1, 0.2]]);
+  // Nobody has said anything about "treat", so the room is neutral about it.
+  expect(out.moodAffinity).toBe(0);
+});
+
+// The quiz's mood answers were stored and read by nothing. They now reach the
+// ranker, and this is the seam where they enter it.
+test("deck.context blends the members' appetite for tonight's mood", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t); // a "treat" room
+  await t.run(async (ctx) => {
+    // The host is keen on treat; the second signed-in member is not.
+    await ctx.db.insert("profiles", {
+      userId: "u1", displayName: "Bec", tasteVector: [],
+      tasteSentence: "", moodAffinity: { grass: 1, meet: 0, treat: 2, new: 0 }, createdAt: 1,
+    });
+    await ctx.db.insert("profiles", {
+      userId: "u3", displayName: "Kit", tasteVector: [],
+      tasteSentence: "", moodAffinity: { grass: 0, meet: 0, treat: 0, new: 0 }, createdAt: 1,
+    });
+    await ctx.db.insert("members", {
+      roomId, name: "Kit", userId: "u3", isHost: false, sessionKey: "kitkey", joinedAt: 3,
+    });
+  });
+
+  const out = await t.query(internal.deck.context, { roomId });
+  // The mean of the two who answered. The guest, who told us nothing, is not
+  // averaged in as indifference.
+  expect(out.moodAffinity).toBe(1);
 });
 
 test("insert writes the deck in rank order and flips building to swiping", async () => {
@@ -378,9 +426,38 @@ test("build refuses a stranger holding no session key", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+// End to end: a quiz answer given during onboarding changes what the deck
+// actually looks like. Without this the affinity could stop anywhere between
+// the profile row and the stored card and nothing would notice.
+test("a room that likes tonight's mood gets a deck scored for it", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t); // "treat"
+  await t.run(async (ctx) => {
+    await ctx.db.insert("profiles", {
+      userId: "u1", displayName: "Bec", tasteVector: [],
+      tasteSentence: "", moodAffinity: { grass: 0, meet: 0, treat: 2, new: 0 }, createdAt: 1,
+    });
+  });
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+
+  const stored = await t.run(async (ctx) =>
+    ctx.db.query("quests").withIndex("by_room_rank", (q) => q.eq("roomId", roomId)).order("asc").collect(),
+  );
+  // A full 1.2 for a neutral room; 1.5x that for a room that asked for this.
+  expect(stored[1].scoreBreakdown.moodFit).toBeCloseTo(1.8);
+  // And a card that does not match the mood is still worth nothing, however
+  // keen the room is.
+  expect(stored[7].scoreBreakdown.moodFit).toBe(0);
+});
+
 test("build refuses to rebuild a room that is already swiping", async () => {
   const t = convexTest(schema, modules);
-  await roomWithPartner(t, { status: "swiping" });
+  const roomId = await roomWithPartner(t, { status: "swiping" });
+  // A swiping room with cards in it is a room mid-game: rebuilding would throw
+  // away votes already cast. The guard is about the cards, not the status.
+  await seedQuest(t, roomId);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
 
   await expectUserError(
@@ -391,17 +468,44 @@ test("build refuses to rebuild a room that is already swiping", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+// The other half of that guard. A build that died between flipping the room to
+// "swiping" and writing the cards used to leave the room permanently stuck:
+// status said the game was on, the deck was empty, and the only function that
+// could have fixed it refused on the strength of the status. Nobody could swipe
+// and nobody could rebuild.
+test("build rescues a swiping room that has no cards in it", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t, { status: "swiping" });
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  const { deckSize } = await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+
+  expect(deckSize).toBeGreaterThan(0);
+  const after = await t.run(async (ctx) => ({
+    room: await ctx.db.get(roomId),
+    quests: await ctx.db
+      .query("quests")
+      .withIndex("by_room_rank", (q) => q.eq("roomId", roomId))
+      .collect(),
+  }));
+  expect(after.room!.status).toBe("swiping");
+  expect(after.quests.length).toBe(deckSize);
+});
+
 test("a Google failure hands the room back to the lobby too", async () => {
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t);
   fetchMock.mockImplementation(async () => new Response("upstream is unhappy", { status: 503 }));
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
 
-  // Not a ConvexError: an upstream 5xx is our problem, not something the user
-  // can act on, so redacting it in production is the right behaviour.
-  await expect(
-    asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" }),
-  ).rejects.toThrow(/Places API 503/);
+  // A ConvexError now. The cause is ours, not the host's, but "Server Error" --
+  // which is all a plain Error survives as in production -- told a host who had
+  // just tapped "Start the deck" nothing at all, while the room had already
+  // been handed back to the lobby underneath them. The operator detail stays in
+  // the log; the host gets a sentence and a reason to try again.
+  const promise = asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({ data: { code: "PLACES_UNAVAILABLE" } });
 
   const room = await t.run(async (ctx) => ctx.db.get(roomId));
   expect(room!.status).toBe("lobby");
@@ -596,10 +700,13 @@ test("a free room ranks against the free types, not the mood's own list", async 
   const t = convexTest(schema, modules);
   const roomId = await roomWithPartner(t, { mood: "new" });
   await t.run(async (ctx) => ctx.db.patch(roomId, { budgetPerHeadCents: 0 }));
-  // A park is free to walk into; a cafe surfaced under the same query is not.
+  // Google prices neither of these; the park is free to walk into, the cafe is
+  // not, and the only thing separating them is the type.
   fetchMock.mockImplementation(async (url: string) => {
     if (String(url) !== PLACES_URL) return json(OPENAI_BODY);
-    return json({ places: [rawPlace("park-1", "park", 0), rawPlace("cafe-1", "cafe", 1)] });
+    return json({
+      places: [rawPlace("park-1", "park", 0, null), rawPlace("cafe-1", "cafe", 1, null)],
+    });
   });
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
 
@@ -610,15 +717,65 @@ test("a free room ranks against the free types, not the mood's own list", async 
   const stored = await t.run(async (ctx) =>
     ctx.db.query("quests").withIndex("by_room_rank", (q) => q.eq("roomId", roomId)).order("asc").collect(),
   );
-  expect(stored.map((q) => q.placeId)).toEqual(["park-1", "cafe-1"]);
+  // The cafe is dropped, not repriced. A $0 room used to have every card's
+  // price overwritten with 0, which is how a paid venue ended up advertised as
+  // free to a group that had said they could not spend anything.
+  expect(stored.map((q) => q.placeId)).toEqual(["park-1"]);
   // moodMatch is measured against the types the room actually asked for. Scored
-  // against MOOD_TYPES.new instead, both would be 0 and the term would be dead
+  // against MOOD_TYPES.new instead this would be 0 and the term would be dead
   // again -- exactly the bug computing it was meant to fix.
   expect(stored[0].scoreBreakdown.moodFit).toBeCloseTo(1.2);
-  expect(stored[1].scoreBreakdown.moodFit).toBe(0);
-  // Nothing costs money in a free room, whatever band Places reported.
-  expect(stored.map((q) => q.priceCents)).toEqual([0, 0]);
+  expect(stored[0].priceCents).toBe(0);
   expect(stored[0].priceLabel).toBe("Free");
+});
+
+test("a $0 room keeps a place Google itself calls free, whatever its type", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t, { mood: "new" });
+  await t.run(async (ctx) => ctx.db.patch(roomId, { budgetPerHeadCents: 0 }));
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url) !== PLACES_URL) return json(OPENAI_BODY);
+    return json({
+      places: [
+        rawPlace("gallery-1", "art_gallery", 0, "PRICE_LEVEL_FREE"),
+        // A park Google has priced. Being a park does not make it free once
+        // Google has said otherwise, so it goes.
+        rawPlace("park-2", "park", 1, "PRICE_LEVEL_MODERATE"),
+      ],
+    });
+  });
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+
+  const stored = await t.run(async (ctx) =>
+    ctx.db.query("quests").withIndex("by_room_rank", (q) => q.eq("roomId", roomId)).order("asc").collect(),
+  );
+  expect(stored.map((q) => q.placeId)).toEqual(["gallery-1"]);
+  expect(stored[0].priceCents).toBe(0);
+});
+
+// An empty deck is the one room state with no way out of it: swiping, no cards,
+// nothing to tap, and `waitingOn` reading "waiting on nobody" for everyone --
+// a room that displays as finished and cannot be finished. The write that would
+// create it is refused at the door.
+test("insert refuses to open swiping on an empty deck", async () => {
+  const t = convexTest(schema, modules);
+  const roomId = await roomWithPartner(t);
+  const token = await lease(t, roomId);
+
+  await expect(
+    t.mutation(internal.deck.insert, { roomId, token, quests: [] }),
+  ).rejects.toThrow(/empty deck/i);
+
+  // The transaction rolled back: the room was never flipped to swiping, so
+  // nobody is looking at a screen with no cards on it.
+  const after = await t.run(async (ctx) => ({
+    room: await ctx.db.get(roomId),
+    quests: await ctx.db.query("quests").collect(),
+  }));
+  expect(after.room!.status).not.toBe("swiping");
+  expect(after.quests).toHaveLength(0);
 });
 
 // --- The lease: a stalled build must not overwrite the deck that replaced it

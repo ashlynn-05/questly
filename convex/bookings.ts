@@ -45,15 +45,32 @@ export const confirm = mutation({
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
       .first();
 
+    // Booking is refused in the window between the match and the plan landing,
+    // and that window is now closed rather than absorbed.
+    //
+    // It used to fall back to the matched card's own price. Two things were
+    // wrong with that. The booking quoted a single venue's banded price for a
+    // night the product describes as multi-stop -- and `plans.writePlan`
+    // deliberately DROPS a plan that arrives after a booking, so the room ended
+    // up booked, with a reference the group is holding, and no plan at all, for
+    // good: no server path can produce one afterwards. Waiting a few seconds is
+    // the whole cost of closing it, and `plans.retry` is there if the plan
+    // never lands.
+    if (!plan) {
+      throwUserError(
+        "PLAN_NOT_READY",
+        "The plan is still being written. Give it a moment, then book the night itself.",
+      );
+    }
+
     const members = await ctx.db
       .query("members")
       .withIndex("by_room", (q) => q.eq("roomId", room._id))
       .collect();
 
     // The plan is the night the group actually agreed to, so its per-head total
-    // wins. The matched card's own price is the stand-in for the window between
-    // the match and the plan landing.
-    const perHead = plan?.totalPerHeadCents ?? quest.priceCents;
+    // is the only number a booking may quote.
+    const perHead = plan.totalPerHeadCents;
     const deepLink = quest.mapsUri ?? quest.websiteUri ?? mapsSearchUrl(quest.title);
 
     // The room code doubles as the reference -- one number to read aloud.

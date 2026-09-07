@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { cosine, distanceKm, priceLevelToCents, scoreQuest, MOOD_TYPES } from "./scoring";
+import {
+  cosine, distanceKm, priceLevelToCents, scoreQuest, moodAffinityMultiplier, MOOD_TYPES,
+} from "./scoring";
 
 const base = {
   priceCents: 2000,
@@ -9,6 +11,9 @@ const base = {
   discountPct: 0,
   partnerTier: 0,
   moodMatch: true,
+  // No quiz answers behind this room, which is the neutral case: every
+  // assertion below is about the term it names, not about personalisation.
+  moodAffinity: 0,
   tasteSimilarity: 0,
 };
 
@@ -33,10 +38,14 @@ describe("priceLevelToCents", () => {
     expect(priceLevelToCents("PRICE_LEVEL_VERY_EXPENSIVE")).toBe(12000);
   });
 
-  test("an unknown or absent level is treated as moderate", () => {
-    expect(priceLevelToCents(null)).toBe(3500);
-    expect(priceLevelToCents(undefined)).toBe(3500);
-    expect(priceLevelToCents("NONSENSE")).toBe(3500);
+  // Google not telling us a price is not the same as Google telling us the
+  // price is moderate. Inventing $35 a head here is how a made-up number ends
+  // up printed on a card as if it were fact, so an unknown band stays unknown
+  // and the caller has to decide what to say about it.
+  test("an unknown or absent level has no price, rather than a guessed one", () => {
+    expect(priceLevelToCents(null)).toBeNull();
+    expect(priceLevelToCents(undefined)).toBeNull();
+    expect(priceLevelToCents("NONSENSE")).toBeNull();
   });
 });
 
@@ -66,6 +75,44 @@ describe("scoreQuest", () => {
     expect(Object.keys(scoreQuest(base).breakdown).sort()).toEqual([
       "budgetFit", "discountFit", "distanceDecay", "moodFit", "partnerBoost", "tasteSimilarity",
     ]);
+  });
+
+  // The quiz's mood answers were computed, stored and then read by nothing at
+  // all -- personalisation the product claims and never delivered. They now
+  // scale the mood term.
+  test("a room that likes tonight's mood ranks a matching card higher", () => {
+    const keen = scoreQuest({ ...base, moodAffinity: 2 }).score;
+    const neutral = scoreQuest({ ...base, moodAffinity: 0 }).score;
+    const lukewarm = scoreQuest({ ...base, moodAffinity: -2 }).score;
+    expect(keen).toBeGreaterThan(neutral);
+    expect(neutral).toBeGreaterThan(lukewarm);
+  });
+
+  test("affinity scales a mood match; it cannot manufacture one", () => {
+    const noMatch = scoreQuest({ ...base, moodMatch: false, moodAffinity: 2 });
+    expect(noMatch.breakdown.moodFit).toBe(0);
+  });
+
+  // A room of guests has answered no quiz, and must score exactly as it did
+  // before any of this existed.
+  test("no quiz answers is neutral, not a penalty", () => {
+    expect(moodAffinityMultiplier(0)).toBe(1);
+    expect(scoreQuest(base).breakdown.moodFit).toBeCloseTo(1.2);
+  });
+
+  // Personalisation breaks ties. It does not overrule the things the group
+  // actually told us -- their budget and how far they are willing to go.
+  test("affinity cannot outweigh being over budget", () => {
+    const keenButPricey = scoreQuest({
+      ...base, moodAffinity: 2, priceCents: 9000, budgetPerHeadCents: 3000,
+    }).score;
+    const indifferentAndAffordable = scoreQuest({ ...base, moodAffinity: -2 }).score;
+    expect(indifferentAndAffordable).toBeGreaterThan(keenButPricey);
+  });
+
+  test("the multiplier is bounded however extreme the answers", () => {
+    expect(moodAffinityMultiplier(50)).toBe(1.5);
+    expect(moodAffinityMultiplier(-50)).toBe(0.5);
   });
 
   test("mood is a real query dimension, not decoration", () => {

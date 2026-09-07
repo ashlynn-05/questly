@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -7,7 +7,17 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
-type Harness = ReturnType<typeof convexTest>;
+/**
+ * `TestConvex<typeof schema>`, NOT `ReturnType<typeof convexTest>`.
+ *
+ * The bare `ReturnType` drops the schema type parameter, so `ctx.db.insert`
+ * inside `t.run` falls back to the generic data model and accepts ANY object
+ * shape. This whole file's seeds went unchecked for it: a field that does not
+ * exist on `rooms` compiled clean, so every one of these tests could have
+ * stayed green while writing rows the real deployment would reject -- and the
+ * first signal would have been a push failure or a runtime validator error.
+ */
+type Harness = TestConvex<typeof schema>;
 
 /** The one search every room in these tests asks, unless it says otherwise. */
 const SEARCH: {
@@ -113,7 +123,7 @@ test("a matching recent deck is reused", async () => {
   await donorRoom(t, { builtAt: Date.now() });
   const roomId = await freshRoom(t, "8889");
 
-  const cached = await t.query(internal.deck.recentDeck, { roomId });
+  const cached = await t.query(internal.deck.recentDeck, { roomId, now: Date.now() });
   expect(cached).not.toBeNull();
   expect(cached![0].placeId).toBe("cached");
   expect(cached![0]).not.toHaveProperty("_id");
@@ -123,14 +133,14 @@ test("a stale deck is not reused", async () => {
   const t = convexTest(schema, modules);
   await donorRoom(t, { builtAt: Date.now() - 2 * 60 * 60 * 1000 });
   const roomId = await freshRoom(t, "8889");
-  expect(await t.query(internal.deck.recentDeck, { roomId })).toBeNull();
+  expect(await t.query(internal.deck.recentDeck, { roomId, now: Date.now() })).toBeNull();
 });
 
 test("a deck built for a different mood is not reused", async () => {
   const t = convexTest(schema, modules);
   await donorRoom(t, { builtAt: Date.now() });
   const roomId = await freshRoom(t, "8890", { mood: "treat" });
-  expect(await t.query(internal.deck.recentDeck, { roomId })).toBeNull();
+  expect(await t.query(internal.deck.recentDeck, { roomId, now: Date.now() })).toBeNull();
 });
 
 /**
@@ -192,7 +202,7 @@ for (const { what, search } of [
     await donorRoom(t, { builtAt: Date.now() });
 
     const roomId = await freshRoom(t, "8892", search);
-    expect(await t.query(internal.deck.recentDeck, { roomId })).toBeNull();
+    expect(await t.query(internal.deck.recentDeck, { roomId, now: Date.now() })).toBeNull();
 
     await withHost(t, roomId);
     const { restore } = noNetwork();
@@ -409,6 +419,77 @@ test("a withdrawn partner offer is dropped from a borrowed deck", async () => {
     const quests = await deckOf(t, "8898");
     expect(quests.map((q) => q.placeId)).toEqual(["x"]);
     expect(quests.map((q) => q.blurb)).not.toContain("30% off, last hour");
+  } finally {
+    restore();
+  }
+});
+
+// --- attrition: a hit that comes back gutted is not a hit --------------------
+//
+// Borrowed partner cards are re-read off the live venue rows, so a donor deck
+// can arrive much thinner than it left: eight withdrawn offers out of nine
+// leaves a "personalised deck" of one card, which the room matches or exhausts
+// the instant it opens. That reads as a broken build, not a fast one.
+
+/** A donor whose cards are all partner rows, so their fate follows the venues. */
+async function partnerDonor(t: Harness, code: string, active: number, inactive: number) {
+  const quests: QuestSeed[] = [];
+  for (let i = 0; i < active + inactive; i++) {
+    quests.push({ rank: i, placeId: `pd-${i}`, source: "partner", title: `Partner ${i}` });
+  }
+  await donorRoom(t, { builtAt: Date.now(), code, quests });
+  await t.run(async (ctx) => {
+    for (let i = 0; i < active + inactive; i++) {
+      await ctx.db.insert("venues", {
+        placeId: `pd-${i}`, name: `Partner ${i}`, suburb: "CBD", lat: -37.81, lng: 144.96,
+        priceFromCents: 0, discountPct: 20, offerText: "20% off", partnerTier: 2,
+        moods: ["grass"], active: i < active,
+      });
+    }
+  });
+}
+
+test("a borrowed deck gutted by withdrawn offers is rebuilt instead of served", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  await partnerDonor(t, "8810", 1, 5); // one of six survives
+
+  const roomId = await freshRoom(t, "8811");
+  await withHost(t, roomId);
+
+  const originalFetch = globalThis.fetch;
+  // The rebuild is attempted for real, which is the whole point -- and with
+  // Google down it fails rather than quietly serving the one card.
+  globalThis.fetch = vi.fn(async () => new Response("nope", { status: 503 })) as unknown as typeof fetch;
+  try {
+    await expect(
+      t.action(api.deck.build, { code: "8811", sessionKey: "hostkey" }),
+    ).rejects.toMatchObject({ data: { code: "PLACES_UNAVAILABLE" } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // No one-card deck was written, and the room is back where it can try again.
+  const room = await t.run(async (ctx) => ctx.db.get(roomId));
+  expect(room!.status).toBe("lobby");
+  expect(await t.run(async (ctx) => ctx.db.query("quests").collect())).toHaveLength(6);
+});
+
+// The floor is relative to what was BORROWED, not to DECK_SIZE. A donor that
+// only ever had a few cards is a thin neighbourhood, not attrition -- and a
+// full rebuild there would spend a Places call and a batch of blurbs to be
+// handed the same few places back.
+test("a thin donor that loses nothing is still a hit", async () => {
+  const t = convexTest(schema, modules);
+  await partnerDonor(t, "8812", 2, 0); // both survive
+
+  const roomId = await freshRoom(t, "8813");
+  await withHost(t, roomId);
+
+  const { restore } = noNetwork();
+  try {
+    await t.action(api.deck.build, { code: "8813", sessionKey: "hostkey" });
+    expect(await deckOf(t, "8813")).toHaveLength(2);
   } finally {
     restore();
   }

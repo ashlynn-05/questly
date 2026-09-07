@@ -6,12 +6,25 @@
  * function of its input, so it can be unit-tested without a backend.
  */
 
-import { recomputeItinerary, type Slot, type Stop } from "./stops";
+import { recomputeItinerary, totalPerHeadCents, type Slot, type Stop } from "./stops";
 
 export type PlanInput = {
   venueName: string;
   headcount: number;
   budgetPerHeadCents: number;
+  /**
+   * What the matched card says the anchor venue costs per head, or `null` when
+   * Google gave it no price signal.
+   *
+   * This is a fact about the VENUE and is the only thing the anchor stop may be
+   * priced at. It is deliberately separate from `budgetPerHeadCents`, which is a
+   * fact about the GROUP: the fallback night used to price the anchor at 70% of
+   * the budget, so the same venue on the same evening cost $21 a head for a $30
+   * room and $49 for a $70 one, and that number went on to become the booking
+   * total. A budget is what a group is willing to pay, never evidence of what
+   * anything costs.
+   */
+  anchorPriceCents: number | null;
   startAt: number;
   mood: "grass" | "meet" | "treat" | "new";
 };
@@ -32,16 +45,26 @@ export function buildPlanPrompt(input: PlanInput): string {
       ? "The budget is $0 per head. Every stop must genuinely cost nothing."
       : `The budget is $${Math.round(input.budgetPerHeadCents / 100)} per head across the whole night.`;
 
+  // The anchor's price is stated as a fact, or its absence is. Either way the
+  // model is told not to make one up: it has no more information about this
+  // venue's prices than we do, and a plausible-looking number from a language
+  // model is exactly the kind of invention that ends up in a booking total.
+  const anchorPrice =
+    input.anchorPriceCents === null
+      ? `We do not have a price for ${input.venueName}. Use 0 for its costPerHeadCents and say in its note that the price needs checking. Do not guess one.`
+      : `${input.venueName} costs about $${Math.round(input.anchorPriceCents / 100)} per head. Use exactly that for its costPerHeadCents.`;
+
   return [
     `Build a night out in Melbourne for ${input.headcount} people, anchored on ${input.venueName}.`,
     `The mood they picked is "${input.mood}": ${MOOD_BRIEF[input.mood]}`,
     budget,
+    anchorPrice,
     "Return 2 to 4 stops as JSON and nothing else, shaped:",
     `{"stops":[{"slot":"meet"|"main"|"after","name":string,"durationMin":number,"costPerHeadCents":number,"note":string}],"shareMessage":string}`,
     'Exactly one stop must be "main" and it must be the anchor venue.',
     "note is one short sentence a friend would actually send.",
     "shareMessage is one line ready to paste into a group chat: where, when, what it costs.",
-    "Do not invent prices for the anchor venue beyond the stated budget.",
+    "Do not invent prices for any stop. If you do not know one, use 0 and say so in the note.",
   ].join("\n");
 }
 
@@ -122,7 +145,7 @@ function timeLabel(startAt: number): string {
 
 /** The canned night. Used when OpenAI is unavailable, so the demo cannot stall. */
 export function fallbackPlan(input: PlanInput): { stops: Stop[]; shareMessage: string } {
-  const free = input.budgetPerHeadCents === 0;
+  const unpriced = input.anchorPriceCents === null;
 
   const stops: Stop[] = [
     {
@@ -142,19 +165,32 @@ export function fallbackPlan(input: PlanInput): { stops: Stop[]; shareMessage: s
       name: input.venueName,
       startAt: input.startAt,
       durationMin: 75,
-      // Integer cents, and rounded rather than truncated: the whole budget is
-      // never spent on the anchor, so there is room left for the rest of it.
-      costPerHeadCents: free ? 0 : Math.round(input.budgetPerHeadCents * 0.7),
-      note: "The main event.",
+      // The venue's own price, integer cents, and nothing derived from the
+      // group's wallet. `null` contributes 0 -- a stop has to carry a number --
+      // and the note is where that is admitted, because 0 in the total would
+      // otherwise read as "this stop is free".
+      costPerHeadCents: input.anchorPriceCents ?? 0,
+      note: unpriced
+        ? "The main event. We could not get a price for this one -- worth checking before you go."
+        : "The main event.",
       source: "llm",
       locked: false,
     },
   ];
 
+  const recomputed = recomputeItinerary(stops, input.startAt);
+  // The share message quotes the night that was actually built, not the budget
+  // that was asked for. Quoting the budget meant a group whose $0 night came
+  // out at $18 read "free" in the message they pasted into the group chat.
+  const total = totalPerHeadCents(recomputed);
+  const cost = unpriced
+    ? "price to confirm"
+    : total === 0
+      ? "free"
+      : `about $${Math.round(total / 100)} each`;
+
   return {
-    stops: recomputeItinerary(stops, input.startAt),
-    shareMessage: `${input.venueName} at ${timeLabel(input.startAt)} -- ${
-      free ? "free" : `about $${Math.round(input.budgetPerHeadCents / 100)} each`
-    }. In?`,
+    stops: recomputed,
+    shareMessage: `${input.venueName} at ${timeLabel(input.startAt)} -- ${cost}. In?`,
   };
 }
