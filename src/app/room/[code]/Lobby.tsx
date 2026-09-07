@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState, type RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
+import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { userMessage } from "@/lib/errors";
@@ -41,39 +42,10 @@ export function Lobby({
 
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<Id<"members"> | null>(null);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Focus follows the two-step confirmations, in both directions.
-   *
-   * "Remove Tam" and its confirmation are different elements, so pressing one
-   * unmounts the control that was just activated: focus falls to <body> and a
-   * keyboard host has to Tab from the top of the document to reach "Yes,
-   * remove Tam" -- on the one destructive, undoable action in the product.
-   * This is focus RESTORATION, not the shell's heading policy: it only ever
-   * moves focus onto the control that replaced the one the user just pressed.
-   *
-   * `useCallback` with no deps is what makes it safe: a ref callback recreated
-   * each render is detached and re-attached on every render, which would drag
-   * focus back here every time the roster ticked.
-   */
-  const focusOnMount = useCallback((node: HTMLButtonElement | null) => {
-    node?.focus();
-  }, []);
-
-  /** Which member's "Remove" button to put focus back on after "Keep them". */
-  const restoreTo = useRef<Id<"members"> | null>(null);
-
-  /** The same restoration, for the one leave control this screen can show. */
-  const restoreLeave = useRef(false);
-  const leaveRestore = useCallback((node: HTMLButtonElement | null) => {
-    if (node && restoreLeave.current) {
-      restoreLeave.current = false;
-      node.focus();
-    }
-  }, []);
+  // Both two-step confirmations on this screen -- and their focus movement in
+  // each direction -- live in ConfirmButton. See that file for why.
 
   // Empty seats are shown, not hidden: the room is visibly waiting for people.
   // `rooms.join` refuses once the roster reaches `headcount`, so the roster
@@ -109,7 +81,7 @@ export function Lobby({
    * denominator. Not offered to the host at all -- `rooms.leave` refuses them
    * with HOST_CANNOT_LEAVE, and an orphaned room has nobody to start the deck.
    */
-  async function leaveTheRoom() {
+  async function leaveTheRoom(): Promise<"trigger" | "gone"> {
     setError(null);
     // Before the await: leaving deletes this member's row, so `rooms.get`
     // turns null and the shell would otherwise redirect to /join first.
@@ -117,10 +89,12 @@ export function Lobby({
     try {
       await leaveRoom({ code, sessionKey });
       router.replace("/start");
+      // A whole new screen is arriving; focus belongs to it, not here.
+      return "gone";
     } catch (e) {
       setLeaving(false);
-      setConfirmLeave(false);
       setError(userMessage(e, "Could not leave that room. Please try again."));
+      return "trigger";
     }
   }
 
@@ -138,34 +112,21 @@ export function Lobby({
     }
   }
 
-  /**
-   * A ref, not state, for the in-flight guard: `disabled` on a button that
-   * currently HAS focus hands focus straight back to <body>, which is the
-   * defect this whole flow is being fixed for. The guard only needs to stop a
-   * second call, not to re-render.
-   */
-  const removeInFlight = useRef(false);
-
-  async function remove(memberId: Id<"members">) {
-    if (removeInFlight.current) return;
-    removeInFlight.current = true;
+  async function remove(memberId: Id<"members">): Promise<"trigger" | "gone"> {
     setError(null);
     try {
       await removeMember({ code, sessionKey, memberId });
-      setRemoving(null);
       // The row went with them, and so did the button that was just pressed.
       // The roster's live region announces the new count; focus has to go
       // somewhere real rather than to <body>, and the room's heading is the
       // top of the screen this control belongs to.
       headingRef.current?.focus();
+      return "gone";
     } catch (e) {
       setError(userMessage(e, "Could not remove them from the room."));
       // They are still in the room, so the control that names them comes back
       // -- and focus goes back onto it.
-      restoreTo.current = memberId;
-      setRemoving(null);
-    } finally {
-      removeInFlight.current = false;
+      return "trigger";
     }
   }
 
@@ -187,7 +148,6 @@ export function Lobby({
         <ul className="m-0 flex list-none flex-col p-0">
           {Array.from({ length: seats }, (_, i) => {
             const member = view.members[i];
-            const confirming = member !== undefined && removing === member._id;
             return (
               <li key={member?._id ?? `seat-${i}`} className="relative py-1 pl-14">
                 {/* 16px puts the roundel's centre (top + 9.5, for a 13px disc
@@ -212,47 +172,13 @@ export function Lobby({
                       Two steps, because there is no undo -- they would have to
                       be sent the link again. */}
                   {view.you.isHost && member && !member.isHost ? (
-                    confirming ? (
-                      <span className="flex flex-wrap items-center gap-x-3">
-                        <button
-                          type="button"
-                          // The control that replaced the one just pressed.
-                          ref={focusOnMount}
-                          onClick={() => void remove(member._id)}
-                          className="board min-h-[44px] px-3 text-[11px] text-danger underline underline-offset-4"
-                        >
-                          Yes, remove {member.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            restoreTo.current = member._id;
-                            setRemoving(null);
-                          }}
-                          className="board min-h-[44px] px-3 text-[11px] text-accent underline underline-offset-4"
-                        >
-                          Keep them
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        // Cancelling unmounts "Keep them" and mounts this, so
-                        // focus comes back to the control the host started
-                        // from. The flag is cleared as it fires, so a later
-                        // re-render cannot pull focus here again.
-                        ref={(node) => {
-                          if (node && restoreTo.current === member._id) {
-                            restoreTo.current = null;
-                            node.focus();
-                          }
-                        }}
-                        onClick={() => setRemoving(member._id)}
-                        className="board ml-auto min-h-[44px] px-3 text-[11px] text-accent underline underline-offset-4"
-                      >
-                        Remove {member.name}
-                      </button>
-                    )
+                    <ConfirmButton
+                      className="ml-auto"
+                      label={`Remove ${member.name}`}
+                      confirmLabel={`Yes, remove ${member.name}`}
+                      cancelLabel="Keep them"
+                      onConfirm={() => remove(member._id)}
+                    />
                   ) : null}
                 </div>
               </li>
@@ -289,37 +215,13 @@ export function Lobby({
           <>
             <p className="text-[13px] text-dim">{hostName} starts the deck.</p>
 
-            {confirmLeave ? (
-              <span className="flex flex-wrap items-center gap-x-3">
-                <button
-                  type="button"
-                  ref={focusOnMount}
-                  onClick={() => void leaveTheRoom()}
-                  className="board min-h-[44px] px-3 text-[11px] text-danger underline underline-offset-4"
-                >
-                  Yes, leave room {code}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    restoreLeave.current = true;
-                    setConfirmLeave(false);
-                  }}
-                  className="board min-h-[44px] px-3 text-[11px] text-accent underline underline-offset-4"
-                >
-                  Stay
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                ref={leaveRestore}
-                onClick={() => setConfirmLeave(true)}
-                className="board min-h-[44px] self-start px-3 text-[11px] text-accent underline underline-offset-4"
-              >
-                Leave this room
-              </button>
-            )}
+            <ConfirmButton
+              className="self-start"
+              label="Leave this room"
+              confirmLabel={`Yes, leave room ${code}`}
+              cancelLabel="Stay"
+              onConfirm={() => leaveTheRoom()}
+            />
           </>
         )}
 

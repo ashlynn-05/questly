@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
+import type { Id } from "@convex/_generated/dataModel";
+import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { MapTile } from "@/components/questly/frame";
 import { userMessage } from "@/lib/errors";
@@ -35,13 +38,19 @@ export function Deck({
   code,
   sessionKey,
   headingRef,
+  setLeaving,
 }: {
   view: RoomView;
   code: string;
   sessionKey: string;
   headingRef: RefObject<HTMLHeadingElement | null>;
+  /** Tells the shell not to bounce a departing member back to /join. */
+  setLeaving: (value: boolean) => void;
 }) {
+  const router = useRouter();
   const cast = useMutation(api.swipes.cast);
+  const removeMember = useMutation(api.rooms.removeMember);
+  const leaveRoom = useMutation(api.rooms.leave);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,6 +62,47 @@ export function Deck({
   const deckSize = view.quests.length;
   const waiting = view.progress.waitingOn;
   const through = view.members.length - waiting.length;
+  const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
+
+  /**
+   * The two escape hatches the backend already built for a room that cannot
+   * finish, finally reachable from the screen where the jam shows up.
+   *
+   * Both return where focus should go: "gone" when this control's own screen
+   * has been replaced (the roster shrinks and the deck resolves, or the leaver
+   * is routed away), "trigger" when the action was refused and the control is
+   * still on screen. See ConfirmButton.
+   */
+  async function remove(memberId: Id<"members">): Promise<"trigger" | "gone"> {
+    setError(null);
+    try {
+      await removeMember({ code, sessionKey, memberId });
+      // Their row and the button naming it both went; the heading is the top
+      // of the screen the control belonged to, and focus has to land on
+      // something real rather than on <body>.
+      headingRef.current?.focus();
+      return "gone";
+    } catch (e) {
+      setError(userMessage(e, "Could not take them out of the room."));
+      return "trigger";
+    }
+  }
+
+  async function leaveTheRoom(): Promise<"trigger" | "gone"> {
+    setError(null);
+    // Before the await: leaving deletes this member's row, so `rooms.get`
+    // turns null and the shell would otherwise redirect to /join first.
+    setLeaving(true);
+    try {
+      await leaveRoom({ code, sessionKey });
+      router.replace("/start");
+      return "gone";
+    } catch (e) {
+      setLeaving(false);
+      setError(userMessage(e, "Could not leave that room. Please try again."));
+      return "trigger";
+    }
+  }
 
   const swipe = useCallback(
     async (dir: "yes" | "no") => {
@@ -114,15 +164,80 @@ export function Deck({
   }
 
   if (done) {
+    // Everyone the room is still waiting on, matched back to a member row so
+    // the host has something to act on. `rooms.get` projects `waitingOn` as
+    // names, not ids, so the match is by name -- and where two rows carry the
+    // same name, which is exactly what a double-tapped join leaves behind,
+    // both appear. That is the honest answer: from here the two are genuinely
+    // indistinguishable, and the duplicate IS one of them.
+    const stuck = view.members.filter((m) => waiting.includes(m.name));
+
     return (
-      <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
+      <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8">
         <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
           You are through the deck
         </h1>
-        <p aria-live="polite" className="text-center text-[15px] leading-snug text-dim">
+        <p aria-live="polite" className="text-[15px] leading-snug text-dim">
           {waiting.length > 0
             ? `Waiting on ${nameList(waiting)}.`
             : "Working out where you all landed…"}
+        </p>
+
+        {/* The moment a stuck room becomes visible is the moment somebody has
+            to be able to unstick it. `rooms.removeMember` and `rooms.leave`
+            both carry no status guard and are both accepted here -- and until
+            now neither was rendered anywhere but the lobby, so every phone sat
+            on "Waiting on Tam." forever and a reload drew the same dead
+            screen. */}
+        {waiting.length > 0 ? (
+          <div className="flex flex-col gap-3 border-t border-hairline pt-4">
+            <p className="text-[13px] leading-snug text-dim">
+              A closed tab or a seat somebody took twice is usually all this is — nobody
+              has done anything wrong. Taking that seat out lets the rest of you finish.
+            </p>
+
+            {view.you.isHost ? (
+              <ul className="m-0 flex list-none flex-col gap-1 p-0">
+                {stuck
+                  .filter((m) => !m.isHost)
+                  .map((m) => (
+                    <li key={m._id}>
+                      <ConfirmButton
+                        className="self-start"
+                        label={`Take ${m.name} out of the room`}
+                        confirmLabel={`Yes, take ${m.name} out`}
+                        cancelLabel="Keep them"
+                        onConfirm={() => remove(m._id)}
+                      />
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <p className="text-[13px] leading-snug text-dim">
+                {hostName} can take a seat out if it stays like this.
+              </p>
+            )}
+
+            {/* The host cannot leave -- `rooms.leave` refuses them with
+                HOST_CANNOT_LEAVE, and an orphaned room has nobody to finish
+                it. Everyone else can, and leaving lowers the count the room is
+                waiting on, so it is a second way out of the same jam. */}
+            {view.you.isHost ? null : (
+              <ConfirmButton
+                className="self-start"
+                label="Leave this room"
+                confirmLabel={`Yes, leave room ${code}`}
+                cancelLabel="Stay"
+                onConfirm={() => leaveTheRoom()}
+              />
+            )}
+          </div>
+        ) : null}
+
+        {/* Mounted with the screen and empty, so the sentence that arrives in
+            it later is actually announced. */}
+        <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-4">
+          {error ?? ""}
         </p>
       </section>
     );

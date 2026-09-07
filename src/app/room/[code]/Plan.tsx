@@ -6,7 +6,7 @@ import { api } from "@convex/_generated/api";
 import type { Stop } from "@convex/lib/stops";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
-import { userMessage } from "@/lib/errors";
+import { errorCode, userMessage } from "@/lib/errors";
 import type { RoomView } from "./page";
 
 const time = (at: number) =>
@@ -49,6 +49,7 @@ export function Plan({
   const suggestStop = useAction(api.plans.suggestStop);
   const searchStop = useAction(api.plans.searchStop);
   const confirm = useMutation(api.bookings.confirm);
+  const retryPlan = useMutation(api.plans.retry);
 
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const [tab, setTab] = useState<SheetTab>("ask");
@@ -62,6 +63,11 @@ export function Plan({
   const [booking, setBooking] = useState(false);
   const [confirmBook, setConfirmBook] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The "Writing the plan…" screen's own two flags. Kept apart from `error`
+  // because the likeliest answer there -- "it is still being written" -- is
+  // reassurance, not a failure, and must not be painted in danger red.
+  const [retrying, setRetrying] = useState(false);
+  const [planNote, setPlanNote] = useState<{ text: string; calm: boolean } | null>(null);
 
   const plan = view.plan;
   // The server enforces this split too. A room of one edits directly; a room of
@@ -188,6 +194,31 @@ export function Plan({
     }
   }
 
+  /**
+   * Ask for the plan again.
+   *
+   * A guard rather than `disabled` on the button being pressed: disabling a
+   * focused control hands focus back to <body>, and on this screen it is the
+   * only control there is. PLAN_IN_PROGRESS is not a failure -- it is the room
+   * telling the host the build is genuinely still running -- so it renders in
+   * the dim tone rather than the danger one.
+   */
+  async function askForThePlanAgain() {
+    if (retrying) return;
+    setRetrying(true);
+    setPlanNote(null);
+    try {
+      await retryPlan({ code, sessionKey });
+    } catch (e) {
+      setPlanNote({
+        text: userMessage(e, "Could not ask for the plan again. Please try again."),
+        calm: errorCode(e) === "PLAN_IN_PROGRESS",
+      });
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   if (!plan) {
     return (
       <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
@@ -198,6 +229,42 @@ export function Plan({
             lands: the effect above moves focus onto the new heading, which is
             what announces the itinerary. */}
         <p className="text-[15px] leading-snug text-dim">Writing the plan…</p>
+
+        {/* The plan-side twin of the deck's "Build it again". A build that is
+            killed outright -- a deploy, a timeout, a crash -- leaves a matched
+            room on this sentence forever, and a reload draws the same dead
+            screen. `plans.retry` refuses politely while a build is genuinely
+            in flight and does nothing at all once a plan exists, so pressing
+            it early is safe; the plan itself arrives on the room subscription,
+            so nothing here polls. */}
+        {view.you.isHost ? (
+          <Plate
+            variant="ghost"
+            center
+            className="mt-2 max-w-[320px]"
+            label={retrying ? "Asking again…" : "Write it again"}
+            sub="Only if this has been sitting here a minute or so."
+            onClick={() => void askForThePlanAgain()}
+          />
+        ) : (
+          // `plans.retry` is host-only, so a control here would only ever be
+          // refused.
+          <p className="text-center text-[13px] leading-snug text-dim">
+            If this sits here, {view.members.find((m) => m.isHost)?.name ?? "the host"} can
+            ask for it again.
+          </p>
+        )}
+
+        {/* Mounted with the screen and empty, so the sentence that arrives in
+            it later is actually announced. */}
+        <p
+          role="alert"
+          className={`max-w-[320px] text-center text-[13px] leading-snug ${
+            planNote?.calm ? "text-dim" : "text-danger"
+          }`}
+        >
+          {planNote?.text ?? ""}
+        </p>
       </section>
     );
   }

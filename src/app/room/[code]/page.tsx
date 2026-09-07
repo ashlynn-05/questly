@@ -197,7 +197,13 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
       ) : null}
 
       {view.room.status === "swiping" ? (
-        <Deck view={view} code={code} sessionKey={sessionKey} headingRef={headingRef} />
+        <Deck
+          view={view}
+          code={code}
+          sessionKey={sessionKey}
+          headingRef={headingRef}
+          setLeaving={setLeaving}
+        />
       ) : null}
 
       {view.room.status === "matched" ? (
