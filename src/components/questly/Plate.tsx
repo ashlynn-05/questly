@@ -11,7 +11,7 @@ const SURFACE: Record<Variant, string> = {
   // The border is not decoration either. Orange fill against `--ground`
   // measures 2.95:1 in dark mode, under the 3:1 SC 1.4.11 asks of a control's
   // visual boundary, and `--action` cannot move -- `--on-action` is exactly
-  // 4.9:1 on it, with no headroom. So the edge carries the boundary instead:
+  // 4.92:1 on it, with no headroom. So the edge carries the boundary instead:
   // `--action-edge` is white in dark (10.20:1 on iris, 3.46:1 on the fill) and
   // ink in light (15.97:1 on cornsilk, 4.92:1 on the fill), clearing 3:1 on
   // both sides of the line it draws. See globals.css.
@@ -27,6 +27,29 @@ const SURFACE: Record<Variant, string> = {
 };
 
 /**
+ * What a disabled Plate looks like, and why it is not simply the enabled one
+ * turned down.
+ *
+ * This used to be `disabled:opacity-50`, which contradicted the rule written
+ * forty lines below it in this same file. Half opacity composites the WHOLE
+ * control -- fill, label and edge -- over the page, so on `variant="action"`
+ * the label fell from 4.92:1 to 2.17:1 in dark and 1.86:1 in light, the fill's
+ * boundary against the ground fell to 1.64:1, and the edge to 2.34:1. WCAG
+ * exempts inactive controls; this project's Global Constraint does not, and
+ * `join/[code]/page.tsx` disables its primary CTA whenever the name field is
+ * empty -- which is its state at the moment an invited guest arrives from a
+ * group chat. The first thing they saw was a 2.17:1 call to action.
+ *
+ * So a disabled Plate LOSES its fill instead of dimming its ink. What is left
+ * is the same treatment `Chip` already uses for an unselected option: a dashed
+ * `--text-dim` boundary around `--text-dim` text, on the `--ground` these
+ * controls all sit on. Both measure 5.26:1 in dark and 6.21:1 in light -- over
+ * the 4.5:1 text floor and the 3:1 boundary floor, disabled or not. Dashed,
+ * because "not available yet" should not rest on colour alone either.
+ */
+const DISABLED_SURFACE = "bg-transparent text-dim border border-dashed border-dim";
+
+/**
  * `sub`'s tone per variant. `action` and `quiet` sit on an orange field:
  * --text-dim is only measured against `--ground`, so there is no token that
  * holds AA contrast dimmed on orange, and opacity is not a permitted
@@ -35,12 +58,14 @@ const SURFACE: Record<Variant, string> = {
  *
  * `raised` sits on `--ground-raised`, a lighter fill than the `--ground` that
  * `--text-dim` is actually measured against -- it happens to still clear AA
- * there (4.52:1), but that is this surface's own number, not the token's
- * tested pairing carrying over. `ghost` is transparent, so `text-dim` is only
- * as safe as whatever is behind it: on `--ground` it holds: on an orange
- * field -- `--action` or `--action-quiet` -- it does not. text-dim on
- * `--action` measures 1.79:1 and on `--action-quiet` 3.46:1, both well under
- * the 4.5:1 floor. Never stack a `ghost` Plate over an orange background.
+ * there (4.52:1 dark, 5.24:1 light), but that is this surface's own number,
+ * not the token's tested pairing carrying over. `ghost` is transparent, so
+ * `text-dim` is only as safe as whatever is behind it: on `--ground` it holds;
+ * on an orange field -- `--action` or `--action-quiet` -- it does not. In dark,
+ * text-dim on `--action` measures 1.79:1 and on `--action-quiet` 1.35:1; in
+ * light, 1.91:1 and 4.50:1. Three of those four are under the 4.5:1 floor and
+ * the fourth has no margin worth spending. Never stack a `ghost` Plate over an
+ * orange background.
  */
 const SUB_TONE: Record<Variant, string> = {
   action: "",
@@ -88,8 +113,9 @@ type Props = LinkProps | ButtonProps;
  * requirement here, and these are the controls a whole group taps at once on
  * phones held one-handed.
  *
- * `label` never carries opacity: --on-action is measured at exactly 4.9:1 on
- * orange, and any opacity tint drops that below the 4.5:1 AA floor. `label`
+ * `label` never carries opacity, in any state, disabled included: --on-action
+ * is measured at exactly 4.92:1 on orange, and any opacity tint at all drops
+ * that below the 4.5:1 AA floor. See DISABLED_SURFACE above. `label`
  * is also the required prop -- what a screen reader announces first and what
  * a hurried thumb aims at -- so it renders at least as large as the optional
  * `sub`, never smaller. Hierarchy between the two comes from the `.board`
@@ -107,12 +133,17 @@ export function Plate(props: Props) {
     className = "",
   } = props;
 
+  // Resolved here rather than through a `disabled:` variant, so there is never
+  // a moment where two conflicting utilities are both in the class list and
+  // the cascade order decides which surface a control wears.
+  const disabled = props.href ? false : props.disabled === true;
+
   const base = [
     "flex min-h-[44px] w-full items-center gap-3 rounded-[6px] px-4 py-3",
     center ? "text-center justify-center" : "text-left",
     "transition-[transform,background-color] duration-150",
-    "active:translate-y-[1px] disabled:opacity-50 disabled:pointer-events-none",
-    SURFACE[variant],
+    "active:translate-y-[1px] disabled:pointer-events-none",
+    disabled ? DISABLED_SURFACE : SURFACE[variant],
     // The offset gap is transparent, not a hardcoded surface colour: a
     // filled gap paints a wrong-colour halo on any Plate that isn't sitting
     // directly on `--ground` (a raised card, a modal, a ghost stack).
@@ -126,7 +157,14 @@ export function Plate(props: Props) {
       <span className="min-w-0 flex-1">
         <span className="board block text-[13px]">{label}</span>
         {sub ? (
-          <span className={["mt-1 block text-[11px] leading-snug", SUB_TONE[variant]].join(" ")}>
+          <span
+            className={[
+              "mt-1 block text-[11px] leading-snug",
+              // A disabled plate is already entirely `--text-dim`; dimming
+              // inside it would be dimming a dim.
+              disabled ? "" : SUB_TONE[variant],
+            ].join(" ")}
+          >
             {sub}
           </span>
         ) : null}
