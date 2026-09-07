@@ -113,6 +113,18 @@ export const create = mutation({
     // Live, not merely signed in: a deleted account must not be able to become
     // the host of a new room that would outlive its own profile.
     const userId = await requireLiveUserId(ctx);
+
+    // A night that has already started is not a plan, and nothing anywhere
+    // refused one before this: `whenAt` arrived as a bare `v.number()` and was
+    // stored. It is not only a hand-typed time that gets here either -- the
+    // preset path resolves "Tonight" to 6:30pm TODAY, so tapping it at 11pm
+    // produced a room five hours in the past, and then showed that time to
+    // everyone who joined. The client says the same sentence sooner; this is
+    // the rule.
+    if (args.whenAt <= Date.now()) {
+      throwUserError("WHEN_IN_THE_PAST", "That time has already passed. Pick a later time.");
+    }
+
     const { hostName, ...room } = args;
 
     // Four digits collide eventually; retry rather than hand out a dead code.
