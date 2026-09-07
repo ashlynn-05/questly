@@ -48,7 +48,24 @@ export function Deck({
   const cast = useMutation(api.swipes.cast);
   const removeMember = useMutation(api.rooms.removeMember);
   const leaveRoom = useMutation(api.rooms.leave);
-  const [busy, setBusy] = useState(false);
+  /**
+   * One swipe at a time, held in a ref rather than in state.
+   *
+   * It used to be `busy` state driving `disabled` on the two buttons below,
+   * and that cost two things on the screen this product is built around.
+   * `Plate` expresses disabled by DROPPING its fill -- the right treatment for
+   * "not available yet" (the join CTA before a name is typed), the wrong one
+   * for "your own request is in flight" -- so every single swipe flipped "I'm
+   * in" from a filled orange plate to a dashed transparent ghost and back.
+   * And disabling the button that currently HAS focus hands focus to <body>,
+   * which is the same defect `ConfirmButton`'s ref guard exists to avoid and
+   * that `Plan.tsx` was fixed for.
+   *
+   * A ref is also a stricter guard than the state was: it is set
+   * synchronously, so it does not depend on a re-render landing between two
+   * calls, and it does not go stale inside the `useCallback` closure.
+   */
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // R34: your position in the deck is YOUR swipe count, never a shared cursor.
@@ -103,18 +120,18 @@ export function Deck({
 
   const swipe = useCallback(
     async (dir: "yes" | "no") => {
-      if (!quest || busy) return;
-      setBusy(true);
+      if (!quest || inFlight.current) return;
+      inFlight.current = true;
       setError(null);
       try {
         await cast({ code, sessionKey, questId: quest._id, dir });
       } catch (e) {
         setError(userMessage(e, "That did not register. Try that one again."));
       } finally {
-        setBusy(false);
+        inFlight.current = false;
       }
     },
-    [quest, busy, cast, code, sessionKey],
+    [quest, cast, code, sessionKey],
   );
 
   // Swiping is never the only path: the buttons below are the primary control
@@ -338,9 +355,13 @@ export function Deck({
         {error ?? ""}
       </p>
 
+      {/* No `disabled` here on purpose -- `swipe` refuses a second call itself,
+          and see the `inFlight` ref above for what `disabled` cost this screen:
+          the CTA changing identity on every swipe, and focus falling to <body>
+          under a keyboard user's finger. */}
       <div className="flex gap-3">
-        <Plate variant="raised" center label="Nah" disabled={busy} onClick={() => void swipe("no")} />
-        <Plate variant="action" center label="I’m in" disabled={busy} onClick={() => void swipe("yes")} />
+        <Plate variant="raised" center label="Nah" onClick={() => void swipe("no")} />
+        <Plate variant="action" center label="I’m in" onClick={() => void swipe("yes")} />
       </div>
       <p className="text-center text-[12px] text-dim">Arrow keys work too.</p>
     </section>
