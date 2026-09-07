@@ -9,6 +9,7 @@ import {
   useTransform,
   type PanInfo,
 } from "motion/react";
+import { useHaptics } from "@haptics/react";
 import { MapTile } from "@/components/questly/frame";
 import { swipeIntent } from "@/lib/swipe";
 import type { RoomView } from "./page";
@@ -44,6 +45,27 @@ export function SwipeCard({
   onCommit: (dir: "yes" | "no") => void;
 }) {
   const reduceMotion = useReducedMotion();
+
+  /**
+   * No `HapticsProvider` above this, deliberately. `useHaptics` falls back to
+   * the library's own PRESETS when there is no context, and the provider's
+   * only jobs are custom patterns, `respectReducedMotion`, a debug overlay,
+   * and attaching an invisible `<input type="checkbox" switch>` INSIDE every
+   * `[data-haptic]` element. This card wants none of the first three, and the
+   * fourth would put an input under the drag surface, competing for the
+   * pointer stream the gesture depends on.
+   *
+   * `respectReducedMotion` stays off (its default) on purpose: reduced motion
+   * is a question about what MOVES on screen, and both mobile platforms ship
+   * a separate system haptics switch that already governs this.
+   *
+   * In practice this is Android. Safari never implemented the Vibration API,
+   * and the checkbox-switch side effect that stood in for it was closed in
+   * iOS 26.5 -- only a real tap on the overlay fires now. So on an iPhone
+   * these two lines are no-ops and the lit plate does all the talking.
+   */
+  const { trigger } = useHaptics();
+
   const card = useRef<HTMLElement>(null);
   const x = useMotionValue(0);
 
@@ -67,11 +89,29 @@ export function SwipeCard({
    */
   const leaning = useRef<"yes" | "no" | null>(null);
 
+  /**
+   * Set the moment the vote is cast, and never cleared: this card is on its
+   * way off the screen and has nothing left to say.
+   *
+   * It is not bookkeeping. The exit animation drives `x` out to ±420, which
+   * re-crosses the very threshold the drag just crossed, and without this the
+   * card buzzed a THIRD time on its way out -- measured, not guessed:
+   * `navigator.vibrate` logged [8,27,5,5], [18,19,6,9], [8,27,5,5] for one
+   * swipe. A ref rather than state because the exit is already running and a
+   * re-render would be pure waste.
+   */
+  const committed = useRef(false);
+
   useMotionValueEvent(x, "change", (dx) => {
+    if (committed.current) return;
     const next = swipeIntent(dx, card.current?.offsetWidth ?? 0);
     if (next === leaning.current) return;
     leaning.current = next;
     onLean(next);
+    // Once per crossing, never per frame -- which is the whole reason the
+    // `leaning` ref above exists. Silent on the way back out, because a plate
+    // going dark is not news the thumb needs.
+    if (next) trigger("impact-light");
   });
 
   function end(_event: PointerEvent | MouseEvent | TouchEvent, info: PanInfo) {
@@ -83,6 +123,11 @@ export function SwipeCard({
       onLean(null);
       return;
     }
+    // The same tick for yes and for no. Giving "I'm in" the stronger buzz
+    // would be the interface editorialising about which answer is better,
+    // inside a vote a whole group is casting.
+    trigger("impact-medium");
+    committed.current = true;
     setExit(dir);
     onCommit(dir);
   }
