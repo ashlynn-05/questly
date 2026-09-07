@@ -1,8 +1,40 @@
 import { v } from "convex/values";
 import { action, httpAction, internalAction } from "./_generated/server";
 import { requireUserId } from "./lib/access";
+import { throwUserError } from "./lib/errors";
 
 const PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby";
+
+/**
+ * How long we wait on Google before giving up.
+ *
+ * Without this, a hung socket holds the whole action open until the platform
+ * kills it -- and a killed action never reaches its own error handler. That is
+ * what stranded a `deck.build` on "building" until STALE_BUILD_MS expired and
+ * what stranded a matched room on "Writing the plan..." forever. A bounded
+ * failure lands in the caller's `catch`, where there is already a fallback; an
+ * unbounded one lands nowhere.
+ *
+ * Eight seconds is well beyond Places' normal response time, so a timeout here
+ * means something is genuinely wrong rather than merely slow.
+ */
+const PLACES_TIMEOUT_MS = 8_000;
+
+/**
+ * Everything Google can do to us, said in a sentence the person can act on.
+ *
+ * A plain `Error` is redacted to "Server Error" on a production deployment, so
+ * a host tapping "Start the deck" during a Google outage was told nothing at
+ * all -- while the room had already been handed back to the lobby underneath
+ * them, which is exactly the thing they needed to know.
+ */
+function throwPlacesUnavailable(detail: string): never {
+  console.warn(`places: ${detail}`);
+  throwUserError(
+    "PLACES_UNAVAILABLE",
+    "We could not reach the venue search just now. Give it a moment and try again.",
+  );
+}
 
 // Places API (New) rejects a radius above this.
 const MAX_RADIUS_METERS = 50_000;
@@ -148,35 +180,47 @@ async function nearby(args: {
 }): Promise<{ radiusMeters: number; results: PlaceResult[] }> {
   const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
   if (!apiKey) {
-    throw new Error(
+    // Configuration, not the user's doing -- but they are the one staring at a
+    // stuck screen, so they get a sentence rather than "Server Error". The
+    // operator gets the actual instruction in the logs.
+    throwPlacesUnavailable(
       "GOOGLE_MAPS_SERVER_KEY is not set. Run: npx convex env set GOOGLE_MAPS_SERVER_KEY <key>",
     );
   }
 
   const radiusMeters = Math.min(Math.max(args.radiusKm, 0.001) * 1000, MAX_RADIUS_METERS);
 
-  const response = await fetch(PLACES_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": FIELD_MASK,
-    },
-    body: JSON.stringify({
-      includedTypes: args.includedTypes ?? ["cafe"],
-      maxResultCount: Math.min(args.maxResults ?? 10, 20),
-      rankPreference: "DISTANCE",
-      locationRestriction: {
-        circle: {
-          center: { latitude: args.lat, longitude: args.lng },
-          radius: radiusMeters,
-        },
+  let response: Response;
+  try {
+    response = await fetch(PLACES_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": FIELD_MASK,
       },
-    }),
-  });
+      body: JSON.stringify({
+        includedTypes: args.includedTypes ?? ["cafe"],
+        maxResultCount: Math.min(args.maxResults ?? 10, 20),
+        rankPreference: "DISTANCE",
+        locationRestriction: {
+          circle: {
+            center: { latitude: args.lat, longitude: args.lng },
+            radius: radiusMeters,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(PLACES_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // A timeout or a transport failure. Same sentence as a 5xx: from where the
+    // group is sitting, "Google did not answer" and "Google answered badly" are
+    // the same event and have the same remedy.
+    throwPlacesUnavailable(`nearby search failed or timed out: ${String(error)}`);
+  }
 
   if (!response.ok) {
-    throw new Error(`Places API ${response.status}: ${await response.text()}`);
+    throwPlacesUnavailable(`Places API ${response.status}: ${await response.text()}`);
   }
 
   const data = (await response.json()) as PlacesResponse;
@@ -242,29 +286,35 @@ export const searchText = internalAction({
   returns: v.object({ results: v.array(placeResultValidator) }),
   handler: async (_ctx, args): Promise<{ results: PlaceResult[] }> => {
     const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
-    if (!apiKey) throw new Error("GOOGLE_MAPS_SERVER_KEY is not set.");
+    if (!apiKey) throwPlacesUnavailable("GOOGLE_MAPS_SERVER_KEY is not set.");
 
-    const response = await fetch(TEXT_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": FIELD_MASK,
-      },
-      body: JSON.stringify({
-        textQuery: args.query,
-        maxResultCount: 8,
-        locationBias: {
-          circle: {
-            center: { latitude: args.lat, longitude: args.lng },
-            radius: Math.min(Math.max(args.radiusKm, 0.001) * 1000, MAX_RADIUS_METERS),
-          },
+    let response: Response;
+    try {
+      response = await fetch(TEXT_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": FIELD_MASK,
         },
-      }),
-    });
+        body: JSON.stringify({
+          textQuery: args.query,
+          maxResultCount: 8,
+          locationBias: {
+            circle: {
+              center: { latitude: args.lat, longitude: args.lng },
+              radius: Math.min(Math.max(args.radiusKm, 0.001) * 1000, MAX_RADIUS_METERS),
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(PLACES_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throwPlacesUnavailable(`text search failed or timed out: ${String(error)}`);
+    }
 
     if (!response.ok) {
-      throw new Error(`Places text search ${response.status}: ${await response.text()}`);
+      throwPlacesUnavailable(`Places text search ${response.status}: ${await response.text()}`);
     }
 
     const data = (await response.json()) as PlacesResponse;
@@ -321,10 +371,17 @@ export const photo = httpAction(async (_ctx, request) => {
   const maxWidthPx =
     Number.isFinite(requested) && requested > 0 ? Math.min(Math.round(requested), PHOTO_MAX_PX) : PHOTO_MAX_PX;
 
-  const response = await fetch(
-    `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${maxWidthPx}&skipHttpRedirect=true`,
-    { headers: { "X-Goog-Api-Key": apiKey } },
-  );
+  // Bounded like every other outbound call: this one is served straight into an
+  // <img> tag, so a hung upstream is a card that never finishes loading.
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${maxWidthPx}&skipHttpRedirect=true`,
+      { headers: { "X-Goog-Api-Key": apiKey }, signal: AbortSignal.timeout(PLACES_TIMEOUT_MS) },
+    );
+  } catch {
+    return new Response("Photo unavailable.", { status: 502 });
+  }
   if (!response.ok) return new Response("Photo unavailable.", { status: 502 });
 
   const { photoUri } = (await response.json()) as { photoUri?: string };

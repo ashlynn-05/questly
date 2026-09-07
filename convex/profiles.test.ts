@@ -174,6 +174,33 @@ test("saveQuiz derives displayName from the identity's name, embeds the taste se
   expect(stored[0].tasteVector).toEqual([1, 2, 3]);
 });
 
+// Onboarding is the first thing a new user does, and it used to dead-end on an
+// OpenAI outage: the embedding threw, the whole action rolled back, and the
+// person was returned to the quiz with no profile and no explanation. The
+// taste vector is an enhancement -- personalised ranking -- not the point of
+// the screen, so its absence must not cost them the account.
+test("saveQuiz still saves the profile when the embedding service is down", async () => {
+  const t = convexTest(schema, modules);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  fetchMock.mockImplementation(async () => new Response("upstream is unhappy", { status: 503 }));
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec Chen" });
+
+  await asUser.action(api.profiles.saveQuiz, {
+    answers: { [QUIZ_CARDS[0].id]: "more" },
+    goals: [QUIZ_GOALS[0].id],
+  });
+
+  const me = await asUser.query(api.profiles.me, {});
+  expect(me?.displayName).toBe("Bec Chen");
+  expect(me?.goals).toEqual([QUIZ_GOALS[0].id]);
+
+  // Stored with no vector rather than a fabricated one: an empty vector
+  // contributes nothing to ranking, which is honest about what we know.
+  const stored = await t.run(async (ctx) => ctx.db.query("profiles").collect());
+  expect(stored).toHaveLength(1);
+  expect(stored[0].tasteVector).toEqual([]);
+});
+
 test("saveQuiz falls back to the identity's email when it has no name", async () => {
   const t = convexTest(schema, modules);
   const asUser = t.withIdentity({ subject: "u1", email: "bec@example.com" });

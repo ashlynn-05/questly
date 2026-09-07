@@ -164,14 +164,31 @@ test("searchText sends the exact field mask and maps the response", async () => 
   expect(result.results).toEqual(EXPECTED_MAPPED);
 });
 
-test("searchNearby throws when GOOGLE_MAPS_SERVER_KEY is not set", async () => {
+// A missing key is an operator mistake, and the two audiences need different
+// things: the person holding the phone needs a sentence they can act on, the
+// person running the deployment needs the actual cause. So this pins both.
+//
+// It used to assert only `expect(fetchMock).not.toHaveBeenCalled()`, which
+// proved nothing -- the key is read on the line above the fetch, so no
+// arrangement of this code could have called it. The happy-path test above is
+// the positive control that the same action does reach Google when configured.
+test("searchNearby refuses, and names the missing key in the log, when it is not set", async () => {
   delete process.env.GOOGLE_MAPS_SERVER_KEY;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const t = convexTest(schema, modules);
 
-  await expect(
-    t.withIdentity({ subject: "u1" }).action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 }),
-  ).rejects.toThrow(/GOOGLE_MAPS_SERVER_KEY is not set/);
-  expect(fetchMock).not.toHaveBeenCalled();
+  const promise = t
+    .withIdentity({ subject: "u1" })
+    .action(api.places.searchNearby, { lat: 0, lng: 0, radiusKm: 1 });
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({
+    data: { code: "PLACES_UNAVAILABLE", message: expect.stringMatching(/could not reach/i) },
+  });
+  // The user-facing sentence must not hand out our configuration.
+  await expect(promise).rejects.not.toMatchObject({
+    data: { message: expect.stringContaining("GOOGLE_MAPS_SERVER_KEY") },
+  });
+  expect(warn.mock.calls.flat().join(" ")).toMatch(/GOOGLE_MAPS_SERVER_KEY is not set/);
 });
 
 // searchNearby is the one Places action the browser may call, and it proxies
@@ -264,11 +281,19 @@ test("the photo route will not redirect anywhere but Google", async () => {
   expect(response.headers.get("Location")).toBeNull();
 });
 
+// 503 and a plain sentence -- an <img> that cannot load is not something the
+// viewer can fix, and the response must not leak which key is missing.
+// (The old `not.toHaveBeenCalled()` here was unfalsifiable: the key is read
+// before the fetch, so it could never have fired. The redirect test above is
+// the positive control that this route does call Google when configured.)
 test("the photo route reports missing configuration rather than throwing", async () => {
   delete process.env.GOOGLE_MAPS_SERVER_KEY;
   const t = convexTest(schema, modules);
 
   const response = await t.fetch("/places/photo?name=places/place-1/photos/abc123");
   expect(response.status).toBe(503);
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(response.headers.get("Location")).toBeNull();
+  const body = await response.text();
+  expect(body).not.toMatch(/GOOGLE_MAPS_SERVER_KEY/);
+  expect(body).toMatch(/not configured/i);
 });

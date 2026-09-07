@@ -15,14 +15,32 @@ const CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const CHAT_MODEL = "gpt-4o-mini";
 
 /**
+ * How long we wait on OpenAI before giving up.
+ *
+ * Without a bound, a hung socket holds the calling action open until the
+ * platform kills it -- and a killed action never runs its own error handler, so
+ * `plans.generate` never wrote its fallback plan and the matched room showed
+ * "Writing the plan..." for the rest of the night. Every caller here already
+ * has a fallback; this is what guarantees they get to run it.
+ *
+ * Fifteen seconds is generous for gpt-4o-mini returning a small JSON object,
+ * and short enough that a group is still watching when the fallback lands.
+ */
+const CHAT_TIMEOUT_MS = 15_000;
+
+/**
  * One JSON-mode chat completion. Returns the parsed object, which is `unknown`
  * on purpose -- a model's output is untrusted input, so every caller narrows
  * the fields it reads.
  *
  * Throws a plain `Error` (never a `ConvexError`) on a missing key or a bad
- * response: both are our problem, not the user's, and a redacted "Server Error"
- * in the browser is the right amount of detail for them. Callers that can carry
- * on without the model's answer catch it and fall back.
+ * response, and that is deliberate rather than an oversight: EVERY caller
+ * catches it and falls back to something usable -- `plans.generate` to the
+ * canned night, `deck.writeBlurbs` to the Places summary, `plans.suggestStop`
+ * to a nearby search, `profiles.saveQuiz` to an empty taste vector. Nothing
+ * this throws reaches a user, so there is nothing here for `throwUserError` to
+ * say to one. Should a future caller let it escape, that caller is the place to
+ * decide what the person is told.
  */
 export async function jsonCompletion(prompt: string): Promise<unknown> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -38,6 +56,10 @@ export async function jsonCompletion(prompt: string): Promise<unknown> {
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     }),
+    // A timeout surfaces here as a thrown TimeoutError, which is the same shape
+    // as every other failure this function raises -- so it lands in the same
+    // caller `catch` and the same fallback, with no new branch anywhere.
+    signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
   });
 
   if (!response.ok) {

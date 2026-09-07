@@ -81,9 +81,29 @@ export const saveQuiz = action({
 
     const sentence = tasteSentence(args.answers as QuizAnswers, args.goals);
 
-    const embedding: number[] = await ctx.runAction(internal.ai.embeddings.embedText, {
-      text: sentence,
-    });
+    // The one OpenAI call in the product with no fallback, on the one screen
+    // where every failure costs a signup. It used to let a plain `Error` out,
+    // so an OpenAI outage ended onboarding at "Server Error" with no way past
+    // it -- a new user could not finish signing up because a third party was
+    // down.
+    //
+    // An empty vector is a real, already-handled state rather than a broken
+    // one: `deck.blend` skips profiles with no vector and `scoring.cosine`
+    // returns 0 for an absent one, so the deck falls back to ranking on budget,
+    // distance, mood and partner tier -- which is exactly what a guest gets.
+    // The quiz answers, the taste sentence and the goals are all still stored,
+    // so re-running the quiz later fills the vector in. Never silently, though:
+    // a permanent outage would otherwise turn personalisation off for every new
+    // user with nothing in the logs to say when it stopped.
+    let embedding: number[] = [];
+    try {
+      embedding = await ctx.runAction(internal.ai.embeddings.embedText, { text: sentence });
+    } catch (error) {
+      console.warn(
+        "profiles.saveQuiz: no taste vector for this profile; saving the quiz without one.",
+        error,
+      );
+    }
 
     await ctx.runMutation(internal.profiles.write, {
       userId,
