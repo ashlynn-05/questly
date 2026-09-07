@@ -24,9 +24,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en" className={`${archivo.variable} h-full antialiased`} suppressHydrationWarning>
-      {/* Not wrapped in <head>: a manual <head> in an App Router layout breaks
-          hydration, and an unhydrated tree never attaches the toggle's handler.
-          React 19 hoists a bare <script> here on its own. */}
+      {/* Runs before first paint so a light-mode visitor never sees a dark
+          flash. React 19 hoists a bare <script> in a layout into <head> on its
+          own, so no manual <head> wrapper is needed -- the Next 16 guide
+          (node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md)
+          writes one, and either works; the earlier comment here claimed a
+          manual <head> breaks hydration, which the docs contradict. */}
       <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       <body className="min-h-full flex flex-col">
         <ConvexClientProvider initialToken={initialToken}>
