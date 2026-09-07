@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type RefObject } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -8,8 +9,8 @@ import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailNode } from "@/components/questly/Rail";
-import { userMessage } from "@/lib/errors";
-import type { RoomView } from "./page";
+import { errorCode, userMessage } from "@/lib/errors";
+import type { BuildFailure, RoomView } from "./page";
 
 /**
  * The waiting room. Its whole job is to make the room feel occupied while it
@@ -30,8 +31,8 @@ export function Lobby({
   sessionKey: string;
   headingRef: RefObject<HTMLHeadingElement | null>;
   /** Owned by the shell, because this screen unmounts before a build fails. */
-  buildError: string | null;
-  setBuildError: (message: string | null) => void;
+  buildError: BuildFailure | null;
+  setBuildError: (failure: BuildFailure | null) => void;
   /** Tells the shell not to bounce a departing member back to /join. */
   setLeaving: (value: boolean) => void;
 }) {
@@ -68,7 +69,10 @@ export function Lobby({
       // every real build failure -- arrives at a dead component; by the time
       // abandonBuild has put the room back in the lobby, this instance is gone
       // and its replacement has an empty error state.
-      setBuildError(userMessage(e, "Could not build the deck. Please try again."));
+      setBuildError({
+        text: userMessage(e, "Could not build the deck. Please try again."),
+        code: errorCode(e),
+      });
       setBusy(false);
     }
   }
@@ -228,9 +232,27 @@ export function Lobby({
         {/* Two failures, one region, always mounted so both are announced when
             they arrive. `buildError` belongs to the shell because this screen
             does not outlive the build that raises it. */}
-        <p role="alert" className="text-[13px] leading-snug text-danger">
-          {error ?? buildError ?? ""}
+        <p
+          role="alert"
+          className={`text-[13px] leading-snug ${
+            !error && buildError?.code === "NO_CANDIDATES" ? "text-dim" : "text-danger"
+          }`}
+        >
+          {error ?? buildError?.text ?? ""}
         </p>
+
+        {/* An honest nothing, not a fault -- and the sentence above tells the
+            host to widen the radius or change the mood, neither of which this
+            room can do: both were fixed when it was opened. So the way to act
+            on that advice goes here, next to it. */}
+        {!error && buildError?.code === "NO_CANDIDATES" ? (
+          <Link
+            href="/start"
+            className="board min-h-[44px] self-start px-3 text-[11px] text-accent underline underline-offset-4"
+          >
+            Open a room with different numbers
+          </Link>
+        ) : null}
       </div>
     </section>
   );

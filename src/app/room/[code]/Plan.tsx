@@ -59,7 +59,6 @@ export function Plan({
   // Three separate flags, not one: a sheet loading its options must not put
   // "Booking…" on the button at the bottom of the screen.
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [booking, setBooking] = useState(false);
   const [confirmBook, setConfirmBook] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,8 +137,22 @@ export function Plan({
     void loadOptions(stopId, "ask");
   }
 
+  /**
+   * The in-flight guard for every write on this screen, as a ref rather than a
+   * `disabled` flag.
+   *
+   * A `disabled` flag used to sit on the very vote button being pressed, and on
+   * every option in an open sheet -- so casting a vote by keyboard disabled the
+   * control that had focus and dropped focus to <body>. This file states the
+   * rule twice already (`bookIt` and `askForThePlanAgain`); it just was not
+   * applied here. A ref only has to stop a second concurrent call, and does not
+   * re-render, so nothing under the user's finger changes state.
+   */
+  const writing = useRef(false);
+
   async function choose(stopId: string, replacement: Stop) {
-    setSaving(true);
+    if (writing.current) return;
+    writing.current = true;
     setError(null);
     try {
       if (isGroup) {
@@ -153,7 +166,7 @@ export function Plan({
     } catch (e) {
       setError(userMessage(e, "Could not change that stop."));
     } finally {
-      setSaving(false);
+      writing.current = false;
     }
   }
 
@@ -167,14 +180,15 @@ export function Plan({
   }
 
   async function castVote(proposalId: RoomView["proposals"][number]["_id"], vote: "yes" | "no") {
-    setSaving(true);
+    if (writing.current) return;
+    writing.current = true;
     setError(null);
     try {
       await voteOnProposal({ code, sessionKey, proposalId, vote });
     } catch (e) {
       setError(userMessage(e, "Could not record that vote."));
     } finally {
-      setSaving(false);
+      writing.current = false;
     }
   }
 
@@ -314,6 +328,21 @@ export function Plan({
               <li key={stop.id} className="relative pl-14">
                 <RailNode top={6} state={proposal ? "live" : stop.locked ? "locked" : "open"} />
 
+                {/* Mounted with the stop and empty until a proposal lands on
+                    it. When somebody else proposes, the whole vote block below
+                    is INSERTED while the lock and swap controls above it stay
+                    put -- so nothing is unmounted, focus correctly does not
+                    move, and a live region is the only thing left that can say
+                    a vote has opened on your night. The count inside the block
+                    could not do that job: it was mounted with its text already
+                    in it, which announces nothing. `sr-only` is absolutely
+                    positioned, so this costs no layout. */}
+                <p aria-live="polite" className="sr-only">
+                  {proposal
+                    ? `${proposal.proposedByName} wants to swap ${stop.name} for ${proposal.replacement.name}. ${proposal.yes} of ${proposal.needed} needed.`
+                    : ""}
+                </p>
+
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="min-w-0">
                     <p className="board text-[10px] text-accent">
@@ -366,7 +395,11 @@ export function Plan({
                         “{proposal.reason}”
                       </p>
                     ) : null}
-                    <p aria-live="polite" className="num mt-2 text-[13px] text-dim">
+                    {/* No aria-live here: this arrives already filled, which
+                        announces nothing, and the always-mounted region at the
+                        top of the stop carries the same count to a screen
+                        reader as it changes. */}
+                    <p className="num mt-2 text-[13px] text-dim">
                       {proposal.yes} of {proposal.needed} needed
                     </p>
                     {stop.locked ? (
@@ -390,14 +423,12 @@ export function Plan({
                           variant="action"
                           center
                           label="Yes"
-                          disabled={saving}
                           onClick={() => void castVote(proposal._id, "yes")}
                         />
                         <Plate
                           variant="ghost"
                           center
                           label="No"
-                          disabled={saving}
                           onClick={() => void castVote(proposal._id, "no")}
                         />
                       </div>
@@ -414,7 +445,6 @@ export function Plan({
                         <Plate
                           variant="ghost"
                           label={proposal.yourVote === "yes" ? "Change it to no" : "Change it to yes"}
-                          disabled={saving}
                           onClick={() =>
                             void castVote(proposal._id, proposal.yourVote === "yes" ? "no" : "yes")
                           }
@@ -525,7 +555,6 @@ export function Plan({
                               label={option.name}
                               sub={option.note}
                               right={money(option.costPerHeadCents)}
-                              disabled={saving}
                               onClick={() => void choose(stop.id, option)}
                             />
                           ))}
@@ -570,16 +599,21 @@ export function Plan({
       {/* Derived per request from the current stops and the room's budget, so
           it is right the instant a swap lands. Nothing refuses an expensive
           swap -- the group is allowed to decide to overspend, knowingly. */}
-      {plan.overBudget ? (
-        <p role="alert" className="text-[13px] leading-snug text-danger">
-          That is over the {money(view.room.budgetPerHeadCents)} each you set. Swap a stop, or
-          go anyway.
-        </p>
-      ) : null}
+      {/* Always mounted, like every other announcement on this screen: a
+          region inserted into the DOM at the moment its text arrives is the
+          pattern this file warns against eight lines below. `empty:-mb-7`
+          takes back the flex gap an empty paragraph would leave -- hiding it
+          would take it out of the accessibility tree and be no better than not
+          rendering it. */}
+      <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-7">
+        {plan.overBudget
+          ? `That is over the ${money(view.room.budgetPerHeadCents)} each you set. Swap a stop, or go anyway.`
+          : ""}
+      </p>
 
       {/* Always mounted, filled when something is refused: the same rule as
           every other announcement on this screen. */}
-      <p role="alert" className="text-[13px] leading-snug text-danger">
+      <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-7">
         {error ?? ""}
       </p>
 

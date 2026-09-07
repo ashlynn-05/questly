@@ -244,6 +244,11 @@ export function Deck({
   }
 
   const src = photoSrc(quest);
+  // Google prices most parks, gardens, beaches and trails at nothing at all --
+  // the whole `grass` mood -- so an unpriced card is the ordinary case, not an
+  // error. `priceLabel` says "Price unknown" for those, which reads badly the
+  // moment it is composed into a surrounding sentence.
+  const priceKnown = quest.priceCents !== null;
 
   return (
     <section className="flex flex-col gap-5 px-5 py-8">
@@ -280,10 +285,19 @@ export function Deck({
 
           <dl className="m-0 flex flex-wrap gap-x-6 gap-y-3">
             <div>
-              {/* R68: this figure comes from a Google price level, not from the
-                  venue. It is an estimate everywhere it appears. */}
-              <dt className="board text-[10px] text-dim">Est. each</dt>
-              <dd className="num m-0 text-[18px] text-text">{quest.priceLabel}</dd>
+              {/* R68: when there IS a figure it comes from a Google price
+                  level, not from the venue, so it is labelled as an estimate
+                  everywhere it appears. When there is not one, the backend
+                  says so honestly rather than inventing a band -- and "we do
+                  not know what this costs" and "we estimate it costs $35" are
+                  different sentences that must not share a template. "Est.
+                  each / Price unknown" read as an estimate OF an unknown. */}
+              <dt className="board text-[10px] text-dim">
+                {priceKnown ? "Est. each" : "Cost"}
+              </dt>
+              <dd className="num m-0 text-[18px] text-text">
+                {priceKnown ? quest.priceLabel : "Not listed"}
+              </dd>
             </div>
             <div>
               <dt className="board text-[10px] text-dim">Away</dt>
@@ -300,7 +314,9 @@ export function Deck({
       </article>
 
       <p className="text-[12px] leading-snug text-dim">
-        Costs are estimates, not quotes.
+        {priceKnown
+          ? "Costs are estimates, not quotes."
+          : "We could not find a price for this one, so there is nothing to estimate. Check before you go."}
         {quest.source === "partner"
           ? " This card is demonstration partner inventory — no venue has signed anything."
           : null}
@@ -309,15 +325,21 @@ export function Deck({
       {/* The card changes under a screen reader with no other signal, because
           the two buttons persist across every card in the deck. */}
       <p aria-live="polite" className="sr-only">
-        Option {index + 1} of {deckSize}: {quest.title}. About {quest.priceLabel} each,{" "}
+        Option {index + 1} of {deckSize}: {quest.title}.{" "}
+        {priceKnown
+          ? `About ${quest.priceLabel} each, `
+          : "Cost not listed for this one, "}
         {quest.distanceKm} kilometres away.
       </p>
 
-      {error ? (
-        <p role="alert" className="text-[13px] leading-snug text-danger">
-          {error}
-        </p>
-      ) : null}
+      {/* Mounted before its text arrives, like every other announcement in
+          the room. `empty:-mb-5` takes back the flex gap an empty paragraph
+          would leave between the card and the buttons -- hiding it would take
+          it out of the accessibility tree and be no better than not rendering
+          it at all. */}
+      <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-5">
+        {error ?? ""}
+      </p>
 
       <div className="flex gap-3">
         <Plate variant="raised" center label="Nah" disabled={busy} onClick={() => void swipe("no")} />

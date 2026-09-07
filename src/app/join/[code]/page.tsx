@@ -89,20 +89,22 @@ export default function JoinPage({ params }: PageProps<"/join/[code]">) {
           No account needed. This is only so the room knows who swiped.
         </p>
 
-        {error ? (
-          <p role="alert" className="text-[13px] leading-snug text-danger">
-            {error}
-            {showWayOut ? (
-              <>
-                {" "}
-                <Link href="/start" className="underline underline-offset-4">
-                  Open your own room
-                </Link>{" "}
-                instead.
-              </>
-            ) : null}
-          </p>
-        ) : null}
+        {/* Mounted before its text arrives: a live region inserted into the
+            DOM at the moment it has something to say is frequently never
+            announced. `empty:-mb-3` takes back the flex gap an empty paragraph
+            would leave above the CTA. */}
+        <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-3">
+          {error ?? ""}
+          {error && showWayOut ? (
+            <>
+              {" "}
+              <Link href="/start" className="text-text underline underline-offset-4">
+                Open your own room
+              </Link>{" "}
+              instead.
+            </>
+          ) : null}
+        </p>
 
         <Plate
           variant="action"

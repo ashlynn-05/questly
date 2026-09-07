@@ -6,7 +6,7 @@ import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
-import { userMessage } from "@/lib/errors";
+import { errorCode, userMessage } from "@/lib/errors";
 import { useSessionKey } from "@/lib/session";
 import { Lobby } from "./Lobby";
 import { Deck } from "./Deck";
@@ -22,6 +22,19 @@ import { Booked } from "./Booked";
  * it is "I do not know you here", which the page below turns into a redirect.
  */
 export type RoomView = NonNullable<FunctionReturnType<typeof api.rooms.get>>;
+
+/**
+ * A failed deck build, carrying its code as well as its sentence.
+ *
+ * NO_CANDIDATES is not a fault: since the backend stopped inventing prices, a
+ * $0 room in a neighbourhood where Google prices everything honestly has
+ * nothing to show, and so does a 2km radius on a quiet Tuesday. That is an
+ * answer to the question the room asked, and it must not be painted in the
+ * same danger red as "the plan could not be written" -- nor left without the
+ * one thing that would actually change it, which is a room with different
+ * numbers in it.
+ */
+export type BuildFailure = { text: string; code: string | null };
 
 export default function RoomPage({ params }: PageProps<"/room/[code]">) {
   const { code } = use(params);
@@ -45,7 +58,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
    * flash and silence, and tapped again, spending Places and OpenAI quota on
    * the same failure. This shell stays mounted across all of it.
    */
-  const [buildError, setBuildError] = useState<string | null>(null);
+  const [buildError, setBuildError] = useState<BuildFailure | null>(null);
   const [retrying, setRetrying] = useState(false);
 
   /**
@@ -91,7 +104,10 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
     try {
       await build({ code, sessionKey });
     } catch (e) {
-      setBuildError(userMessage(e, "Could not build the deck. Please try again."));
+      setBuildError({
+        text: userMessage(e, "Could not build the deck. Please try again."),
+        code: errorCode(e),
+      });
     } finally {
       setRetrying(false);
     }
@@ -190,8 +206,13 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
 
           {/* Mounted with the screen and empty, so the sentence that arrives in
               it later is actually announced. */}
-          <p role="alert" className="max-w-[320px] text-center text-[13px] leading-snug text-danger">
-            {buildError ?? ""}
+          <p
+            role="alert"
+            className={`max-w-[320px] text-center text-[13px] leading-snug ${
+              buildError?.code === "NO_CANDIDATES" ? "text-dim" : "text-danger"
+            }`}
+          >
+            {buildError?.text ?? ""}
           </p>
         </section>
       ) : null}

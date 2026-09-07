@@ -144,9 +144,26 @@ export function Booked({
         </p>
       </div>
 
+      {/* Never a dead end -- and this is the screen the whole funnel exists to
+          reach, so it was the worst one to leave without a way onward. Until
+          now the only controls here left the app for Google Maps or wrote to
+          the clipboard: a host who wanted a second night edited the URL by
+          hand. A link, not a button, so it opens in a new tab if they want it
+          to and the room stays where it is. */}
+      <div className="flex flex-col gap-2 border-t border-hairline pt-6">
+        <h2 className="board text-[11px] text-accent">After this</h2>
+        <Plate
+          variant="raised"
+          href="/start"
+          label="Plan another night"
+          sub="This room stays exactly where it is — the link still works."
+        />
+      </div>
+
       <p className="text-[12px] leading-snug text-dim">
-        The costs above are estimates rather than quotes, and nothing here has been booked
-        with anybody.
+        Nothing on this screen has been booked with anybody: no table is held, no venue has
+        been contacted, and the reference above is ours, not a venue&rsquo;s. The costs are
+        estimates rather than quotes.
       </p>
     </section>
   );
