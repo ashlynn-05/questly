@@ -18,7 +18,7 @@
 
    LIGHT is the daytime case: planning Saturday on a tram at 11am. It runs on
    the pinned yellow palette, and the accent role SWAPS because apricot measures
-   1.8:1 on a light ground and cannot carry text there. Iris takes the job.
+   1.68:1 on a light ground and cannot carry text there. Iris takes the job.
 
    Every ratio below is measured against the ground it actually sits on.
    --------------------------------------------------------------------------- */
@@ -44,20 +44,30 @@
   --q-ink: #1a1640;
 
   /* Roles -- night. Use these, never the raw values. */
+
+  /* --ground is the page's ground, and two rules below PAINT WITH IT rather
+     than merely sitting on it: `.rail-end` masks the route line by drawing the
+     page colour over it, and `.node` fills its roundel with the page colour so
+     the line appears to pass behind. Both are only invisible while the element
+     really is on the page ground. Put a RailNode inside a raised card and the
+     mask becomes an iris stripe on a `--ground-raised` card and the roundel an
+     iris dot -- no error, no failed check, just wrong artwork. If the rail ever
+     needs to run on a raised surface, those two rules need a surface variable
+     passed in, not a different value here. */
   --ground: var(--q-iris);
   --ground-deep: var(--q-ink);
   --ground-raised: #453f95;
 
-  --text: #ffffff;              /* 10.2:1 on iris */
-  --text-dim: #b9b6e0;          /*  5.3:1 on iris -- tinted from the hue, never gray */
-  --accent: var(--q-apricot);   /*  5.7:1 on iris -- the only night colour that carries text */
+  --text: #ffffff;              /* 10.20:1 on iris */
+  --text-dim: #b9b6e0;          /*  5.26:1 on iris -- tinted from the hue, never gray */
+  --accent: var(--q-apricot);   /*  5.68:1 on iris -- the only night colour that carries text */
 
-  --action: var(--q-orange);    /* field only: orange TEXT on iris is 2.9:1 and fails */
-  --on-action: var(--q-ink);    /*  4.9:1 on orange, in both modes */
+  --action: var(--q-orange);    /* field only: orange TEXT on iris is 2.95:1 and fails */
+  --on-action: var(--q-ink);    /*  4.92:1 on orange, in both modes */
   --action-quiet: var(--q-orange-deep);
   /* The CTA's visual boundary, and the reason --action does not have to move.
      Orange fill against iris ground is 2.95:1, under SC 1.4.11's 3:1 for a
-     control's edge -- but --on-action is exactly 4.9:1 on that orange and has
+     control's edge -- but --on-action is exactly 4.92:1 on that orange and has
      no headroom, so the fill is fixed and the edge is what changes.
      White clears 3:1 on BOTH sides of the line it draws: 10.20:1 against the
      iris ground outside, 3.46:1 against the orange fill inside. Every
@@ -65,9 +75,9 @@
      fill), which is why this is not an orange. */
   --action-edge: #ffffff;
 
-  --rail: var(--q-periwinkle);  /*  2.8:1 on iris -- decorative line work ONLY */
+  --rail: var(--q-periwinkle);  /*  2.77:1 on iris -- decorative line work ONLY */
   --hairline: #524ca8;
-  --danger: #ff9d7a;            /*  6.0:1 on iris */
+  --danger: #ff9d7a;            /*  5.03:1 on iris */
 
   --focus: var(--q-apricot);    /* ring must clear 3:1 against the ground it lands on */
   --shadow: 0 18px 40px -12px rgba(10, 8, 30, 0.7);
@@ -86,12 +96,12 @@
     --ground-deep: var(--q-naples);
     --ground-raised: var(--q-jasmine);
 
-    --text: var(--q-ink);         /* 16.0:1 on cornsilk */
-    --text-dim: #5b5499;          /*  6.2:1 on cornsilk */
-    --accent: var(--q-iris);      /*  9.6:1 on cornsilk -- apricot is 1.8:1 here and is out */
+    --text: var(--q-ink);         /* 15.97:1 on cornsilk */
+    --text-dim: #5b5499;          /*  6.21:1 on cornsilk */
+    --accent: var(--q-iris);      /*  9.57:1 on cornsilk -- apricot is 1.68:1 here and is out */
 
-    --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
-    --on-action: var(--q-ink);    /*  4.9:1 on orange */
+    --action: var(--q-orange);    /*  3.25:1 boundary against cornsilk */
+    --on-action: var(--q-ink);    /*  4.92:1 on orange */
     --action-quiet: var(--q-jonquil);
     /* Same job, mirrored: ink is the colour that clears 3:1 on both sides of
        the line here -- 15.97:1 against the cornsilk ground, 4.92:1 against the
@@ -99,11 +109,11 @@
        orange is 2.45:1). */
     --action-edge: var(--q-ink);
 
-    --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
+    --rail: var(--q-periwinkle);  /*  3.46:1 -- clears non-text, still decorative only */
     --hairline: #e8d48a;
-    --danger: #a8320c;            /*  6.4:1 on cornsilk */
+    --danger: #a8320c;            /*  6.30:1 on cornsilk */
 
-    --focus: var(--q-iris);       /* apricot is 1.8:1 on cornsilk -- the ring would vanish */
+    --focus: var(--q-iris);       /* apricot is 1.68:1 on cornsilk -- the ring would vanish */
     --shadow: 0 18px 40px -14px rgba(90, 66, 10, 0.38);
   }
 }
@@ -115,12 +125,12 @@
   --ground-deep: var(--q-naples);
   --ground-raised: var(--q-jasmine);
 
-  --text: var(--q-ink);         /* 16.0:1 on cornsilk */
-  --text-dim: #5b5499;          /*  6.2:1 on cornsilk */
-  --accent: var(--q-iris);      /*  9.6:1 on cornsilk -- apricot is 1.8:1 here and is out */
+  --text: var(--q-ink);         /* 15.97:1 on cornsilk */
+  --text-dim: #5b5499;          /*  6.21:1 on cornsilk */
+  --accent: var(--q-iris);      /*  9.57:1 on cornsilk -- apricot is 1.68:1 here and is out */
 
-  --action: var(--q-orange);    /*  3.3:1 boundary against cornsilk */
-  --on-action: var(--q-ink);    /*  4.9:1 on orange */
+  --action: var(--q-orange);    /*  3.25:1 boundary against cornsilk */
+  --on-action: var(--q-ink);    /*  4.92:1 on orange */
   --action-quiet: var(--q-jonquil);
   /* Same job, mirrored: ink is the colour that clears 3:1 on both sides of the
      line here -- 15.97:1 against the cornsilk ground, 4.92:1 against the orange
@@ -128,11 +138,11 @@
      2.45:1). */
   --action-edge: var(--q-ink);
 
-  --rail: var(--q-periwinkle);  /*  3.5:1 -- clears non-text, still decorative only */
+  --rail: var(--q-periwinkle);  /*  3.46:1 -- clears non-text, still decorative only */
   --hairline: #e8d48a;
-  --danger: #a8320c;            /*  6.4:1 on cornsilk */
+  --danger: #a8320c;            /*  6.30:1 on cornsilk */
 
-  --focus: var(--q-iris);       /* apricot is 1.8:1 on cornsilk -- the ring would vanish */
+  --focus: var(--q-iris);       /* apricot is 1.68:1 on cornsilk -- the ring would vanish */
   --shadow: 0 18px 40px -14px rgba(90, 66, 10, 0.38);
 }
 
@@ -234,6 +244,8 @@ body {
 /* The line ends on the last stop, not at the bottom of whatever that stop has
    grown to hold. 5px wide over a 3px rail, and 1px to its left, so a subpixel
    layout cannot leave a sliver of orange showing. */
+/* Masks the tail of the route line by painting the page ground over it. See the
+   --ground note above: this is only a mask on the page ground. */
 .rail-end {
   position: absolute;
   left: calc(var(--rail-x) - 1px);
@@ -242,6 +254,8 @@ body {
   background: var(--ground);
 }
 
+/* The roundel. Its fill is the page ground so the line reads as passing behind
+   it -- same assumption as .rail-end, same failure on a raised surface. */
 .node {
   position: absolute;
   left: calc(var(--rail-x) + 1.5px);

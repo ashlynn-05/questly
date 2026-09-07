@@ -37,7 +37,7 @@ export function Chip({
         selected
           ? "border-accent bg-accent text-ground"
           : // border-hairline measures 1.44:1 here -- effectively invisible.
-            // border-dim reuses --text-dim (5.3:1 night / 6.2:1 day), the
+            // border-dim reuses --text-dim (5.26:1 night / 6.21:1 day), the
             // same token this file already trusts for unselected text.
             "border-dim bg-transparent text-dim hover:text-text",
       ].join(" ")}

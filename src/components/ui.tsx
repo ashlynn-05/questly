@@ -8,7 +8,8 @@ import type { ComponentProps } from "react";
  * neutral greys on a page whose body is `--ground-deep`. In dark mode, which is
  * the default, `text-neutral-900` (#171717) on `#1a1640` measured **1.05:1**:
  * every social sign-in button was invisible. `text-neutral-600` was 2.18:1, and
- * `border-neutral-300` was 1.09:1 against the day ground. All three are gone.
+ * `border-neutral-300` was 1.09:1 against the same page's light-mode body
+ * (`--ground-deep`, #f9dc5c). All three are gone.
  *
  * Everything here is measured against `--ground`, which is what the two auth
  * pages now paint themselves. `--text` is 10.20:1 on it in dark and 15.97:1 in
