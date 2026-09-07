@@ -428,6 +428,20 @@ export const replaceStop = mutation({
  *
  * Locking is unanimous by construction: anyone can lock, anyone can unlock. It
  * is not a permission system, and it must never become one.
+ *
+ * ISSUE #11 ASKED FOR THAT TO CHANGE, AND THE ANSWER WAS NO. The request was
+ * host-only locking, or a room vote to lock. The complaint underneath it was
+ * real and is worth restating: one person quietly locking a stop everyone else
+ * wanted to change is a way to win an argument without having it.
+ *
+ * The operative word was QUIETLY. A lock recorded nothing but a boolean, so the
+ * screen said "Locked" and never said by whom -- the defect was anonymity, not
+ * authority. Host-only locking does not remove it; it hands the same silent
+ * lock to one person and calls it settled. So the stop now records `lockedBy`,
+ * the lock says whose it is, and anyone can still undo it in one tap.
+ *
+ * The full ruling, and what host-only and vote-to-lock would each have cost, is
+ * written up in `docs/questly-handover.md` section 15.
  */
 export const setLocked = mutation({
   args: {
@@ -439,7 +453,9 @@ export const setLocked = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const room = await roomByCode(ctx, args.code);
-    await requireMember(ctx, room._id, args.sessionKey);
+    // The member row, not just the check: `lockedBy` is written from its `name`
+    // below. Still no host check -- see the ruling above.
+    const member = await requireMember(ctx, room._id, args.sessionKey);
     // Locking AND unlocking are both refused once the night is booked -- see
     // refuseIfBooked for why releasing a lock is the same problem as a swap.
     refuseIfBooked(room);
@@ -458,7 +474,19 @@ export const setLocked = mutation({
     }
 
     await ctx.db.patch(plan._id, {
-      stops: plan.stops.map((s) => (s.id === args.stopId ? { ...s, locked: args.locked } : s)),
+      stops: plan.stops.map((s) => {
+        if (s.id !== args.stopId) return s;
+        // The name comes off the member row `requireMember` already returned,
+        // never from an argument. A client-supplied name here would let anyone
+        // sign someone else's name to a lock, which is worse than the silence
+        // this field exists to end.
+        //
+        // Cleared on unlock rather than left behind: a stale "locked by Tam" on
+        // an unlocked stop is a lie, and it is the sort that survives because
+        // nothing renders it.
+        const { lockedBy: _was, ...rest } = s;
+        return args.locked ? { ...rest, locked: true, lockedBy: member.name } : { ...rest, locked: false };
+      }),
     });
     return null;
   },

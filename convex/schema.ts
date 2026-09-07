@@ -30,6 +30,19 @@ export const stopValidator = v.object({
     v.literal("partner"),
   ),
   locked: v.boolean(),
+  /**
+   * The name of whoever locked this stop, cleared when it is unlocked.
+   *
+   * OPTIONAL, and it must stay optional: every plan document stored before this
+   * field existed has no such key, and a required field would fail validation
+   * for all of them.
+   *
+   * A name, not a member id. A lock is a social signal shown on a screen where
+   * names are how people are identified, and a member who leaves takes their
+   * row with them -- an id would go dangling and the lock would stop saying
+   * who left it, which is the whole point of recording it.
+   */
+  lockedBy: v.optional(v.string()),
 });
 
 // The `events` and `snippets` tables were Create-Next-App scaffolding and are

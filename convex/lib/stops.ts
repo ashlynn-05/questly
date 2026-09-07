@@ -18,6 +18,7 @@ export type Stop = {
   note: string;
   source: "llm" | "places" | "manual" | "partner";
   locked: boolean;
+  lockedBy?: string;
 };
 
 /** Minutes allowed between stops. Generous on purpose -- nobody is sprinting. */
