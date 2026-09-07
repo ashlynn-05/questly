@@ -6,6 +6,8 @@ import { api } from "@convex/_generated/api";
 import type { Stop } from "@convex/lib/stops";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
+import { useCountdown } from "@/components/questly/useCountdown";
+import { clockFace } from "@/lib/countdown";
 import { errorCode, userMessage } from "@/lib/errors";
 import type { RoomView } from "./page";
 
@@ -49,6 +51,7 @@ export function Plan({
   const suggestStop = useAction(api.plans.suggestStop);
   const searchStop = useAction(api.plans.searchStop);
   const confirm = useMutation(api.bookings.confirm);
+  const retract = useMutation(api.bookings.retract);
   const retryPlan = useMutation(api.plans.retry);
 
   const [sheetFor, setSheetFor] = useState<string | null>(null);
@@ -107,6 +110,37 @@ export function Plan({
       node.querySelector("button")?.focus();
     }
   }, []);
+
+  /**
+   * The house rule that decides what the button at the bottom of this screen
+   * actually does, and the vote it runs when that rule is a vote.
+   *
+   * Read from the room, not assumed: `bookings.confirm` enforces the same rule
+   * and this screen must never offer a control the server will refuse. Under
+   * "host" a guest is told whose tap it is instead of being handed a button
+   * that throws.
+   *
+   * The countdown hook is called unconditionally with a null deadline when
+   * there is nothing running, because a hook behind an `if` is a different
+   * hook order on the render after the vote opens.
+   */
+  const rule = view.room.finalizeRule;
+  const voting = rule === "majority" || rule === "all";
+  const secondsToVote = useCountdown(voting ? view.finalize.deadlineAt : null);
+  /**
+   * A window that has run out counts for nothing, and this screen is where
+   * that becomes visible first.
+   *
+   * `rooms.get` deliberately hands over the deadline rather than deciding the
+   * question itself -- a query does not re-run because a second passed, so a
+   * server-side "lapsed" would be whatever was true at the last write. The
+   * clock here is the same clock the countdown uses, and `bookings.confirm`
+   * reaches the same answer the moment anybody taps again.
+   */
+  const voteLapsed = secondsToVote === 0;
+  const votes = voteLapsed ? 0 : view.finalize.votes;
+  const youVoted = !voteLapsed && view.finalize.youVoted;
+  const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
 
   async function loadOptions(stopId: string, which: SheetTab, text = "") {
     if (!plan) return;
@@ -199,12 +233,38 @@ export function Plan({
     setBooking(true);
     setError(null);
     try {
-      await confirm({ code, sessionKey });
-      // No setBooking(false): the room's status becomes "booked" in the same
-      // breath and this screen is replaced.
+      const settled = await confirm({ code, sessionKey });
+      // Under a vote rule the ordinary outcome is that this tap was a yes and
+      // the room is still short, which replaces nothing: the screen stays, so
+      // the flag has to come back down and the confirmation has to close.
+      // When it DID book, none of that runs -- the room's status becomes
+      // "booked" in the same breath and this screen is replaced.
+      if (!settled.booked) {
+        restoreBook.current = true;
+        setConfirmBook(false);
+        setBooking(false);
+      }
     } catch (e) {
       setError(userMessage(e, "Could not book that. Please try again."));
       setBooking(false);
+    }
+  }
+
+  /**
+   * Take your yes back.
+   *
+   * No confirmation step, and that is not an inconsistency: the two-step
+   * ceremony below exists because booking cannot be undone, and this is the
+   * undo. Making it harder to leave a vote than to join one is how a group
+   * ends up booked by people who changed their minds.
+   */
+  async function takeItBack() {
+    if (booking) return;
+    setError(null);
+    try {
+      await retract({ code, sessionKey });
+    } catch (e) {
+      setError(userMessage(e, "Could not take that back. Please try again."));
     }
   }
 
@@ -630,13 +690,61 @@ export function Plan({
           lock, swap, propose and vote paths for everyone, permanently. The
           ceremony has to be at least as heavy as the smaller decision's. */}
       <div className="flex flex-col gap-2">
-        {confirmBook ? (
+        {/* The tally, announced. Every phone in the room is subscribed to
+            `rooms.get`, so somebody else saying they are in has to reach this
+            screen as more than a number quietly changing in the corner. The
+            countdown is NOT in the live region and is aria-hidden: a value
+            that changes every second would be read out every second. */}
+        {voting ? (
+          <div className="flex flex-col gap-1 border-t border-hairline pt-4">
+            <p aria-live="polite" className="text-[13px] leading-snug text-dim">
+              {voteLapsed
+                ? "The vote ran out, so it starts again from the next yes."
+                : `${votes} of ${view.finalize.needed} in${
+                    view.finalize.voters.length > 0 && !voteLapsed
+                      ? `: ${view.finalize.voters.join(", ")}`
+                      : ""
+                  }.`}
+            </p>
+            {!voteLapsed && secondsToVote !== null ? (
+              <p aria-hidden="true" className="num text-[13px] text-dim">
+                {clockFace(secondsToVote)} left
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* A guest is told whose tap it is rather than handed a button that
+            `bookings.confirm` is going to refuse. */}
+        {rule === "host" && !view.you.isHost ? (
+          <p className="text-[13px] leading-snug text-dim">
+            {hostName} settles this one. Tell them when you are happy with it.
+          </p>
+        ) : youVoted ? (
+          <>
+            <p className="text-[13px] leading-snug text-dim">
+              You are in. {rule === "all" ? "Waiting on the rest." : "Waiting on the others."}
+            </p>
+            {/* One step, deliberately. The ceremony below exists because
+                booking cannot be undone; this IS the undo. */}
+            <Plate
+              variant="ghost"
+              center
+              label="Take my yes back"
+              onClick={() => void takeItBack()}
+            />
+          </>
+        ) : confirmBook ? (
           <div ref={focusFirstButton} className="flex flex-col gap-2">
             <Plate
               variant="action"
               center
-              label={booking ? "Booking…" : "Yes, book it"}
-              sub="Nobody can swap a stop after this."
+              label={booking ? (voting ? "Saying yes…" : "Booking…") : voting ? "Yes, I am in" : "Yes, book it"}
+              sub={
+                voting
+                  ? "It books the moment the room gets there. Nobody can swap a stop after that."
+                  : "Nobody can swap a stop after this."
+              }
               onClick={() => void bookIt()}
             />
             <Plate
@@ -654,8 +762,14 @@ export function Plan({
             <Plate
               variant="action"
               center
-              label="Book it"
-              sub="Settles the plan for everyone — no more swaps after this."
+              label={voting ? "I am in" : "Book it"}
+              sub={
+                voting
+                  ? rule === "all"
+                    ? "It books when everyone is in."
+                    : "It books when most of you are in."
+                  : "Settles the plan for everyone — no more swaps after this."
+              }
               onClick={() => setConfirmBook(true)}
             />
           </div>

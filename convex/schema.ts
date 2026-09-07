@@ -164,6 +164,32 @@ export default defineSchema({
     // labelled everywhere they are shown: a fabricated stranger presented as a
     // real one would breach the product's honesty constraints.
     demo: v.optional(v.boolean()),
+    /**
+     * The two house rules the host sets, and the one piece of state the second
+     * of them needs. All optional, and all of them must stay optional: every
+     * room opened before these existed has none of these keys.
+     *
+     * `swipeSeconds` is how long one card stays up before it passes itself.
+     * Absent or 0 is no timer, which is what every existing room has and what a
+     * new room starts with.
+     *
+     * A plain number rather than a union of the offered values, deliberately:
+     * the allow-list belongs at the mutation boundary (`rooms.setRules`), where
+     * refusing a bad value can produce a sentence. Putting it here as well
+     * would mean retiring an option later breaks every room that chose it.
+     */
+    swipeSeconds: v.optional(v.number()),
+    // Who has to say yes before the night is booked, and how long they get.
+    // See `convex/lib/rules.ts` for the four values and why the default is the
+    // permissive one.
+    finalizeRule: v.optional(
+      v.union(v.literal("anyone"), v.literal("host"), v.literal("majority"), v.literal("all")),
+    ),
+    finalizeSeconds: v.optional(v.number()),
+    // When the open vote started, and the whole of the window. Cleared when the
+    // vote passes, when it is retracted to nothing, when the roster moves, and
+    // when the host changes the rule -- so its presence IS "a vote is open".
+    finalizeStartedAt: v.optional(v.number()),
   })
     .index("by_code", ["code"])
     .index("by_visibility_status", ["visibility", "status"])
@@ -267,6 +293,26 @@ export default defineSchema({
     .index("by_proposal", ["proposalId"])
     // A departing member takes their votes with them; finding them must not be
     // a full-table scan.
+    .index("by_member", ["memberId"]),
+
+  /**
+   * One row per member who is in favour of booking the night as it stands.
+   *
+   * Yes only, and no `vote` column: retracting is deleting the row. A stop swap
+   * is a choice between two things, so `proposalVotes` has to record WHICH way
+   * you went; settling the night is a choice between doing it and not doing it
+   * yet, and "not yet" is the absence of a yes. A no column here would be a
+   * veto, which is a different product and not one the host was offered.
+   */
+  finalizeVotes: defineTable({
+    roomId: v.id("rooms"),
+    memberId: v.id("members"),
+    at: v.number(),
+  })
+    .index("by_room", ["roomId"])
+    .index("by_room_member", ["roomId", "memberId"])
+    // A departing member takes their vote with them, exactly as they take their
+    // proposal votes -- and finding it must not be a full-table scan.
     .index("by_member", ["memberId"]),
 
   bookings: defineTable({

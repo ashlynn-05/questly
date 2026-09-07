@@ -25,6 +25,7 @@ import type * as lib_planPrompt from "../lib/planPrompt.js";
 import type * as lib_proposals from "../lib/proposals.js";
 import type * as lib_quiz from "../lib/quiz.js";
 import type * as lib_roster from "../lib/roster.js";
+import type * as lib_rules from "../lib/rules.js";
 import type * as lib_scoring from "../lib/scoring.js";
 import type * as lib_stops from "../lib/stops.js";
 import type * as lib_swap from "../lib/swap.js";
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   "lib/proposals": typeof lib_proposals;
   "lib/quiz": typeof lib_quiz;
   "lib/roster": typeof lib_roster;
+  "lib/rules": typeof lib_rules;
   "lib/scoring": typeof lib_scoring;
   "lib/stops": typeof lib_stops;
   "lib/swap": typeof lib_swap;

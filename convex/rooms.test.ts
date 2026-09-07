@@ -716,3 +716,172 @@ test("rooms.get reports which way you voted, not merely that you did", async () 
   const asSam = await t.query(api.rooms.get, { code, sessionKey: sam });
   expect(asSam!.proposals[0].yourVote).toBeNull();
 });
+
+// --- setRules: the host's two house rules
+
+/** A room with a host and one guest, and both of their keys. */
+async function roomWithGuest(t: TestConvex<typeof schema>) {
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asUser.mutation(api.rooms.create, CREATE);
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
+  return { code, host: sessionKey, guest: guest.sessionKey };
+}
+
+test("a room starts with no card timer and the permissive settle rule", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asUser.mutation(api.rooms.create, CREATE);
+
+  const view = await asUser.query(api.rooms.get, { code, sessionKey });
+  // Absent columns, projected as the values every screen can actually draw.
+  expect(view!.room.swipeSeconds).toBe(0);
+  expect(view!.room.finalizeRule).toBe("anyone");
+  expect(view!.room.finalizeSeconds).toBe(0);
+  expect(view!.finalize).toMatchObject({ votes: 0, needed: 1, youVoted: false, deadlineAt: null });
+});
+
+test("the host sets a card timer and every phone in the room sees it", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, swipeSeconds: 30 });
+
+  // Read back through the GUEST's key: the timer binds the people it is not set
+  // by, so it has to reach them.
+  const view = await t.query(api.rooms.get, { code, sessionKey: guest });
+  expect(view!.room.swipeSeconds).toBe(30);
+});
+
+test("a guest cannot set the rules, and nothing moves when they try", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, swipeSeconds: 30 });
+
+  await expectUserError(
+    t.mutation(api.rooms.setRules, { code, sessionKey: guest, swipeSeconds: 120 }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room.swipeSeconds).toBe(30);
+});
+
+test("a stranger is told they are a stranger, not who the host is", async () => {
+  const t = convexTest(schema, modules);
+  const { code } = await roomWithGuest(t);
+  await expectUserError(
+    t.mutation(api.rooms.setRules, { code, sessionKey: "k-nobody", swipeSeconds: 30 }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+});
+
+test("sending one rule leaves the other two exactly as they were", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, {
+    code,
+    sessionKey: host,
+    finalizeRule: "majority",
+    finalizeSeconds: 300,
+  });
+  // The timer moves on its own. If `setRules` wrote the whole set every time,
+  // this call would carry whatever this phone last rendered for the other two.
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, swipeSeconds: 60 });
+
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room).toMatchObject({
+    swipeSeconds: 60,
+    finalizeRule: "majority",
+    finalizeSeconds: 300,
+  });
+});
+
+test("changing who settles the night throws away the votes already cast", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+
+  // A vote under the old rule. Seeded directly: `bookings.confirm` needs a
+  // matched room with a plan, and what is under test here is the clearing.
+  const roomId = await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", code))
+      .unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .first();
+    await ctx.db.insert("finalizeVotes", {
+      roomId: room!._id,
+      memberId: member!._id,
+      at: Date.now(),
+    });
+    await ctx.db.patch(room!._id, { finalizeStartedAt: Date.now() });
+    return room!._id;
+  });
+
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "majority" });
+
+  const after = await t.run(async (ctx) => ({
+    votes: await ctx.db
+      .query("finalizeVotes")
+      .withIndex("by_room", (q) => q.eq("roomId", roomId))
+      .collect(),
+    room: await ctx.db.get(roomId),
+  }));
+  // A yes to "everyone has to agree" is not a yes to "most of you do", so
+  // moving the threshold cannot carry the tally with it.
+  expect(after.votes).toHaveLength(0);
+  expect(after.room!.finalizeStartedAt).toBeUndefined();
+});
+
+test("setting the same rule again leaves an open vote alone", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+
+  const roomId = await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", code))
+      .unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .first();
+    await ctx.db.insert("finalizeVotes", { roomId: room!._id, memberId: member!._id, at: 1 });
+    return room!._id;
+  });
+
+  // Only a rule that MOVED clears the tally. A host nudging the card timer, or
+  // re-picking the value already set, must not quietly reset everybody's vote.
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, swipeSeconds: 15 });
+
+  const votes = await t.run(async (ctx) =>
+    ctx.db
+      .query("finalizeVotes")
+      .withIndex("by_room", (q) => q.eq("roomId", roomId))
+      .collect(),
+  );
+  expect(votes).toHaveLength(1);
+});
+
+test("a booked night's rules are frozen with the rest of it", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", code))
+      .unique();
+    await ctx.db.patch(room!._id, { status: "booked" });
+  });
+
+  await expectUserError(
+    t.mutation(api.rooms.setRules, { code, sessionKey: host, swipeSeconds: 30 }),
+    "ROOM_BOOKED",
+    /booked/i,
+  );
+});
