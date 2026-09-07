@@ -28,7 +28,7 @@ export default function SignUpPage() {
       setError(error.message ?? "Could not create the account");
       return;
     }
-    router.push("/dashboard");
+    router.push("/start");
   }
 
   return (
@@ -53,7 +53,7 @@ export default function SignUpPage() {
         </Button>
       </form>
 
-      <SocialButtons redirectTo="/dashboard" />
+      <SocialButtons redirectTo="/start" />
 
       <p className="text-sm text-neutral-600">
         Already have an account?{" "}

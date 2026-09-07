@@ -9,7 +9,7 @@ import { SocialButtons } from "@/components/SocialButtons";
 
 function SignInForm() {
   const router = useRouter();
-  const redirectTo = useSearchParams().get("redirect") ?? "/dashboard";
+  const redirectTo = useSearchParams().get("redirect") ?? "/start";
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 

@@ -9,11 +9,9 @@
  */
 
 import type * as ai_embeddings from "../ai/embeddings.js";
-import type * as ai_store from "../ai/store.js";
 import type * as auth from "../auth.js";
 import type * as bookings from "../bookings.js";
 import type * as deck from "../deck.js";
-import type * as events from "../events.js";
 import type * as http from "../http.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -42,11 +40,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "ai/embeddings": typeof ai_embeddings;
-  "ai/store": typeof ai_store;
   auth: typeof auth;
   bookings: typeof bookings;
   deck: typeof deck;
-  events: typeof events;
   http: typeof http;
   "lib/access": typeof lib_access;
   "lib/errors": typeof lib_errors;
