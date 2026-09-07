@@ -6,10 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button, ErrorText, Input } from "@/components/ui";
 import { SocialButtons } from "@/components/SocialButtons";
+import { ThemeToggle } from "@/components/questly/theme";
 
 function SignInForm() {
   const router = useRouter();
-  const redirectTo = useSearchParams().get("redirect") ?? "/dashboard";
+  const redirectTo = useSearchParams().get("redirect") ?? "/start";
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -34,23 +35,33 @@ function SignInForm() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 p-6">
-      <h1 className="text-2xl font-semibold">Sign in</h1>
+    <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-6 bg-ground px-5 py-10">
+      {/* The only mode control a visitor can reach before they have an
+          account. Every screen in the product now carries one. */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="board text-[11px] text-accent">Questly</p>
+        <ThemeToggle />
+      </div>
+
+      <h1 className="display text-[38px] text-text">Sign in</h1>
 
       <form action={onSubmit} className="flex flex-col gap-3">
         <Input name="identifier" placeholder="Username or email" required autoComplete="username" />
         <Input name="password" type="password" placeholder="Password" required autoComplete="current-password" />
         <ErrorText>{error}</ErrorText>
         <Button type="submit" disabled={pending}>
-          {pending ? "Signing in..." : "Sign in"}
+          {pending ? "Signing in…" : "Sign in"}
         </Button>
       </form>
 
       <SocialButtons redirectTo={redirectTo} />
 
-      <p className="text-sm text-neutral-600">
+      <p className="text-[13px] text-dim">
         No account?{" "}
-        <Link href="/sign-up" className="underline">
+        <Link
+          href={`/sign-up?redirect=${encodeURIComponent(redirectTo)}`}
+          className="text-text underline underline-offset-4"
+        >
           Sign up
         </Link>
       </p>

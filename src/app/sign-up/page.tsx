@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button, ErrorText, Input } from "@/components/ui";
 import { SocialButtons } from "@/components/SocialButtons";
+import { ThemeToggle } from "@/components/questly/theme";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  // The same `?redirect=` /sign-in honours, for the same reason: somebody who
+  // hits the account wall halfway through the funnel and creates an account
+  // instead of signing in must land back where they were, not at the start.
+  const redirectTo = useSearchParams().get("redirect") ?? "/start";
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -28,12 +33,17 @@ export default function SignUpPage() {
       setError(error.message ?? "Could not create the account");
       return;
     }
-    router.push("/dashboard");
+    router.push(redirectTo);
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 p-6">
-      <h1 className="text-2xl font-semibold">Create an account</h1>
+    <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-6 bg-ground px-5 py-10">
+      <div className="flex items-start justify-between gap-3">
+        <p className="board text-[11px] text-accent">Questly</p>
+        <ThemeToggle />
+      </div>
+
+      <h1 className="display text-[38px] text-text">Create an account</h1>
 
       <form action={onSubmit} className="flex flex-col gap-3">
         <Input name="name" placeholder="Display name" required autoComplete="name" />
@@ -49,18 +59,32 @@ export default function SignUpPage() {
         />
         <ErrorText>{error}</ErrorText>
         <Button type="submit" disabled={pending}>
-          {pending ? "Creating..." : "Sign up"}
+          {pending ? "Creating…" : "Sign up"}
         </Button>
       </form>
 
-      <SocialButtons redirectTo="/dashboard" />
+      <SocialButtons redirectTo={redirectTo} />
 
-      <p className="text-sm text-neutral-600">
+      <p className="text-[13px] text-dim">
         Already have an account?{" "}
-        <Link href="/sign-in" className="underline">
+        <Link
+          href={`/sign-in?redirect=${encodeURIComponent(redirectTo)}`}
+          className="text-text underline underline-offset-4"
+        >
           Sign in
         </Link>
       </p>
     </main>
+  );
+}
+
+// `useSearchParams` client-side renders the tree up to the nearest Suspense
+// boundary, so it gets one of its own rather than taking the whole route with
+// it. Same shape as /sign-in.
+export default function SignUpPage() {
+  return (
+    <Suspense>
+      <SignUpForm />
+    </Suspense>
   );
 }

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-07T00:00:00Z",
+  "title": "Design System: Questly",
+  "extensions": {
+    "colorMeta": {
+      "ground-night": { "role": "neutral", "displayName": "Iris", "canonical": "#3b3686" },
+      "ground-day": { "role": "neutral", "displayName": "Cornsilk", "canonical": "#fdf8e1" },
+      "accent-night": { "role": "secondary", "displayName": "Apricot", "canonical": "#edba40" },
+      "accent-day": { "role": "secondary", "displayName": "Iris (swapped)", "canonical": "#3b3686" },
+      "action": { "role": "primary", "displayName": "Pure Orange", "canonical": "#e0652b" },
+      "rail": { "role": "neutral", "displayName": "Periwinkle", "canonical": "#767ae6" },
+      "danger-night": { "role": "neutral", "displayName": "Danger (night)", "canonical": "#ff9d7a" },
+      "danger-day": { "role": "neutral", "displayName": "Danger (day)", "canonical": "#a8320c" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Venue names, screen titles, authored headlines." },
+      "board": { "displayName": "Board", "purpose": "Indicator-board labels: eyebrows, stop kind, status lines, button labels." },
+      "num": { "displayName": "Num", "purpose": "Every price, time, distance, headcount, reference/join code." },
+      "body": { "displayName": "Body", "purpose": "Descriptive copy and blurbs." }
+    },
+    "shadows": [
+      { "name": "shadow", "value": "0 18px 40px -12px rgba(10,8,30,0.7) (night) / 0 18px 40px -14px rgba(90,66,10,0.38) (day)", "purpose": "Ambient elevation on phone-frame chrome and raised surfaces; no hard offsets." }
+    ],
+    "motion": [
+      { "name": "board-flip", "value": "620ms cubic-bezier(0.16,1,0.3,1), rotateX 0→-88→88→0", "purpose": "Indicator-board flap flip on match/state change; reduces to 1ms under prefers-reduced-motion without removing the live-region announcement." },
+      { "name": "rail-draw", "value": "900ms cubic-bezier(0.16,1,0.3,1), clip-path inset draw-on", "purpose": "The route line drawing in on the match screen." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Plate — Action",
+      "kind": "button",
+      "refersTo": "plate-action",
+      "description": "Primary CTA field: orange fill, ink text, white/ink edge for AA boundary contrast.",
+      "html": "<button class=\"ds-plate ds-plate-action\">Open the room</button>",
+      "css": ".ds-plate { display:flex; min-height:44px; width:100%; align-items:center; gap:12px; border-radius:6px; padding:12px 16px; font-family: Archivo, ui-sans-serif, system-ui, sans-serif; font-variation-settings: 'wdth' 112, 'wght' 600; letter-spacing:0.14em; text-transform:uppercase; font-size:13px; transition: background-color 150ms, transform 150ms; } .ds-plate-action { background:#e0652b; color:#1a1640; border:1px solid #ffffff; } .ds-plate-action:hover { transform: translateY(-1px); } .ds-plate-action:focus-visible { outline: 3px solid #edba40; outline-offset: 3px; } .ds-plate-action:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Plate — Raised",
+      "kind": "button",
+      "refersTo": "plate-raised",
+      "description": "Secondary row-style control on a raised ground surface.",
+      "html": "<button class=\"ds-plate ds-plate-raised\">Send to the group chat</button>",
+      "css": ".ds-plate-raised { background:#453f95; color:#ffffff; border:none; border-radius:6px; min-height:44px; padding:12px 16px; font-family: Archivo, ui-sans-serif, system-ui, sans-serif; font-variation-settings: 'wdth' 112, 'wght' 600; letter-spacing:0.14em; text-transform:uppercase; font-size:13px; } .ds-plate-raised:focus-visible { outline: 3px solid #edba40; outline-offset: 3px; }"
+    },
+    {
+      "name": "Chip — Constraint Input",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "Tabular-figure constraint value; selection shown by fill, never colour alone.",
+      "html": "<button class=\"ds-chip ds-chip-selected\" aria-pressed=\"true\">$20</button>",
+      "css": ".ds-chip { display:flex; min-height:44px; min-width:44px; align-items:center; justify-content:center; border-radius:5px; border:1px solid; padding:8px 12px; font-variant-numeric: tabular-nums; font-family: Archivo, ui-sans-serif, system-ui, sans-serif; font-variation-settings:'wdth' 112,'wght' 700; letter-spacing:-0.02em; font-size:14px; transition: color 150ms, background-color 150ms; } .ds-chip-selected { border-color:#edba40; background:#edba40; color:#3b3686; } .ds-chip:not(.ds-chip-selected) { border-color:#b9b6e0; background:transparent; color:#b9b6e0; } .ds-chip:not(.ds-chip-selected):hover { color:#ffffff; } .ds-chip:focus-visible { outline: 3px solid #edba40; outline-offset: 3px; }"
+    },
+    {
+      "name": "Rail + RailNode",
+      "kind": "custom",
+      "description": "The route-line spine: a 3px vertical line with roundel stops (hollow/filled/ringed for open/locked/live). Decorative and aria-hidden; meaning is carried by the accompanying text, not the line alone.",
+      "html": "<div class=\"ds-rail-wrap\"><span class=\"ds-rail\" aria-hidden=\"true\"></span><span class=\"ds-node ds-node-locked\" aria-hidden=\"true\" style=\"top:6px\"></span></div>",
+      "css": ".ds-rail-wrap { position:relative; height:120px; } .ds-rail { position:absolute; left:26px; top:0; bottom:0; width:3px; background:#e0652b; border-radius:2px; } .ds-node { position:absolute; left:27.5px; width:13px; height:13px; translate:-50% 0; border-radius:50%; border:3px solid #e0652b; background:#3b3686; box-sizing:content-box; } .ds-node-locked { background:#e0652b; }"
+    },
+    {
+      "name": "MapTile",
+      "kind": "custom",
+      "description": "Drawn SVG wayfinding placeholder standing in for unguaranteed Google Places photography.",
+      "html": "<svg viewBox=\"0 0 320 190\" role=\"img\" aria-label=\"Map of the area around this venue\" class=\"ds-maptile\"><rect width=\"320\" height=\"190\" fill=\"#453f95\"/><circle cx=\"148\" cy=\"104\" r=\"11\" fill=\"#e0652b\"/><circle cx=\"148\" cy=\"104\" r=\"4\" fill=\"#3b3686\"/></svg>",
+      "css": ".ds-maptile { width:100%; height:172px; display:block; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Network",
+    "overview": "Questly is Melbourne transit wayfinding applied to a night out: an orange route line runs down every list-shaped screen, roundel stops mark each item on it, and figures live on indicator-board plates that flip rather than fade. The system is dark-first by construction: `:root` carries the night palette as the base definition, and the day palette is layered on top under prefers-color-scheme and a data-theme override. Accessibility is structural: WCAG 2.2 AA governs every colour pairing, `--on-action` sits at exactly 4.9:1 on `--action` with no headroom, and a dedicated `--action-edge` token exists purely to satisfy the 3:1 non-text boundary requirement.",
+    "keyCharacteristics": [
+      "Dark-first tokens; day is the override, not the base",
+      "A vertical route line with roundel stops is the spine of list screens, not a grid",
+      "One variable font (Archivo) doing three jobs via axis + case, not three font families",
+      "Every quantity renders as a tabular figure — price, time, headcount, distance",
+      "Selection and boundary are never carried by colour alone"
+    ],
+    "rules": [
+      { "name": "The Accent Swaps, the Meaning Doesn't Rule", "body": "--accent changes raw value by mode (apricot night, iris day) because the night colour fails contrast in daylight; the role always means 'this number/state matters'.", "section": "colors" },
+      { "name": "The Fill-Only Orange Rule", "body": "--action and --action-quiet are field colours; they never render as text colour in either mode.", "section": "colors" },
+      { "name": "The Edge Carries the Boundary Rule", "body": "--action-edge exists solely to give the CTA a 3:1 boundary since the orange fill alone measures 2.95–3.3:1 and --action cannot move.", "section": "colors" },
+      { "name": "The Board-Is-Not-a-Kicker Rule", "body": "The .board uppercase-label treatment is the world's indicator-board signage, used consistently for every short status/eyebrow/label string; it is the only small-caps label device in the system.", "section": "typography" }
+    ],
+    "dos": [
+      "Do treat :root as the dark/night definition and the light-mode blocks as the override.",
+      "Do use .board/.display/.num for their established jobs rather than arbitrary weight/tracking combinations.",
+      "Do render every price, time, distance, headcount, and reference/join code with .num tabular figures.",
+      "Do give every interactive control a 44x44px minimum target and a visible focus ring.",
+      "Do encode selection with fill and an ARIA state, never colour alone."
+    ],
+    "donts": [
+      "Don't put opacity on text sitting over --action or --action-quiet.",
+      "Don't use --action or any orange-family colour as text/foreground ink in either mode.",
+      "Don't let --rail/periwinkle carry meaning by itself.",
+      "Don't use emoji or unicode glyphs as icons; use the drawn 24-box stroke set.",
+      "Don't lay out a list-like screen as a card grid."
+    ]
+  }
+}

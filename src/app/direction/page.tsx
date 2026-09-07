@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Phone, Node, MapTile } from "@/components/questly/frame";
+import { Phone, MapTile } from "@/components/questly/frame";
 import { People, Coin, Clock, Pin, Check, Cross, Lock, Swap, Hand } from "@/components/questly/icons";
 import { ThemeToggle } from "@/components/questly/theme";
+import { Plate } from "@/components/questly/Plate";
+import { Rail, RailNode } from "@/components/questly/Rail";
 
 /* Demonstration content. Public places are named as themselves; anything
    badged as a partner is invented and labelled as such on the page. */
@@ -86,42 +88,42 @@ const ROLES = [
     name: "Ground",
     night: "#3b3686",
     day: "#fdf8e1",
-    ratio: "10.2 / 16.0",
+    ratio: "10.20 / 15.97",
     use: "The surface, drenched. Iris after dark, cornsilk by day.",
   },
   {
     name: "Text",
     night: "#ffffff",
     day: "#1a1640",
-    ratio: "10.2 / 16.0",
+    ratio: "10.20 / 15.97",
     use: "White on iris, ink on cornsilk. The ink is derived — neither palette shipped a dark.",
   },
   {
     name: "Dim",
     night: "#b9b6e0",
     day: "#5b5499",
-    ratio: "5.3 / 6.2",
+    ratio: "5.26 / 6.21",
     use: "Tinted from the ground's own hue. Never gray.",
   },
   {
     name: "Accent",
     night: "#edba40",
     day: "#3b3686",
-    ratio: "5.7 / 9.6",
-    use: "The role that swaps. Apricot is 1.8:1 on cornsilk, so iris takes the job by day.",
+    ratio: "5.68 / 9.57",
+    use: "The role that swaps. Apricot is 1.68:1 on cornsilk, so iris takes the job by day.",
   },
   {
     name: "Action",
     night: "#e0652b",
     day: "#e0652b",
-    ratio: "4.9 / 4.9",
-    use: "Field only, both modes. Orange text fails on iris (2.9:1) and on cornsilk (3.5:1).",
+    ratio: "4.92 / 4.92",
+    use: "Field only, both modes. Orange text fails on iris (2.95:1) and on cornsilk (3.25:1).",
   },
   {
     name: "Rail",
     night: "#767ae6",
     day: "#767ae6",
-    ratio: "2.8 / 3.5",
+    ratio: "2.77 / 3.46",
     use: "Map line work only. Fails non-text at night, so it never carries meaning alone.",
   },
 ];
@@ -225,7 +227,7 @@ function MoodScreen() {
         <span className="rail rail-dashed" style={{ top: 0, bottom: 40 }} />
         {MOODS.map((m, i) => (
           <div key={m.key} className="absolute left-0 right-5" style={{ top: i * 104 }}>
-            <Node top={30} state={i === 0 ? "locked" : "open"} />
+            <RailNode top={30} state={i === 0 ? "locked" : "open"} />
             <button
               className="ml-[52px] block w-full text-left transition-colors"
               style={{
@@ -268,13 +270,18 @@ function PlanningScreen() {
           const Icon = c.icon;
           return (
             <div key={c.label} className="absolute left-0 right-5" style={{ top: i * 92 }}>
-              <Node top={22} state="locked" />
+              <RailNode top={22} state="locked" />
               <div className="ml-[52px]">
                 <div className="flex items-center gap-2 text-accent">
                   <Icon className="h-[15px] w-[15px]" />
                   <span className="board text-[9px]">{c.label}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
+                  {/* Not the shared Chip: its 44px target size is a real
+                      requirement for the interactive constraint chips on
+                      /start, but this row is a static design-gallery mockup
+                      (onClick is a no-op) fitting six options in one 92px
+                      slot, which is what the old bespoke pill did. */}
                   {c.options.map((o) => (
                     <button
                       key={o}
@@ -294,12 +301,7 @@ function PlanningScreen() {
           );
         })}
         <div className="absolute inset-x-5 bottom-6">
-          <button
-            className="board flex w-full items-center justify-between px-4 py-4 text-[11px]"
-            style={{ background: "var(--action)", color: "var(--on-action)" }}
-          >
-            Open the room <span className="num text-[13px]">→</span>
-          </button>
+          <Plate variant="action" label="Open the room" right="→" />
         </div>
       </div>
     </ScreenChrome>
@@ -324,7 +326,7 @@ function RoomScreen() {
         <span className="rail" style={{ top: 0, bottom: 90 }} />
         {CREW.map((p, i) => (
           <div key={i} className="absolute left-0 right-5" style={{ top: i * 62 }}>
-            <Node top={8} state={p.state} />
+            <RailNode top={8} state={p.state} />
             <div className="ml-[52px] flex items-baseline justify-between border-b border-hairline pb-3">
               <span className={p.name ? "display text-[21px]" : "text-[15px] text-dim"}>
                 {p.name || "Seat open"}
@@ -338,12 +340,7 @@ function RoomScreen() {
         <p className="text-[12px] leading-snug text-dim">
           Send the link. They type a first name and they are in — no account, no quiz.
         </p>
-        <button
-          className="board w-full px-4 py-4 text-[11px]"
-          style={{ background: "var(--action)", color: "var(--on-action)" }}
-        >
-          Copy join link
-        </button>
+        <Plate variant="action" label="Copy join link" center />
       </div>
     </ScreenChrome>
   );
@@ -436,10 +433,10 @@ function MatchScreen() {
         </div>
 
         <div className="relative h-[210px]">
-          <span className="rail rail-draw" key={`rail-${run}`} />
-          <Node top={4} state="locked" />
-          <Node top={92} state="locked" />
-          <Node top={180} state="locked" />
+          <Rail drawing key={`rail-${run}`} />
+          <RailNode top={4} state="locked" />
+          <RailNode top={92} state="locked" />
+          <RailNode top={180} state="locked" />
           <div className="ml-[52px] space-y-[52px]">
             {[
               ["6:30", "Meet at the Royal Pde gate"],
@@ -454,13 +451,7 @@ function MatchScreen() {
           </div>
         </div>
 
-        <button
-          onClick={replay}
-          className="board w-full px-4 py-4 text-[11px]"
-          style={{ background: "var(--action)", color: "var(--on-action)" }}
-        >
-          Replay the flip
-        </button>
+        <Plate variant="action" label="Replay the flip" onClick={replay} center />
       </div>
     </ScreenChrome>
   );
@@ -484,7 +475,7 @@ function PlanScreen() {
         <span className="rail" style={{ bottom: 60 }} />
         {STOPS.map((s, i) => (
           <div key={s.t} className="absolute left-0 right-5" style={{ top: i * 96 }}>
-            <Node top={6} state={s.locked ? "locked" : "live"} />
+            <RailNode top={6} state={s.locked ? "locked" : "live"} />
             <div className="ml-[52px]">
               <div className="flex items-baseline gap-3">
                 <span className="num text-[15px] text-accent">{s.t}</span>
@@ -564,18 +555,8 @@ function BookedScreen() {
           <p className="text-[11px] leading-snug text-dim">
             Demonstration booking. No table has been held and no venue has been contacted.
           </p>
-          <button
-            className="board w-full px-4 py-4 text-[11px]"
-            style={{ background: "var(--action)", color: "var(--on-action)" }}
-          >
-            Open Toto&apos;s in Maps
-          </button>
-          <button
-            className="board w-full px-4 py-3.5 text-[11px]"
-            style={{ background: "var(--ground-raised)", color: "var(--text)" }}
-          >
-            Send to the group chat
-          </button>
+          <Plate variant="action" label="Open Toto's in Maps" center />
+          <Plate variant="raised" label="Send to the group chat" center />
         </div>
       </div>
     </ScreenChrome>
@@ -592,11 +573,11 @@ function Notes() {
         {[
           [
             "Orange never carries text",
-            "2.9:1 on iris, 3.5:1 on cornsilk. It is a field colour with ink on top in both modes, everywhere, forever.",
+            "2.95:1 on iris, 3.25:1 on cornsilk. It is a field colour with ink on top in both modes, everywhere, forever.",
           ],
           [
             "The accent swaps, the meaning does not",
-            "Apricot reads at night and vanishes by day (1.8:1), so iris takes over. A price is still the accent colour — the colour just changes with the light.",
+            "Apricot reads at night and vanishes by day (1.68:1), so iris takes over. A price is still the accent colour — the colour just changes with the light.",
           ],
           [
             "Every screen is one decision",

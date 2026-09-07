@@ -3,7 +3,7 @@ import { Archivo } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { getToken } from "@/lib/auth-server";
-import { themeScript } from "@/components/questly/theme";
+import { themeScript } from "@/lib/theme";
 
 // One superfamily, two axes. The width axis is what makes this a signage face
 // rather than a UI face -- display type lives at wdth 125, text at 100.
@@ -24,11 +24,25 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en" className={`${archivo.variable} h-full antialiased`} suppressHydrationWarning>
-      {/* Not wrapped in <head>: a manual <head> in an App Router layout breaks
-          hydration, and an unhydrated tree never attaches the toggle's handler.
-          React 19 hoists a bare <script> here on its own. */}
-      <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-      <body className="min-h-full flex flex-col">
+      <head>
+        {/* Runs before first paint so a light-mode visitor never sees a dark
+            flash, which is why it is inline and synchronous rather than
+            deferred. It must sit inside an explicit <head>: React does NOT
+            hoist a bare sync <script> out of <html> -- it refuses to order it
+            and logs "cannot render a sync or defer <script> outside the main
+            document", then reports <script> as an invalid child of <html> and
+            fails hydration. An earlier comment here claimed the hoist happens;
+            it does not. The Next 16 guide writes the explicit <head> for the
+            same reason:
+            node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      {/* Grammarly and friends stamp their own attributes (data-gr-ext-installed,
+          data-new-gr-c-s-check-loaded) onto <body> before React hydrates, and
+          suppressHydrationWarning does not cascade from <html> -- it covers one
+          element only. Without this, every visitor with the extension sees a
+          hydration mismatch the app cannot fix. */}
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ConvexClientProvider initialToken={initialToken}>
           {children}
         </ConvexClientProvider>
