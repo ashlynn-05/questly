@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Archivo } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./ConvexClientProvider";
+import { ServiceWorker } from "./ServiceWorker";
 import { getToken } from "@/lib/auth-server";
 import { themeScript } from "@/lib/theme";
 
@@ -16,7 +17,20 @@ const archivo = Archivo({
 export const metadata: Metadata = {
   title: "Questly",
   description: "Turns \"we should catch up\" into a plan, in two taps.",
+  // What iOS reads when Questly is added to the home screen. The manifest's
+  // `display: standalone` is honoured by Safari 16.4+, but these tags are what
+  // older iOS goes by and they cost nothing to keep. `default` status bar
+  // rather than `black-translucent`: translucent hands the app the strip under
+  // the clock without telling it how tall that strip is, and every screen here
+  // is a plain document with no safe-area padding -- the first line of every
+  // page would sit under the time.
+  appleWebApp: { capable: true, title: "Questly", statusBarStyle: "default" },
 };
+
+// No `export const viewport`. In particular no `themeColor`: Next emits that as
+// `prefers-color-scheme` media queries, which follow the OS and cannot see the
+// `data-theme` this app's own toggle sets. The meta is written instead by the
+// pre-paint script and kept in step by `ThemeToggle` -- see `src/lib/theme.ts`.
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Handing the token to the provider avoids an unauthenticated first paint.
@@ -46,6 +60,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <ConvexClientProvider initialToken={initialToken}>
           {children}
         </ConvexClientProvider>
+        <ServiceWorker />
       </body>
     </html>
   );

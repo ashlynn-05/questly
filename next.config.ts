@@ -9,6 +9,21 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: fileURLToPath(new URL(".", import.meta.url)),
   },
+
+  async headers() {
+    return [
+      {
+        // A service worker outlives the page that registered it, so a bad one
+        // served from the HTTP cache is a bad one the browser keeps choosing --
+        // and the only thing that dislodges it is a fresh fetch of this exact
+        // file. `updateViaCache: "none"` at the registration in
+        // src/app/ServiceWorker.tsx asks for the same guarantee from the other
+        // side; either alone is a promise, both is a fact.
+        source: "/sw.js",
+        headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
