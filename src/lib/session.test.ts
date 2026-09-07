@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { readSessionKey, storeSessionKey } from "./session";
+import { clearSessionKeys, readSessionKey, storeSessionKey } from "./session";
+import { EMPTY_DRAFT, resetDraftForTests, restoredDraft, writeDraft } from "./funnel";
+import { clearLocalState } from "./signout";
 
 /**
  * These test the two storage functions directly, not the hook: vitest here runs
@@ -12,19 +14,34 @@ import { readSessionKey, storeSessionKey } from "./session";
  * -level store that outlives one test the same way it outlives one page.
  */
 
-/** A browser with site data blocked: `localStorage` exists and throws. */
+/**
+ * A browser with site data blocked: `localStorage` exists and throws.
+ *
+ * `length` throws too, which is the shape `clearSessionKeys` has to survive:
+ * it enumerates the store, and enumeration starts by asking how big it is.
+ */
 function blockedStore() {
+  const boom = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
   return {
-    getItem: vi.fn(() => {
-      throw new DOMException("The operation is insecure.", "SecurityError");
-    }),
-    setItem: vi.fn(() => {
-      throw new DOMException("The operation is insecure.", "SecurityError");
-    }),
+    getItem: vi.fn(boom),
+    setItem: vi.fn(boom),
+    removeItem: vi.fn(boom),
+    key: vi.fn(boom),
+    get length(): number {
+      return boom();
+    },
   };
 }
 
-/** A browser that keeps things. */
+/**
+ * A browser that keeps things.
+ *
+ * `key(i)` and `length` are real rather than stubs, because `clearSessionKeys`
+ * walks the store by index and removing an entry reindexes what is left -- a
+ * detail a Map-shaped fake would hide and a real browser would not.
+ */
 function workingStore(seed: Record<string, string> = {}) {
   const map = new Map(Object.entries(seed));
   return {
@@ -32,6 +49,13 @@ function workingStore(seed: Record<string, string> = {}) {
     setItem: vi.fn((k: string, value: string) => {
       map.set(k, value);
     }),
+    removeItem: vi.fn((k: string) => {
+      map.delete(k);
+    }),
+    key: vi.fn((i: number) => Array.from(map.keys())[i] ?? null),
+    get length() {
+      return map.size;
+    },
     map,
   };
 }
@@ -113,5 +137,88 @@ describe("a browser that keeps things", () => {
 
     storeSessionKey("1009", "fresh");
     expect(readSessionKey("1009")).toBe("fresh");
+  });
+});
+
+/**
+ * Signing out has to clear BOTH stores.
+ *
+ * The auth session and the room capabilities are independent: signing out of
+ * Better Auth leaves every `questly-session-` key exactly where it was, and on
+ * a shared laptop the next person to open `/room/<code>` is let straight into
+ * a room they were never in. Handing seats over is what this exists to stop.
+ */
+describe("signing out", () => {
+  test("every room key this browser holds is dropped, in both stores", () => {
+    const store = workingStore({ "questly-session-2001": "key-from-before" });
+    vi.stubGlobal("localStorage", store);
+    storeSessionKey("2002", "key-bec");
+
+    clearSessionKeys();
+
+    // Persisted and in-memory alike: `readSessionKey` consults memory first,
+    // so clearing only the store would answer from the Map for the rest of
+    // the page's life.
+    expect(store.map.size).toBe(0);
+    expect(readSessionKey("2001")).toBeNull();
+    expect(readSessionKey("2002")).toBeNull();
+  });
+
+  test("nothing else in the store is touched", () => {
+    const store = workingStore({
+      "questly-session-2003": "ours",
+      "questly-theme": "day",
+      "something-else": "not ours",
+    });
+    vi.stubGlobal("localStorage", store);
+
+    clearSessionKeys();
+
+    // Every key is walked and only the prefixed ones go -- the theme
+    // preference is in the same store and has nothing to do with a sign-out.
+    expect(Array.from(store.map.keys()).sort()).toEqual(["questly-theme", "something-else"]);
+  });
+
+  test("a store that throws does not take the sign-out down with it", () => {
+    vi.stubGlobal("localStorage", blockedStore());
+    storeSessionKey("2004", "key-tam");
+
+    // A browser refusing site data has nothing persisted to clear, but it does
+    // have the in-memory fallback -- which is exactly the store holding the key
+    // in that browser, so it must still be emptied.
+    expect(() => clearSessionKeys()).not.toThrow();
+    expect(readSessionKey("2004")).toBeNull();
+  });
+
+  test("a browser with no localStorage at all clears what it does have", () => {
+    vi.stubGlobal("localStorage", undefined);
+    storeSessionKey("2005", "key-sam");
+
+    expect(() => clearSessionKeys()).not.toThrow();
+    expect(readSessionKey("2005")).toBeNull();
+  });
+});
+
+/**
+ * The draft is the OTHER thing a sign-out has to drop, and forgetting it was a
+ * real cross-account leak rather than a tidiness point.
+ */
+describe("clearing everything this browser holds for one person", () => {
+  test("the funnel draft goes along with the room keys", () => {
+    vi.stubGlobal("localStorage", workingStore());
+    vi.stubGlobal("sessionStorage", workingStore());
+    resetDraftForTests();
+    storeSessionKey("2006", "key-bec");
+    writeDraft({ ...EMPTY_DRAFT, step: "quiz", answers: { walk: "more" } });
+    expect(restoredDraft()).not.toBeNull();
+
+    clearLocalState();
+
+    // Left behind, the draft is not inert: /start restores it for whoever is
+    // signed in NEXT, and finishing the funnel submits it through `saveQuiz`,
+    // which derives the user id from the CURRENT identity. One person's taste
+    // answers landed on the next person's account.
+    expect(restoredDraft()).toBeNull();
+    expect(readSessionKey("2006")).toBeNull();
   });
 });
