@@ -530,3 +530,73 @@ test("booking is refused until the plan the group can see actually exists", asyn
     vi.restoreAllMocks();
   }
 });
+
+// --- §2.13: the booking is a record, the roster is the present tense ------
+//
+// `rooms.leave` has no booked-status guard, on purpose: people cannot always
+// make things, and trapping someone in a night they cannot attend is worse
+// than a room that says three of you are going. The consequence is that
+// `booking.headcount` stops describing the roster, and the ruling is that the
+// ROW does not move -- rewriting an agreement because somebody left invents a
+// per-head figure nobody consented to. `rooms.get` returns both numbers so the
+// screen can say both; `src/lib/booking.ts` decides how, and holds the
+// reasoning. These tests hold the backend half: the row is frozen, and the
+// live roster is still readable next to it.
+
+test("a member leaving a booked room does not rewrite what the group agreed to", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t, { members: ["Bec", "Tam", "Ali"] });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  const before = await t.run(async (ctx) => ctx.db.query("bookings").first());
+  expect(before!.headcount).toBe(3);
+  expect(before!.totalCents).toBe(4200); // $14 each, three members
+
+  await t.mutation(api.rooms.leave, { code: "6666", sessionKey: "k-ali" });
+
+  const after = await t.run(async (ctx) => ctx.db.query("bookings").first());
+  // Not "unchanged because nothing touched it" -- unchanged because a booking
+  // is what was agreed. 4200/2 is $21 each, a number this room never saw.
+  expect(after!.headcount).toBe(3);
+  expect(after!.totalCents).toBe(4200);
+  expect(after!.ref).toBe(before!.ref);
+});
+
+test("the room a leaver leaves behind still reports who is actually in it", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t, { members: ["Bec", "Tam", "Ali"] });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.rooms.leave, { code: "6666", sessionKey: "k-ali" });
+
+  // Through the one query the app subscribes to, because that is the only
+  // place the screen can get either number from.
+  const view = await t.query(api.rooms.get, { code: "6666", sessionKey: "k-bec" });
+  expect(view).not.toBeNull();
+  // Two numbers, both true, and they disagree -- which is exactly the state
+  // `Booked.tsx` has to render honestly rather than pick one of.
+  expect(view!.members).toHaveLength(2);
+  expect(view!.members.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
+  expect(view!.booking!.headcount).toBe(3);
+  expect(view!.room.status).toBe("booked");
+});
+
+test("a member removed by the host after booking leaves the booking alone too", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await matchedRoom(t, { members: ["Bec", "Tam", "Ali"] });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  const ali = await t.run(async (ctx) =>
+    (await ctx.db.query("members").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect())
+      .find((m) => m.name === "Ali")!,
+  );
+  // The other way onto the roster-shrinks path. It must land in the same
+  // place as `leave`, or what the booking says depends on how somebody went.
+  await t.mutation(api.rooms.removeMember, {
+    code: "6666", sessionKey: "k-bec", memberId: ali._id,
+  });
+
+  const view = await t.query(api.rooms.get, { code: "6666", sessionKey: "k-bec" });
+  expect(view!.members).toHaveLength(2);
+  expect(view!.booking!.headcount).toBe(3);
+  expect(view!.booking!.totalCents).toBe(4200);
+});

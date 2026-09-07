@@ -82,6 +82,20 @@ export const confirm = mutation({
       ref,
       // The roster, not the host's lobby guess: the total has to be what the
       // people actually coming will pay between them.
+      //
+      // FROZEN, AND DELIBERATELY SO. `rooms.leave` has no booked-status guard
+      // -- people genuinely cannot make things, and a product that traps you in
+      // a night you cannot attend is a worse product -- so these two numbers
+      // can stop describing the current roster the moment somebody drops out.
+      // Nothing recomputes them when that happens, and nothing should: a
+      // booking is a record of what the group agreed to, and "$37 each between
+      // 3" is a figure nobody in that room has ever seen or consented to.
+      //
+      // The screen is what carries the difference. `Booked.tsx` reads "Going"
+      // off the LIVE roster (`rooms.get` returns both), and when the two differ
+      // it says what the night was split between as well. The ruling and the
+      // options it was chosen over are written up in `src/lib/booking.ts`;
+      // `bookings.test.ts` holds the invariant that this row does not move.
       headcount: members.length,
       totalCents: perHead * members.length,
       status: "simulated",

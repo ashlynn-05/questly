@@ -3,6 +3,7 @@
 import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
+import { bookedHeadcount } from "@/lib/booking";
 import type { RoomView } from "./page";
 
 const time = (at: number) =>
@@ -42,7 +43,11 @@ export function Booked({
     );
   }
 
-  const perHead = booking.headcount > 0 ? booking.totalCents / booking.headcount : 0;
+  // "Going" is present tense, so it is the live roster. The booking row stays
+  // frozen at what was agreed, and when the two differ this screen says both
+  // rather than picking one -- see src/lib/booking.ts for the ruling and why
+  // recomputing the total instead was the wrong answer.
+  const headcount = bookedHeadcount(booking, view.members.length);
 
   async function copyTheMessage(message: string) {
     try {
@@ -80,11 +85,27 @@ export function Booked({
           {/* The figure is the plan's own per-head total, and every cost in that
               plan is an estimate. It is not a price a venue quoted. */}
           <dt className="board text-[10px] text-dim">Est. per head</dt>
-          <dd className="num m-0 text-[22px] text-text">{money(perHead)}</dd>
+          <dd className="num m-0 text-[22px] text-text">{money(headcount.perHeadCents)}</dd>
+          {/* Only when the roster has moved. The estimate is what the group
+              agreed to and does not get re-divided behind their backs, so the
+              screen has to say what it was divided by -- otherwise this reads
+              as what each of the people still going will pay. */}
+          {headcount.changed ? (
+            <p className="mt-1 max-w-[18ch] text-[11px] leading-snug text-dim">
+              Split between <span className="num">{headcount.agreed}</span> when this was
+              booked.
+            </p>
+          ) : null}
         </div>
         <div>
           <dt className="board text-[10px] text-dim">Going</dt>
-          <dd className="num m-0 text-[22px] text-text">{booking.headcount}</dd>
+          <dd className="num m-0 text-[22px] text-text">{headcount.going}</dd>
+          {headcount.changed ? (
+            <p className="mt-1 max-w-[18ch] text-[11px] leading-snug text-dim">
+              <span className="num">{headcount.agreed}</span> were in when the group
+              booked.
+            </p>
+          ) : null}
         </div>
       </dl>
 
