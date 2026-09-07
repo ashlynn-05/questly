@@ -34,17 +34,17 @@ const OPTIONS: Array<{ id: ThemeMode; label: string }> = [
  * a half-lit circle, a sun -- distinguishable without seeing the difference
  * between apricot and iris.
  */
-function Glyph({ mode }: { mode: ThemeMode }) {
+function Glyph({ mode, className = "size-[18px]" }: { mode: ThemeMode; className?: string }) {
   if (mode === "dark") {
     return (
-      <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true" fill="currentColor">
+      <svg viewBox="0 0 20 20" className={className} aria-hidden="true" fill="currentColor">
         <path d="M16.3 12.9A7.2 7.2 0 0 1 7.1 3.7a7.2 7.2 0 1 0 9.2 9.2Z" />
       </svg>
     );
   }
   if (mode === "light") {
     return (
-      <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true" fill="currentColor">
+      <svg viewBox="0 0 20 20" className={className} aria-hidden="true" fill="currentColor">
         <circle cx="10" cy="10" r="4.1" />
         <g stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
           <path d="M10 1.6v2.2M10 16.2v2.2M18.4 10h-2.2M3.8 10H1.6M15.9 4.1l-1.6 1.6M5.7 14.3l-1.6 1.6M15.9 15.9l-1.6-1.6M5.7 5.7 4.1 4.1" />
@@ -54,7 +54,7 @@ function Glyph({ mode }: { mode: ThemeMode }) {
   }
   // Auto: half the roundel lit. The same "it depends" the setting means.
   return (
-    <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true">
+    <svg viewBox="0 0 20 20" className={className} aria-hidden="true">
       <circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" strokeWidth="1.7" />
       <path d="M10 2.8a7.2 7.2 0 0 1 0 14.4Z" fill="currentColor" />
     </svg>
@@ -150,8 +150,13 @@ export function ThemeToggle() {
       label={`Colour mode: ${current.label}`}
       items={OPTIONS.map((o) => ({
         // A tick would be colour-and-glyph on a row that already has a label,
-        // so the current one says so in words instead.
+        // so the current one says so in words instead. The glyph beside each
+        // row is NOT that tick: it is three different marks, one per row,
+        // naming what the row is rather than which one is on.
         label: o.id === mode ? `${o.label} — on` : o.label,
+        // 20px here rather than the roundel's 18px, so these sit at the same
+        // size as the drawn marks in the account menu next door.
+        icon: <Glyph mode={o.id} className="size-[20px]" />,
         onSelect: () => choose(o.id),
       }))}
     >

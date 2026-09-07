@@ -38,6 +38,17 @@ export type MenuItem = {
    * sit on a raised fill.
    */
   destructive?: boolean;
+  /**
+   * A drawn mark from `icons.tsx`. It inherits the row's `currentColor`, which
+   * is how it stays on a pairing somebody has already measured: `--text` and
+   * `--danger` are both computed against `--ground`, and this menu sits on
+   * `--ground` precisely so those numbers hold.
+   *
+   * On the destructive row this is not decoration. That row was told apart by
+   * colour and position alone, and "never colour alone" is a rule this
+   * codebase states in `Plate`, in `Chip` and in DESIGN.
+   */
+  icon?: ReactNode;
 };
 
 type Props = {
@@ -208,11 +219,15 @@ export function MenuRoundel({ children, label, items, filled = false }: Props) {
                   onKeyDown={(event) => onItemKeyDown(event, i)}
                   // Full width so the target is the row, not the words. 44px
                   // tall for the same reason every other control here is.
-                  className={`flex min-h-[44px] w-full items-center rounded-[4px] px-3 text-left text-[15px] leading-snug ${
+                  className={`flex min-h-[44px] w-full items-center gap-3 rounded-[4px] px-3 text-left text-[15px] leading-snug ${
                     item.destructive ? "text-danger" : "text-text"
                   }`}
                 >
-                  {item.label}
+                  {/* Laid out the way `Plate` already lays out its own icon
+                      and label, so a row here and a row there are the same
+                      row. */}
+                  {item.icon ? <span className="shrink-0">{item.icon}</span> : null}
+                  <span className="min-w-0 flex-1">{item.label}</span>
                 </button>
               </div>
             );
