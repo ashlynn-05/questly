@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { resolveThemeMode, THEME_STORAGE_KEY, type ThemeMode } from "@/lib/theme";
 
-type Mode = "system" | "dark" | "light";
+type Mode = ThemeMode;
 
-/** One key, named once, shared by the toggle and the pre-paint script below. */
-const STORAGE_KEY = "questly-theme";
+/** Kept as a local alias so the store reads below stay short. */
+const STORAGE_KEY = THEME_STORAGE_KEY;
 
 const OPTIONS: Array<{ id: Mode; label: string }> = [
   { id: "dark", label: "Night" },
@@ -14,25 +15,24 @@ const OPTIONS: Array<{ id: Mode; label: string }> = [
 ];
 
 /**
- * What the page is ACTUALLY running in, resolved exactly the way the pre-paint
- * script resolves it: `?theme=` wins, then the stored choice, then system.
- *
- * The two used to disagree. The script honoured `?theme=`; the toggle read only
- * `localStorage`. Open `/?theme=light` and the page rendered in day mode while
- * the toggle reported "Auto" as checked -- two sources of truth for one visible
- * state, and the switch lying about the thing it exists to control.
+ * What the page is ACTUALLY running in. The ORDER lives in `@/lib/theme`
+ * alongside the pre-paint script that has to apply the same one, because every
+ * time the two were written separately they drifted, and every drift is the
+ * same bug: the page in one mode with this switch claiming the other. This
+ * function is now only the browser plumbing -- read the URL, read the store,
+ * hand both to the one resolver. See `src/lib/theme.ts` for the history.
  */
 function resolveMode(): Mode {
   try {
-    const fromUrl = new URLSearchParams(location.search).get("theme");
-    if (fromUrl === "light" || fromUrl === "dark") return fromUrl;
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
+    return resolveThemeMode(
+      new URLSearchParams(location.search).get("theme"),
+      localStorage.getItem(STORAGE_KEY),
+    );
   } catch {
     // No URL and no store to read (Safari's "Block All Cookies", some
     // embedded webviews). Whatever the OS says, then.
+    return "system";
   }
-  return "system";
 }
 
 /**
@@ -57,7 +57,9 @@ export function ThemeToggle() {
     // `react-hooks/set-state-in-effect` flags -- and here nothing downstream
     // depends on the value at all. It drives this widget's own highlight and
     // nothing else; the DOM is already in the right mode, because the pre-paint
-    // script below set `data-theme` before anything was drawn. So the worst
+    // script in `@/lib/theme` set `data-theme` before anything was drawn -- and
+    // it resolves through the same `resolveThemeMode`, so they cannot disagree.
+    // So the worst
     // case this disable buys is one extra render of a three-button switch.
     // `useSyncExternalStore` would express the same thing without an effect;
     // it is not used because this value has no subscribers beyond this
@@ -159,13 +161,3 @@ export function ThemeToggle() {
     </div>
   );
 }
-
-/**
- * Runs before paint so a stored choice never flashes the other mode first.
- * Inlined deliberately: a deferred script is a visible repaint.
- *
- * Wrapped in an IIFE, as the Next docs' own example is, so `q` and `m` are not
- * two globals on every page in the app. It resolves in the same order
- * `resolveMode` above does, and the two must stay in step.
- */
-export const themeScript = `(function(){try{var q=new URLSearchParams(location.search).get("theme");var m=q||localStorage.getItem("${STORAGE_KEY}");if(m==="light"||m==="dark")document.documentElement.setAttribute("data-theme",m)}catch(e){}})()`;

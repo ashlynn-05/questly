@@ -3,7 +3,7 @@ import { Archivo } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { getToken } from "@/lib/auth-server";
-import { themeScript } from "@/components/questly/theme";
+import { themeScript } from "@/lib/theme";
 
 // One superfamily, two axes. The width axis is what makes this a signage face
 // rather than a UI face -- display type lives at wdth 125, text at 100.
