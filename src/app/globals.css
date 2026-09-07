@@ -225,6 +225,13 @@ body {
 
 ::selection { background: var(--accent); color: var(--ground); }
 
+/* A modal `<dialog>`'s backdrop. The UA default is a flat translucent black,
+   which reads as a grey film over an iris page; this is `--q-ink` at the same
+   weight the palette's own `--shadow` uses, so the page behind a modal recedes
+   in the product's colour rather than a browser's. Deliberately NOT tinted per
+   mode: it darkens in both, and the day palette has no dark of its own. */
+dialog::backdrop { background: rgba(26, 22, 64, 0.72); }
+
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;

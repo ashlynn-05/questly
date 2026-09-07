@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { InstallHint } from "@/components/questly/InstallHint";
 import { ThemeToggle } from "@/components/questly/theme";
 
 export default function Home() {
@@ -36,6 +37,12 @@ export default function Home() {
           Design reference
         </Link>
       </div>
+
+      {/* A closed `<dialog>`, so its position in the flow is not its position
+          on screen -- it opens centred over the page. Opens for nobody but an
+          iOS Safari visitor who has not installed Questly and has not already
+          dismissed it. */}
+      <InstallHint />
     </main>
   );
 }
