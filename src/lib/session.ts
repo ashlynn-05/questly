@@ -7,7 +7,9 @@ import { useCallback, useEffect, useState } from "react";
  * hold two rooms at once -- which is exactly what happens when the app is
  * demoed on a laptop and a phone side by side.
  */
-const keyFor = (code: string) => `questly-session-${code}`;
+const PREFIX = "questly-session-";
+
+const keyFor = (code: string) => `${PREFIX}${code}`;
 
 /**
  * The same keys, in memory, for the browsers that refuse to keep them.
@@ -64,6 +66,39 @@ export function readSessionKey(code: string): string | null {
     return localStorage.getItem(keyFor(code));
   } catch {
     return null; // no store, and nothing stored this session either
+  }
+}
+
+/**
+ * Drop every room key this device holds. What signing out has to do beyond
+ * signing out.
+ *
+ * A `sessionKey` is a capability, not a session cookie: the two stores are
+ * independent, and clearing only the auth session would leave a shared laptop
+ * holding working keys to every room the last person was in -- keys that
+ * `rooms.get` accepts on their own, with no identity involved at all. So sign
+ * out clears both, and this is the half the auth library cannot know about.
+ *
+ * Both stores, and in that order. The in-memory Map is the one that cannot
+ * fail, and it is also the one `readSessionKey` consults first -- clearing
+ * `localStorage` alone would leave the next read answering out of memory with a
+ * key that is supposedly gone.
+ *
+ * The persisted half is enumerated rather than derived from the Map, because
+ * the Map only knows what THIS page load wrote. A key persisted last Tuesday is
+ * exactly the one that most needs to go, and the only way to find it is to walk
+ * the store. Backwards, because removing an item reindexes everything after it.
+ */
+export function clearSessionKeys() {
+  inMemory.clear();
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(PREFIX)) localStorage.removeItem(key);
+    }
+  } catch {
+    // A browser that refuses site storage has nothing persisted to clear, and
+    // the half that mattered -- the in-memory Map -- is already gone.
   }
 }
 

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
@@ -259,4 +259,370 @@ test("saveQuiz updates rather than duplicates a profile on a second submission",
   const rows = await t.run(async (ctx) => ctx.db.query("profiles").collect());
   expect(rows).toHaveLength(1);
   expect(rows[0].tasteVector).toEqual([9, 9, 9]);
+});
+
+// --- what the settings screen reads back ---------------------------------
+
+test("the raw answers are stored, because none of the derived fields can be inverted", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  const answers = { [QUIZ_CARDS[0].id]: "more" as const, [QUIZ_CARDS[1].id]: "less" as const };
+
+  await asUser.action(api.profiles.saveQuiz, { answers, goals: [] });
+
+  // `moodAffinity` sums the cards per mood, so "one more, one less" and
+  // "neither answered" are both 0 -- which is why showing somebody what they
+  // said needed a column and not just a cleverer read.
+  expect((await asUser.query(api.profiles.me, {}))?.answers).toEqual(answers);
+});
+
+test("an answer key that is not one of the cards is refused before anything is spent", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  // Harmless while the answers were only summed -- an unknown key matched no
+  // mood and fell out. Not harmless now they are stored and rendered back.
+  const promise = asUser.action(api.profiles.saveQuiz, {
+    answers: { "not-a-real-card": "more" },
+    goals: [],
+  });
+  await expect(promise).rejects.toBeInstanceOf(ConvexError);
+  await expect(promise).rejects.toMatchObject({ data: { code: "INVALID_ANSWER" } });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("a retake replaces the answers rather than merging into them", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await asUser.action(api.profiles.saveQuiz, {
+    answers: { [QUIZ_CARDS[0].id]: "more", [QUIZ_CARDS[1].id]: "more" },
+    goals: [],
+  });
+  await asUser.action(api.profiles.saveQuiz, {
+    answers: { [QUIZ_CARDS[0].id]: "less" },
+    goals: [],
+  });
+
+  expect((await asUser.query(api.profiles.me, {}))?.answers).toEqual({
+    [QUIZ_CARDS[0].id]: "less",
+  });
+});
+
+// --- renaming -------------------------------------------------------------
+
+test("a rename shows up where the product reads a name", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+
+  await asUser.mutation(api.profiles.renameMe, { displayName: "  Bec C.  " });
+
+  expect((await asUser.query(api.profiles.me, {}))?.displayName).toBe("Bec C.");
+});
+
+test("a rename survives a retake of the quiz", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await asUser.mutation(api.profiles.renameMe, { displayName: "Bec C." });
+
+  // `saveQuiz` derives the name from the identity every time, so without
+  // `write` dropping it on the update path a retake would silently undo the
+  // rename and the person would have no way to tell why.
+  await asUser.action(api.profiles.saveQuiz, {
+    answers: { [QUIZ_CARDS[0].id]: "more" },
+    goals: [],
+  });
+
+  expect((await asUser.query(api.profiles.me, {}))?.displayName).toBe("Bec C.");
+});
+
+test("an empty name is refused rather than stored", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+
+  const promise = asUser.mutation(api.profiles.renameMe, { displayName: "   " });
+  await expect(promise).rejects.toMatchObject({ data: { code: "NAME_REQUIRED" } });
+  expect((await asUser.query(api.profiles.me, {}))?.displayName).toBe("Bec");
+});
+
+test("a name longer than the field allows is refused", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+
+  const promise = asUser.mutation(api.profiles.renameMe, { displayName: "x".repeat(41) });
+  await expect(promise).rejects.toMatchObject({ data: { code: "NAME_REQUIRED" } });
+});
+
+test("renaming requires an account", async () => {
+  const t = convexTest(schema, modules);
+  const promise = t.mutation(api.profiles.renameMe, { displayName: "Anyone" });
+  await expect(promise).rejects.toMatchObject({ data: { code: "NOT_SIGNED_IN" } });
+});
+
+test("renaming with no profile yet is a no-op, not a throw", async () => {
+  // Reachable only as a race -- two tabs, one of them deleting -- and not
+  // worth shouting about when it happens.
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  expect(await asUser.mutation(api.profiles.renameMe, { displayName: "Bec C." })).toBeNull();
+  expect(await t.run(async (ctx) => ctx.db.query("profiles").collect())).toEqual([]);
+});
+
+// --- the way back into your own rooms ------------------------------------
+
+const CREATE = {
+  mood: "grass" as const,
+  headcount: 4,
+  budgetPerHeadCents: 0,
+  whenAt: 1_800_000_000_000,
+  centreLat: -37.8,
+  centreLng: 144.96,
+  radiusKm: 5,
+  visibility: "private" as const,
+  hostName: "Bec",
+};
+
+test("myRooms is empty for a signed-out visitor", async () => {
+  const t = convexTest(schema, modules);
+  expect(await t.query(api.profiles.myRooms, {})).toEqual([]);
+});
+
+test("a room you host is listed once, not twice", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // A host is both the room's `hostUserId` and a member row in it, so the two
+  // halves of this query both find the same room -- the dedupe is the point.
+  const rooms = await asHost.query(api.profiles.myRooms, {});
+  expect(rooms).toHaveLength(1);
+  expect(rooms[0]).toMatchObject({ code, isHost: true, mood: "grass" });
+});
+
+test("a room you were let into is listed, and not as yours to run", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const asGuest = t.withIdentity({ subject: "u2", name: "Tam" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+  await asGuest.mutation(api.rooms.join, { code, name: "Tam" });
+
+  const rooms = await asGuest.query(api.profiles.myRooms, {});
+  expect(rooms).toHaveLength(1);
+  expect(rooms[0]).toMatchObject({ code, isHost: false });
+});
+
+test("the nights are listed with the furthest ahead first", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const early = await asHost.mutation(api.rooms.create, CREATE);
+  const late = await asHost.mutation(api.rooms.create, {
+    ...CREATE,
+    whenAt: CREATE.whenAt + 86_400_000,
+  });
+
+  const rooms = await asHost.query(api.profiles.myRooms, {});
+  expect(rooms.map((r) => r.code)).toEqual([late.code, early.code]);
+});
+
+test("myRooms never leaks somebody else's room", async () => {
+  const t = convexTest(schema, modules);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const asStranger = t.withIdentity({ subject: "u2", name: "Tam" });
+  await asHost.mutation(api.rooms.create, CREATE);
+
+  expect(await asStranger.query(api.profiles.myRooms, {})).toEqual([]);
+});
+
+// --- what a tombstone does to the rest of the product ---------------------
+
+test("profiles.me is null for a deleted account, so nothing resumes it", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+
+  await t.run(async (ctx) => {
+    const rows = await ctx.db.query("profiles").collect();
+    await ctx.db.patch(rows[0]._id, { deletedAt: Date.now() });
+  });
+
+  // `/start` resumes a returning host straight past the quiz on the strength of
+  // this query alone, so a tombstoned profile answering it would hand a deleted
+  // account back its own taste vector.
+  expect(await asUser.query(api.profiles.me, {})).toBeNull();
+});
+
+test("finishing the quiz again is itself a restore", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await asUser.mutation(api.account.deleteAccount, {});
+
+  await asUser.action(api.profiles.saveQuiz, {
+    answers: { [QUIZ_CARDS[0].id]: "more" },
+    goals: [],
+  });
+
+  // Somebody who deleted, signed back in and answered the cards has plainly
+  // not left. One path clears the tombstone rather than two that could disagree.
+  expect(await asUser.query(api.profiles.me, {})).not.toBeNull();
+  expect(await asUser.query(api.account.deletionStatus, {})).toBeNull();
+});
+
+test("a rename is refused on a deleted account, so nothing writes to a tombstoned row", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await asUser.mutation(api.account.deleteAccount, {});
+
+  await asUser.mutation(api.profiles.renameMe, { displayName: "Bec C." });
+
+  const rows = await t.run(async (ctx) => ctx.db.query("profiles").collect());
+  expect(rows[0].displayName).toBe("Bec");
+});
+
+// --- the picture in the roundel -------------------------------------------
+//
+// `ctx.storage.store` in convex-test does NOT record a content type -- the
+// metadata it writes is `{ size, sha256 }` and nothing else, where a real
+// upload records the Content-Type the browser POSTed. So `setAvatar`'s happy
+// path cannot be driven through this harness at all: every stored blob looks
+// like an upload that declared no type, which is a thing the mutation refuses
+// on purpose. The tests below drive what they can and reach past the gate with
+// a direct patch where they cannot, rather than weakening the gate to suit the
+// harness. `src/lib/avatar.test.ts` covers the type and size rules themselves,
+// which are shared by both ends and are pure.
+
+/** A file in storage, the way an upload would have left one (minus the type). */
+async function storeImage(t: TestConvex<typeof schema>, bytes = 64) {
+  return await t.run(async (ctx) => ctx.storage.store(new Blob([new Uint8Array(bytes)])));
+}
+
+/** Attach a picture the way a real, correctly-typed upload would have. */
+async function attach(t: TestConvex<typeof schema>, userId: string) {
+  return await t.run(async (ctx) => {
+    const storageId = await ctx.storage.store(new Blob([new Uint8Array(64)]));
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    await ctx.db.patch(profile!._id, { avatarId: storageId });
+    return storageId;
+  });
+}
+
+test("a stored picture is read back as a URL, never as the id", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await attach(t, "u1");
+
+  // The row holds the id; the query resolves the URL per read. A stored URL
+  // would be a signed string going stale on its own schedule with nothing here
+  // to notice.
+  const me = await asUser.query(api.profiles.me, {});
+  expect(me?.avatarUrl).toEqual(expect.any(String));
+  expect(me).not.toHaveProperty("avatarId");
+});
+
+test("profiles.me reports no picture rather than omitting the field", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+
+  // Null, not absent: the badge branches on it, and a missing key is a thing
+  // a caller can forget to handle.
+  expect((await asUser.query(api.profiles.me, {}))?.avatarUrl).toBeNull();
+});
+
+test("an upload that declared no type is refused", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  const storageId = await storeImage(t);
+
+  // A missing Content-Type is exactly how somebody walks an SVG past a list of
+  // allowed ones, so an absent type is refused rather than waved through.
+  await expect(
+    asUser.mutation(api.profiles.setAvatar, { storageId }),
+  ).rejects.toMatchObject({ data: { code: "AVATAR_TYPE" } });
+
+  expect((await asUser.query(api.profiles.me, {}))?.avatarUrl).toBeNull();
+});
+
+test("a storage id pointing at nothing is refused", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  const storageId = await storeImage(t);
+  await t.run(async (ctx) => ctx.storage.delete(storageId));
+
+  await expect(
+    asUser.mutation(api.profiles.setAvatar, { storageId }),
+  ).rejects.toMatchObject({ data: { code: "AVATAR_MISSING" } });
+});
+
+test("removing a picture takes the file with it", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  const storageId = await attach(t, "u1");
+
+  await asUser.mutation(api.profiles.clearAvatar, {});
+
+  // Storage costs per byte HELD, not per byte served.
+  expect((await asUser.query(api.profiles.me, {}))?.avatarUrl).toBeNull();
+  expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).toBeNull();
+});
+
+test("clearing a picture nobody has is a no-op, not a throw", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  expect(await asUser.mutation(api.profiles.clearAvatar, {})).toBeNull();
+});
+
+test("removing a picture requires an account", async () => {
+  const t = convexTest(schema, modules);
+  await expect(t.mutation(api.profiles.clearAvatar, {})).rejects.toMatchObject({
+    data: { code: "NOT_SIGNED_IN" },
+  });
+});
+
+test("an anonymous caller cannot mint upload URLs against this deployment", async () => {
+  const t = convexTest(schema, modules);
+  // Otherwise the storage bill is open to anyone who can reach the API.
+  await expect(t.mutation(api.profiles.generateAvatarUploadUrl, {})).rejects.toMatchObject({
+    data: { code: "NOT_SIGNED_IN" },
+  });
+});
+
+test("a deleted account cannot adopt a picture, and the bytes do not linger", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await asUser.mutation(api.account.deleteAccount, {});
+  const storageId = await storeImage(t);
+
+  // Returns rather than throws, which is what lets the delete commit -- a
+  // throw would roll it back along with everything else the handler did.
+  expect(await asUser.mutation(api.profiles.setAvatar, { storageId })).toBeNull();
+  expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).toBeNull();
+});
+
+test("a tombstoned profile keeps its picture private", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await asUser.action(api.profiles.saveQuiz, { answers: {}, goals: [] });
+  await attach(t, "u1");
+  await asUser.mutation(api.account.deleteAccount, {});
+
+  // `me` returns null for a deleted account, so there is no URL to resolve --
+  // the picture comes back with the account, not before it.
+  expect(await asUser.query(api.profiles.me, {})).toBeNull();
+  await asUser.mutation(api.account.restoreAccount, {});
+  expect((await asUser.query(api.profiles.me, {}))?.avatarUrl).toEqual(expect.any(String));
 });

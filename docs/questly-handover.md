@@ -243,6 +243,8 @@ someone in a night they cannot attend. The reasoning is written into
 session would resurrect a stale plan days later, which is worse than retyping.
 Say if you want it to survive.
 
+---
+
 ## 13. Follow-ups worth doing first, in order
 
 1. **Narrow the `rooms.get` projection.** It currently ships commercial detail
@@ -256,4 +258,271 @@ Say if you want it to survive.
 3. **Assert the contrast ratios in a test.** All 102 written ratios in `src/`
    are now correct and independently verified, but nothing stops the 103rd from
    being wrong. Nineteen were wrong before this round; that is the argument.
-4. Then the scale items in §8.
+4. **Purge the Better Auth user record too**, via the `admin` plugin — see
+   §14. Today the 14-day job erases our profile row and leaves the signup
+   credential behind.
+5. **Sweep `_storage` for orphaned avatar uploads.** A refused upload (wrong
+   type, over 2MB) leaves its blob behind, because the refusal throws and a
+   Convex transaction rolls the cleanup back with it — see §14. Bounded by the
+   2MB cap and by needing an account to get an upload URL, so it is a tidiness
+   job, not a leak.
+6. Then the scale items in §8.
+
+---
+
+## 14. The account surface (issue #2)
+
+Added on branch `cobeo2004/clarify-the-authentication-onboarding-and-user-s`,
+after the review this document was written for. Closes ashlynn-05/questly#2.
+
+**What the issue understated.** The quiz answers were never stored at all. The
+`profiles` row held only the derived artefacts — `tasteVector`, `tasteSentence`,
+`moodAffinity`, `goals` — and none is invertible: `moodAffinity` sums two cards
+per mood, so `0` means "one more, one less" and "neither answered" alike. So
+"answers are viewable and re-answerable" was a schema change
+(`profiles.answers`), not a screen.
+
+### Guest access — ruled, not changed
+
+`PRODUCT.md:52` already decided this and the code already agreed: **guests join
+with a first name only, no account and no quiz, and their swipes count.** An
+account is required only to *host*, because `rooms.create` is the one function
+in the join path that calls `requireUserId`. This is recorded here because the
+ruling existed in the product doc and nowhere in the handover, which made it
+look like an oversight to every reviewer who read the code first.
+
+### Deletion is a recycle bin, not a redaction
+
+`account.deleteAccount` does three things, and they have deliberately different
+lifetimes:
+
+| What | When | Why |
+|---|---|---|
+| `profiles.deletedAt` set | immediately | `profiles.me` returns null from the next render, so every other screen behaves as though the account is gone without knowing this state exists |
+| every seat detached | immediately, **irreversibly** | a room waits on every member it has; one that keeps waiting on somebody who left is the deadlock `lib/roster.ts` exists to prevent |
+| the row erased | after **14 days**, by `crons.ts` → `account.purgeExpired` | a restore with nothing to restore is not a restore |
+
+The cost is stated on the screen rather than buried in the code: for fourteen
+days the taste vector still exists. A delete that erases everything at the tap
+and a delete that can be undone are different products, and this one was asked
+for the second.
+
+**Deletion is refused while hosting a room that is not `booked` *and* whose
+night is still ahead** (`HOSTING_LIVE_ROOM`, naming the codes). `deck.build` is
+host-only, so a `lobby` or `building` room whose host has gone can never start.
+A `booked` room is settled, so its host may leave — the same ruling as §12's
+first entry.
+
+The date bound is load-bearing, and review caught its absence as a blocker.
+**Nothing in this product can close a room:** `rooms.leave` throws
+`HOST_CANNOT_LEAVE` for the host, and there is no cancel or delete. So a
+refusal on status alone means one abandoned `lobby` room — a mistyped date, a
+plan that fell through — refuses that person's deletion *permanently*, and the
+first draft of the message told them to "close the room", which is not a thing
+they can do. A night in the past is not a night anyone can still lose, so the
+host seat is given up and the dead room is left empty. The longest anyone can
+now be held is until a date they chose themselves. **The guard reads `members.isHost`, not `rooms.hostUserId`.** A second review
+finding, and a griefing vector in the first draft: the two can disagree.
+`rooms.join` hands the host seat of an *empty demo room* to whoever walks in
+first (`claimsHostSeat`, `convex/rooms.ts`), setting `isHost: true` while
+`hostUserId` keeps pointing at the synthetic seed id. So somebody could take a
+demo room's host seat, let a group gather, then delete their account — the
+`hostUserId` guard saw no rooms they "hosted", detached the only host row, and
+left a roomful of people in a room that can never start, walking around
+`HOST_CANNOT_LEAVE` on the way. Asking the seats makes this guard agree with
+every other host check in the product (`deck.ts`, `plans.ts`, `rooms.ts` all
+read `isHost`), and it reads rows already in hand — so the `by_host_status`
+index the first draft added is gone again.
+
+**The tombstone is enforced in the backend, not by a redirect.**
+`convex/lib/access.ts` gained `requireLiveUserId`, and `rooms.create` uses it:
+a deleted account calling straight past the UI could otherwise open new rooms
+and be their host, and then `purgeExpired` would erase the profile out from
+under them, leaving live rooms hosted by nobody (`ACCOUNT_DELETED`).
+Deliberately **not** applied to `rooms.join` — a deleted account taking a seat
+is exactly a guest taking a seat, which the product already allows for people
+with no account at all.
+
+If a reviewer wants the stricter no-past-nights behaviour back, the honest way
+is a `rooms.close` mutation for the host, not the removal of the date bound.
+
+**`/restore` is the one screen that admits a tombstoned row exists.**
+`/settings` and `/start` both redirect to it rather than each growing their own
+copy of the offer, so the deadline, the wording, and the fact that seats do not
+come back cannot drift apart.
+
+**The index trap, written down because it is a data-loss bug and not a style
+point.** A document with no `deletedAt` is still in `by_deletedAt`, and an
+absent value sorts BEFORE every number. A one-sided `q.lt("deletedAt", cutoff)`
+therefore matches every *live* profile, and the daily tidy-up job would delete
+the accounts of everyone who never asked. The range is bounded at both ends —
+`q.gt("deletedAt", 0).lt("deletedAt", cutoff)` — and `gt(0)` is the floor that
+excludes "absent", not a plausible-timestamp check.
+`convex/account.test.ts` fails on both counts if that floor is removed.
+
+### Known limitation — the Better Auth record outlives the purge
+
+`purgeExpired` deletes **our** `profiles` row. It does **not** delete the Better
+Auth user record, because Better Auth's `deleteUser` needs the user's own
+session and there is none fourteen days later. What survives is the signup
+credential — email and name — holding nothing the product derived. Removing it
+too needs the Better Auth `admin` plugin; that is a follow-up, listed in §13,
+rather than something done quietly.
+
+### The rest of the surface
+
+- **`/settings`** — signed in as; rename; your answers (rendered from the stored
+  `answers`) with "Retake the quiz" → `/start?retake=1`, which seeds the funnel
+  from what you said rather than a blank run; your rooms; sign out; delete.
+- **`profiles.renameMe`** writes `profiles.displayName` only and leaves Better
+  Auth's `user.name` alone. `profiles.write` correspondingly stopped overwriting
+  the name on the update path, so a retake no longer silently undoes a rename.
+  Two sources of truth kept in sync by hand is the drift this avoids.
+- **`profiles.myRooms`** closes a real recovery gap: a room lives behind a
+  `sessionKey` in one browser's storage, so a cleared cache made your own room
+  unreachable unless you remembered four digits. `rooms.join` could always
+  recognise a signed-in member and hand back the same seat; nothing could say
+  which door to knock on.
+- **Sign-out clears three stores**, through one `clearLocalState()`
+  (`src/lib/signout.ts`) rather than a habit at three call sites — because the
+  defect review found was exactly a forgotten call. Better Auth's session, the
+  `questly-session-` room capabilities, and the funnel draft are independent.
+  Leaving the capabilities behind lets the next person on a shared laptop walk
+  into every room the last one was in. Leaving the **draft** behind is worse and
+  less obvious: `/start` restores it for whoever signs in *next*, and finishing
+  the funnel submits it through `saveQuiz`, which derives the user id from the
+  *current* identity — so one person's quiz answers were written to the next
+  person's account, shown back to them as "Your answers", and used to rank their
+  decks.
+- **The landing page is now auth-aware**, read server-side through
+  `fetchAuthQuery` so there is no signed-out flash. The cost is that `/` is no
+  longer statically rendered.
+- **The account door sits beside `<ThemeToggle />`** on `/`, `/start` and
+  `/room/[code]` — a guest who taps a group-chat link never passes the landing
+  page, so that was the only door to the account and it was on a screen they
+  never see.
+
+### The header is two roundels
+
+The header used to be a three-button colour bar plus a "Settings" text link.
+Both are now `MenuRoundel`
+(`src/components/questly/MenuRoundel.tsx`) — one primitive, drawn twice.
+
+- **Why a roundel and not an avatar-and-caret kit.** `globals.css` states the
+  design as "Melbourne wayfinding — one orange line, roundel stops", and `.node`
+  already draws stops as circles. Two header controls that are both stops on
+  that line get drawn as stops. One interaction to learn, used twice.
+- **Filled vs hollow is information, not decoration.** The account roundel is
+  filled (`border-action-edge bg-action text-on-action`, the pairing `Plate`'s
+  action variant uses) the way `.node[data-state="locked"]` fills a settled
+  stop; the colour-mode roundel is hollow, because a setting is open. Orange on
+  iris is 2.95:1, under SC 1.4.11 — which is why the fill carries a
+  `--action-edge` boundary rather than moving to a different orange.
+- **The menu surface is `--ground`, deliberately not `--ground-raised`.** The
+  page ground is `--ground-deep`, so `--ground` already reads as raised against
+  it, and it is the surface `--text-dim` (5.26:1 / 6.21:1) and `--danger`
+  (5.03:1 / 6.30:1) have been *measured* against. `--ground-raised` has no
+  measured pairings in this repository, and §10's standing rule after nineteen
+  wrong ratios is that new markup reuses computed pairings rather than claiming
+  new ones. The `--text-dim` border does the separating a raised fill would;
+  `--hairline` would not, at 1.44:1.
+- **"Delete account" in the menu navigates to `/settings#leaving`. It does not
+  delete.** An account-ending action one tap deep in a dropdown is a trap —
+  there is no undo for the seats it gives up, and a menu is exactly where a
+  mis-tap happens. The existing two-step `ConfirmButton` and the sentence about
+  what does not come back stay on `/settings`.
+- **The keyboard rule is a pure function** (`src/lib/menu.ts`), because the test
+  suite is one `edge-runtime` environment with no DOM: a rule living inside the
+  component could not be tested at all. `menuKey` returns `null` for keys that
+  are not the menu's, and the component must NOT `preventDefault` on those — or
+  Tab stops working and nothing on the page hears a keystroke again. `openIndex`
+  encodes why the pattern has two open keys: ArrowUp opens on the *last* item.
+- **The badge is never the accessible name.** Initials are an abbreviation; "BC"
+  announces as "bee see". `badgeLabel()` gives the button "Account menu for
+  {name}" and the visible glyph is `aria-hidden`. `initialsFor()` takes the first
+  and *last* word ("Bec van der Meer" → BM), treats hyphens and apostrophes as
+  one word, and is Unicode-aware — a Latin-only class would hand people the "?"
+  fallback instead of their own initial.
+- **`user === undefined` renders a 44px empty box, not a "Sign in" link.** The
+  query is still in flight; drawing the signed-out state there flashes it at a
+  signed-in person on every page load.
+
+### One frame — `src/components/questly/Screen.tsx`
+
+Eight routes carried hand-written shells between them: four column widths (420 /
+460 / 560), three horizontal paddings, four body gaps, two vertical alignments,
+two different words in the left slot, eleven copies of the header row and four
+copies of the loading screen. Nothing chose any of that. The visible cost was
+that the roundels landed somewhere different on almost every screen — on
+`/sign-in` the whole column was centred, so the colour switch sat halfway down
+the page; one route later it was at the top.
+
+- **The header is a band of fixed height (76px) at the top of every route**, and
+  the content starts under it. The design is stated as Melbourne wayfinding, and
+  the one thing a transit network is strict about is that the sign is in the same
+  place at every stop.
+- **The body centres in whatever height is left below the band, on every
+  route.** No prop, no exception — a screen shorter than the viewport sat with
+  its content jammed under the band and a void running to the bottom, which is
+  what "no concrete layout" meant. The band does not move either way: it is a
+  sibling of the column that centres, not part of it.
+- **Why that is safe on a long screen**, which is the thing to check before
+  copying it: `main` is `flex-1` inside a `min-h-full` body, and a flex item's
+  `min-height: auto` floors it at its content — so `/settings` grows rather than
+  centring and clipping its own top. There is free space to distribute only when
+  the content really is shorter than the viewport.
+- **It is deliberately not sticky.** `/room` is a swipe deck, and 76px of pinned
+  chrome is 76px the card does not get on a phone. The defect worth fixing was
+  the header moving *between* routes.
+- **The left slot is the product name, not the screen name.** A station sign
+  naming the station is the tempting version and it is wrong here — every screen
+  already opens with an `<h1>` saying where you are. The wordmark is constant and
+  is the way back to `/`.
+- Three props, each used: `bleed` (`/room` only — the deck is full-bleed and its
+  four screens carry their own padding; the band keeps its padding regardless),
+  `badge={false}` (`/sign-in`, `/sign-up` — a "Sign in" control beside a sign-in
+  form is the same offer twice), `wordmark={false}` (`/` — the `<h1>` *is* the
+  wordmark at 64px).
+- **`ScreenPending` is the frame's ground and one line, not the frame with an
+  empty body.** All four copies it replaced drew the header first, and a header
+  whose account roundel resolves a beat after the page does is a control that
+  appears under the thumb after you have decided where to tap.
+- `/settings` gained the account roundel it did not have, and the `/room` demo
+  banner moved from above the header to under it — the band is chrome, the
+  banner is a fact about the room.
+
+### Avatar upload
+
+`profiles.generateAvatarUploadUrl` → POST → `profiles.setAvatar`, with the
+limits shared by both ends in `convex/lib/avatar.ts` (2MB; PNG/JPEG/WebP/GIF).
+SVG is excluded on purpose — it is a script-execution surface.
+
+- **The URL is resolved per read, never stored.** `profiles.me` returns
+  `avatarUrl` from `ctx.storage.getUrl(avatarId)`; the table holds the
+  `Id<"_storage">`. This is why `publicProfileValidator` stopped being a straight
+  doc projection.
+- **`generateAvatarUploadUrl` requires an account**, so the storage bill is not
+  open to anyone who can reach the endpoint.
+- **The check order in `setAvatar` is load-bearing, and a test found out why.**
+  A Convex mutation is a transaction: `ctx.storage.delete` followed by a throw
+  deletes *nothing*. So the deleted-account path *returns* rather than throwing —
+  that is what lets its cleanup commit. The type/size refusals still throw, and
+  therefore still leave the uploaded blob behind; that is stated at the call site
+  and a sweep over `_storage` is listed as a follow-up rather than pretended
+  away.
+- The previous avatar is deleted only *after* the patch succeeds.
+
+### Verification
+
+`npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx next build` builds all
+11 routes; `npm test` 440 passing (`convex/account.test.ts` 31,
+`convex/profiles.test.ts` 46 including the avatar cases, new
+`src/lib/menu.test.ts` 16 and `src/lib/avatar.test.ts` 15, plus additions to
+`src/lib/session.test.ts`). Every guard was checked by reverting it and
+confirming its own test fails: the `deletedAt` floor (2), the `whenAt` bound (2),
+the `isHost` seat check (1), `requireLiveUserId` (1), `forgetDraft` (1). Both
+roundels and the avatar section were also reviewed in a browser against the
+running dev server. Pushed to `zany-cheetah-110`: `npx convex
+function-spec` lists `account.deleteAccount/restoreAccount/deletionStatus/
+purgeExpired` and `profiles.myRooms/renameMe/setAvatar/clearAvatar/
+generateAvatarUploadUrl`, so the new fields and indexes are live.

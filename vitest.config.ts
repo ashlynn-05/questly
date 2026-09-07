@@ -1,6 +1,18 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // The two path aliases `tsconfig.json` declares. Vitest resolves neither on
+  // its own, so a `src/lib` module that imports a constant from `convex/lib`
+  // -- which is the point of putting shared constants there -- typechecks and
+  // then fails to import under test. Declared here rather than reached for
+  // with `../../convex/...` in one file, because the next one would do it too.
+  resolve: {
+    alias: {
+      "@convex": fileURLToPath(new URL("./convex", import.meta.url)),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   test: {
     // convex-test runs functions in Convex's own runtime, not Node.
     environment: "edge-runtime",

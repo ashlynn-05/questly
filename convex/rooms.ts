@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import schema, { moodValidator, stopValidator } from "./schema";
 import {
   MAX_ROOM_MEMBERS,
-  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireMember, requireUserId, roomByCode, safeUserId,
+  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireLiveUserId, requireMember, roomByCode, safeUserId,
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { detachMember } from "./lib/roster";
@@ -110,7 +110,9 @@ export const create = mutation({
   },
   returns: v.object({ code: v.string(), sessionKey: v.string() }),
   handler: async (ctx, args) => {
-    const userId = await requireUserId(ctx);
+    // Live, not merely signed in: a deleted account must not be able to become
+    // the host of a new room that would outlive its own profile.
+    const userId = await requireLiveUserId(ctx);
     const { hostName, ...room } = args;
 
     // Four digits collide eventually; retry rather than hand out a dead code.

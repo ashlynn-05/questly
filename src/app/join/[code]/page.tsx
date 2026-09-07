@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
-import { ThemeToggle } from "@/components/questly/theme";
+import { Screen } from "@/components/questly/Screen";
 import { isJoinReason, type JoinReason } from "@/lib/room";
 import { useSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
@@ -80,15 +80,10 @@ function JoinForm({ code }: { code: string }) {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-7 bg-ground px-5 py-10">
-      {/* The guest journey -- tap a link in a group chat, land here -- never
-          passes the landing page, so until now a guest could not reach the day
-          palette at all. */}
-      <div className="flex items-start justify-between gap-3">
-        <p className="board text-[11px] text-accent">Questly</p>
-        <ThemeToggle />
-      </div>
-
+    // The guest journey -- tap a link in a group chat, land here -- never
+    // passes the landing page, so this is the only place a guest can reach the
+    // day palette or a way into an account.
+    <Screen>
       <h1 className="flex flex-col gap-2">
         <span className="board text-[11px] text-accent">Join room</span>
         <span className="num text-[52px] leading-none text-text">{code}</span>
@@ -145,7 +140,7 @@ function JoinForm({ code }: { code: string }) {
           onClick={() => void submit()}
         />
       </form>
-    </main>
+    </Screen>
   );
 }
 

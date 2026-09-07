@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -9,7 +9,7 @@ import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
 import type { Mood } from "@convex/lib/scoring";
 import { Plate } from "@/components/questly/Plate";
 import { Chip } from "@/components/questly/Chip";
-import { ThemeToggle } from "@/components/questly/theme";
+import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { storeSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
@@ -84,12 +84,38 @@ function roomWhenLabel(at: number): string {
   return today ? time : `${d.toLocaleDateString("en-AU", { weekday: "short" })} ${time}`;
 }
 
-export default function StartPage() {
+function StartFunnel() {
   const router = useRouter();
   const profile = useQuery(api.profiles.me, {});
+  const deletion = useQuery(api.account.deletionStatus, {});
   const saveQuiz = useAction(api.profiles.saveQuiz);
   const createRoom = useMutation(api.rooms.create);
   const joinRoom = useMutation(api.rooms.join);
+
+  /**
+   * `/settings` sends somebody here to change answers they can already see.
+   *
+   * Without it the quiz is answered once per account and never again: the
+   * resume below puts a returning host straight on the mood step, so the seven
+   * cards that decide every venue score they will ever be shown were a one-way
+   * door. This is the way back through it.
+   */
+  const retake = useSearchParams().get("retake") === "1";
+
+  /**
+   * An account on its way out belongs on `/restore`, not at the top of the
+   * funnel.
+   *
+   * `profiles.me` returns null for a tombstoned profile -- deliberately, so no
+   * other screen has to know that state exists -- and the resume below reads
+   * exactly that null as "has not answered the quiz". So somebody who deleted
+   * their account and signed back in would be walked through onboarding again
+   * with their own answers sitting one query away. This is the one place that
+   * has to know better.
+   */
+  useEffect(() => {
+    if (deletion) router.replace("/restore");
+  }, [deletion, router]);
 
   /**
    * The whole funnel in one value, and the reason a sign-in round trip no
@@ -104,7 +130,32 @@ export default function StartPage() {
    */
   const restored = useSyncExternalStore(subscribeToDraft, restoredDraft, noDraft);
   const [edited, setEdited] = useState<FunnelDraft | null>(null);
-  const draft = edited ?? restored ?? EMPTY_DRAFT;
+
+  /**
+   * A retake starts from what you said last time, not from zero.
+   *
+   * Slotted into the same `edited ?? … ?? EMPTY_DRAFT` chain rather than pushed
+   * into state by an effect, so it needs no second render and no ref guarding a
+   * one-shot write: it is simply the starting position for a retake, exactly as
+   * `restored` is the starting position for a resumed sitting. The moment
+   * anything is tapped `edited` takes over, and because `edit()` spreads the
+   * current draft, the seeded answers carry forward with it.
+   *
+   * `profile` is undefined for the first render or two; until it lands there is
+   * nothing to seed from and the ordinary chain applies. Nobody can have tapped
+   * anything by then, so there is nothing to overwrite when it does.
+   */
+  const retakeSeed: FunnelDraft | null =
+    retake && profile
+      ? {
+          ...EMPTY_DRAFT,
+          step: "quiz",
+          answers: profile.answers ?? {},
+          goals: profile.goals ?? [],
+        }
+      : null;
+
+  const draft = edited ?? retakeSeed ?? restored ?? EMPTY_DRAFT;
 
   /** Change one or more answers, and write the funnel down as we go. */
   function edit(patch: Partial<FunnelDraft>) {
@@ -129,8 +180,10 @@ export default function StartPage() {
   const whens = useMemo(() => whenOptions(), []);
   const when = whens.find((w) => w.id === draft.whenId) ?? whens[0];
 
-  // The quiz is shown once per account and never again: a returning host lands
-  // straight on the mood step.
+  // The quiz is shown once per account: a returning host lands straight on the
+  // mood step -- unless they came here from `/settings` to answer it again, in
+  // which case the seed above has already latched `step: "quiz"` and this does
+  // not get a say.
   const resumeAt: Step | null = profile === undefined ? null : profile ? "mood" : "quiz";
   const current = draft.step ?? resumeAt;
 
@@ -289,23 +342,18 @@ export default function StartPage() {
 
   if (current === null) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-ground">
-        <p className="board text-[11px] text-accent">Loading…</p>
-      </main>
+      <ScreenPending />
     );
   }
 
   const backTo = BACK_TO[current];
 
   return (
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col gap-8 bg-ground px-5 py-10">
-      {/* The first in-product screen most people see, and until now the whole
-          product had no way to reach the day palette from inside itself. */}
-      <div className="flex items-start justify-between gap-3">
-        <p className="board text-[11px] text-accent">Questly</p>
-        <ThemeToggle />
-      </div>
-
+    // The first in-product screen most people see. The band's account
+    // roundel matters most here: the funnel is about to write a taste profile
+    // to whichever account this browser is holding, and this is where it says
+    // which one that is.
+    <Screen>
       {/* Always mounted, filled when something is refused: a live region
           inserted into the DOM with its text already in it is frequently never
           announced. `empty:-mb-8` takes back the flex gap an empty paragraph
@@ -340,7 +388,7 @@ export default function StartPage() {
           //
           // Disabled swaps the token, never the opacity -- the same rule
           // `Plate.tsx` states, which this control is not exempt from. This
-          // sits on `--ground` (the `<main>` above is `bg-ground`), so
+          // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
           // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
           // 2.63:1 light, both under the 4.5:1 this project does not waive for
           // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
@@ -680,6 +728,19 @@ export default function StartPage() {
           />
         </section>
       ) : null}
-    </main>
+    </Screen>
+  );
+}
+
+/**
+ * `useSearchParams` client-side renders the tree up to the nearest Suspense
+ * boundary, so the funnel gets one of its own -- the same shape `/sign-in` and
+ * `/join/[code]` already use for the same reason.
+ */
+export default function StartPage() {
+  return (
+    <Suspense>
+      <StartFunnel />
+    </Suspense>
   );
 }

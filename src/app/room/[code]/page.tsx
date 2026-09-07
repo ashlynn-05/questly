@@ -6,7 +6,7 @@ import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
-import { ThemeToggle } from "@/components/questly/theme";
+import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { errorCode, userMessage } from "@/lib/errors";
 import { roomRedirect, statusTransition } from "@/lib/room";
 import { useSessionKey } from "@/lib/session";
@@ -147,9 +147,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
 
   if (!ready || !sessionKey || view === undefined || view === null) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-ground">
-        <p className="board text-[11px] text-accent">Finding the room…</p>
-      </main>
+      <ScreenPending label="Finding the room…" />
     );
   }
 
@@ -158,25 +156,21 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
   // One route, driven entirely by room.status: the same URL is the lobby, the
   // deck, the plan and the booking, so a shared link never goes stale.
   return (
-    <main className="mx-auto w-full max-w-[460px] flex-1 bg-ground">
-      {/* The label the funnel puts on a seeded room must not vanish at the
-          door -- inside the room is exactly where someone starts believing the
-          roster, the venues and the booking are real. One place, so it is on
-          the lobby, the deck, the plan and the booking alike. */}
+    // `bleed`: the deck is a full-bleed card surface and each of the four
+    // room screens carries its own padding. The band above keeps its padding
+    // either way, so the roundels stay on the same line as every other screen.
+    <Screen bleed>
+      {/* Under the band, not above it: the band is chrome and this is a fact
+          about the room. The label the funnel puts on a seeded room must not
+          vanish at the door -- inside the room is exactly where someone starts
+          believing the roster, the venues and the booking are real. One place,
+          so it is on the lobby, the deck, the plan and the booking alike. */}
       {view.room.demo ? (
-        <p className="border-b border-hairline px-5 py-2 text-[12px] leading-snug text-dim">
+        <p className="border-y border-hairline px-5 py-2 text-[12px] leading-snug text-dim">
           Demonstration room. The people and the places in here are seeded examples — nobody
           is really waiting, no venue has agreed to anything, and any booking is simulated.
         </p>
       ) : null}
-
-      {/* One mode control for all four room screens. Without it the day
-          palette was unreachable from anywhere inside the product: a guest who
-          taps a group-chat link goes /join -> /room and never passes the
-          landing page, which is the only other screen that had one. */}
-      <div className="flex justify-end px-5 pt-4">
-        <ThemeToggle />
-      </div>
 
       {view.room.status === "lobby" ? (
         <Lobby
@@ -247,6 +241,6 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
       ) : null}
 
       {view.room.status === "booked" ? <Booked view={view} headingRef={headingRef} /> : null}
-    </main>
+    </Screen>
   );
 }

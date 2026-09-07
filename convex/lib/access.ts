@@ -25,6 +25,40 @@ export async function requireUserId(ctx: AnyCtx): Promise<string> {
 }
 
 /**
+ * Signed in, AND not on the way out.
+ *
+ * `profiles.deletedAt` was honoured only by the queries a screen reads --
+ * `profiles.me`, `account.deletionStatus` -- which made the tombstone a
+ * client-side redirect wearing a backend's clothes. A deleted account calling
+ * `rooms.create` straight past the UI could still open new rooms and be their
+ * host, and then `account.purgeExpired` would erase the profile out from under
+ * them fourteen days later, leaving live rooms hosted by nobody.
+ *
+ * Deliberately NOT applied to `rooms.join`. A deleted account taking a seat is
+ * exactly a guest taking a seat, which the product already allows for people
+ * with no account at all; refusing it would be stricter than the rule it is
+ * enforcing. Hosting is the thing that outlives the account, so hosting is
+ * what this guards.
+ */
+export async function requireLiveUserId(ctx: Ctx): Promise<string> {
+  const userId = await requireUserId(ctx);
+
+  const profile = await ctx.db
+    .query("profiles")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  // No profile is not a tombstone -- it is somebody who never finished the
+  // quiz, and they may host.
+  if (profile?.deletedAt !== undefined) {
+    throwUserError(
+      "ACCOUNT_DELETED",
+      "This account is being deleted. Restore it first, and then you can start a quest.",
+    );
+  }
+  return userId;
+}
+
+/**
  * Guests have no account, so they cannot be identified by auth. A sessionKey is
  * a capability: holding it authorises acting as that one member in that one
  * room, and nothing else. It is never an identity claim, and no function may

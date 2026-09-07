@@ -37,6 +37,9 @@ export const stopValidator = v.object({
 // reachable from public, unauthenticated functions -- `events.remove` let any
 // signed-in user delete any row, and the snippet actions spent OpenAI quota for
 // anyone holding the deployment URL. Neither had a product feature underneath.
+/** One more-likely / less-likely card answer. */
+export const answerValidator = v.union(v.literal("more"), v.literal("less"));
+
 export default defineSchema({
   profiles: defineTable({
     userId: v.string(),
@@ -47,8 +50,44 @@ export default defineSchema({
     // Optional: the table predates the goals question, and older rows never
     // wrote one. New writes always include it (as `[]` at minimum).
     goals: v.optional(v.array(v.string())),
+    /**
+     * The raw card answers, kept so a person can be shown what they said.
+     *
+     * They used to be thrown away at the door: only the derived artefacts
+     * survived (`tasteSentence`, `moodAffinity`, `tasteVector`), and not one of
+     * them is invertible. `moodAffinity` sums the two cards that share a mood,
+     * so a stored `0` means "one more, one less" and "neither answered" alike --
+     * a settings screen reading it back would have to guess, and guessing at
+     * somebody's own answers is worse than not showing them.
+     *
+     * Optional because every row written before this column existed has no
+     * answers to show; `profiles.me` hands back `undefined` for those and the
+     * screen says so rather than inventing a set.
+     */
+    answers: v.optional(v.record(v.string(), answerValidator)),
+    /**
+     * When this account was deleted, and the whole of the tombstone.
+     *
+     * Deletion is soft on purpose: the person has a window in which signing
+     * back in restores them, and `account.purgeExpired` erases the row for good
+     * once that window closes. So this field is a date, not a flag -- the date
+     * IS the deadline. `profiles.me` returns null while it is set, so a deleted
+     * account looks signed-out to the rest of the product without any other
+     * screen having to know this column exists.
+     */
+    deletedAt: v.optional(v.number()),
+    // The picture in this person's roundel, as a storage id and never a URL.
+    // A stored URL would be a signed, expiring string baked into a row: it goes
+    // stale on its own schedule and nothing here would know. `profiles.me`
+    // resolves it through `ctx.storage.getUrl` on every read instead, which is
+    // the only value that is true at the moment it is used.
+    avatarId: v.optional(v.id("_storage")),
     createdAt: v.number(),
-  }).index("by_user", ["userId"]),
+  })
+    .index("by_user", ["userId"])
+    // The purge job's read path. Without it, the daily cron is a full scan of
+    // a table that grows with every account the product ever had.
+    .index("by_deletedAt", ["deletedAt"]),
 
   // Hand-maintained partner inventory. Demonstration data, never a real deal.
   venues: defineTable({
@@ -115,6 +154,12 @@ export default defineSchema({
   })
     .index("by_code", ["code"])
     .index("by_visibility_status", ["visibility", "status"])
+    // "The rooms you host", for the settings screen. `hostUserId` has been pure
+    // provenance until now -- nothing authorises against it and nothing here
+    // starts to -- but a host who lost their session key had no way back into
+    // their own room short of remembering four digits, so the column is read as
+    // well as written.
+    .index("by_host", ["hostUserId"])
     // `deck.recentDeck` looks for rooms whose deck was built inside the TTL.
     // Without this it is a full `rooms` scan on the critical path of every
     // build, so the whole product stops building decks the moment the table
@@ -131,7 +176,13 @@ export default defineSchema({
     joinedAt: v.number(),
   })
     .index("by_room", ["roomId"])
-    .index("by_room_session", ["roomId", "sessionKey"]),
+    .index("by_room_session", ["roomId", "sessionKey"])
+    // Every seat one account holds, across rooms. Two readers, and neither can
+    // afford to be a scan of a table that grows with every guest who ever
+    // joined anything: "your rooms" on the settings screen, and the detach pass
+    // in `account.deleteAccount`. Sparse by nature -- a guest row carries no
+    // `userId`, and Convex does not index a field that is not there.
+    .index("by_user", ["userId"]),
 
   quests: defineTable({
     roomId: v.id("rooms"),

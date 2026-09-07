@@ -75,3 +75,36 @@ export const Hand = (p: P) => (
     <path d="M9 11V5.6a1.6 1.6 0 1 1 3.2 0V11m0-1.4a1.6 1.6 0 1 1 3.2 0V12m0-1a1.6 1.6 0 0 1 3.2 0v4.6A5.4 5.4 0 0 1 13 21h-1a5 5 0 0 1-4.3-2.4L4.9 15c-.6-1 .5-2.2 1.5-1.7L9 15" />
   </svg>
 );
+
+/**
+ * The mark on a help trigger. Drawn rather than a `?` character for the reason
+ * stated at the top of this file, and with a concrete second reason here: the
+ * glyph sits inside a 24px roundel beside an 11px label, and a text `?` in the
+ * body face lands off-centre in that circle and changes size with the label it
+ * happens to sit next to. A path is the same shape at every size.
+ *
+ * No enclosing circle in the artwork -- the roundel around it is the circle,
+ * and drawing a second one inside would be a ring in a ring.
+ */
+export const Question = (p: P) => (
+  <svg {...S} {...p}>
+    {/* Bowl and stem in one path: the large-arc sweep is what gives the hook
+        its ~270 degrees rather than a shallow curve that reads as a comma. */}
+    <path d="M8.6 9a3.4 3.4 0 1 1 3.4 3.4v2.4" />
+    {/* A dot, not a period: a short segment with the file's round line caps. A
+        zero-length path is the tidier spelling and does not render in every
+        engine. */}
+    <path d="M12 18v.2" />
+  </svg>
+);
+
+/**
+ * Back. An arrow into the shaft rather than a lone chevron: a chevron on its
+ * own is a disclosure marker everywhere else in this product's vocabulary, and
+ * a stop on a line is somewhere you travel back along, not something you fold.
+ */
+export const Back = (p: P) => (
+  <svg {...S} {...p}>
+    <path d="M19 12H5.5M11 5.5 4.5 12l6.5 6.5" />
+  </svg>
+);

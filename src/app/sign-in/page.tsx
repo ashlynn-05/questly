@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button, ErrorText, Input } from "@/components/ui";
 import { SocialButtons } from "@/components/SocialButtons";
-import { ThemeToggle } from "@/components/questly/theme";
+import { Screen } from "@/components/questly/Screen";
 
 function SignInForm() {
   const router = useRouter();
@@ -35,14 +35,9 @@ function SignInForm() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-6 bg-ground px-5 py-10">
-      {/* The only mode control a visitor can reach before they have an
-          account. Every screen in the product now carries one. */}
-      <div className="flex items-start justify-between gap-3">
-        <p className="board text-[11px] text-accent">Questly</p>
-        <ThemeToggle />
-      </div>
-
+    // No account roundel: a "Sign in" control beside a sign-in form is the
+    // same offer twice.
+    <Screen badge={false}>
       <h1 className="display text-[38px] text-text">Sign in</h1>
 
       <form action={onSubmit} className="flex flex-col gap-3">
@@ -65,7 +60,7 @@ function SignInForm() {
           Sign up
         </Link>
       </p>
-    </main>
+    </Screen>
   );
 }
 

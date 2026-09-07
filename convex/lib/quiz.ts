@@ -18,6 +18,19 @@ export const QUIZ_CARDS: Array<{ id: string; text: string; mood: Mood }> = [
 export type QuizAnswers = Record<string, "more" | "less">;
 
 /**
+ * The only valid card ids, in the same shape and for the same reason as
+ * `GOAL_IDS` below.
+ *
+ * This did not matter while the answers were only ever summed on the way past:
+ * `tasteSentence` and `moodAffinity` both iterate `QUIZ_CARDS` and simply never
+ * look at a key that is not one of them, so an invented key was inert. It
+ * matters now that the answers are STORED and read back to the person on
+ * `/settings` -- an unvalidated `v.record(v.string(), ...)` would let a client
+ * write arbitrary keys into a row the product then renders.
+ */
+export const CARD_IDS: ReadonlySet<string> = new Set(QUIZ_CARDS.map((c) => c.id));
+
+/**
  * The eighth question: not a card to react to, but what the night is actually
  * for. Multi-select, because "meeting people" and "a story worth telling" are
  * not mutually exclusive. Same voice as the cards above -- confident, a little

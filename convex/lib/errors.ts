@@ -39,7 +39,15 @@ export type ErrorCode =
   | "PROPOSAL_EXISTS"
   | "PROPOSAL_NOT_FOUND"
   | "NOTHING_TO_BOOK"
-  | "ROOM_BOOKED";
+  | "ROOM_BOOKED"
+  | "INVALID_ANSWER"
+  | "NAME_REQUIRED"
+  | "HOSTING_LIVE_ROOM"
+  | "NOT_DELETED"
+  | "ACCOUNT_DELETED"
+  | "AVATAR_MISSING"
+  | "AVATAR_TYPE"
+  | "AVATAR_SIZE";
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });

@@ -8,12 +8,16 @@
  * @module
  */
 
+import type * as account from "../account.js";
 import type * as ai_embeddings from "../ai/embeddings.js";
 import type * as auth from "../auth.js";
 import type * as bookings from "../bookings.js";
+import type * as crons from "../crons.js";
 import type * as deck from "../deck.js";
 import type * as http from "../http.js";
 import type * as lib_access from "../lib/access.js";
+import type * as lib_account from "../lib/account.js";
+import type * as lib_avatar from "../lib/avatar.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_match from "../lib/match.js";
 import type * as lib_openai from "../lib/openai.js";
@@ -39,12 +43,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account: typeof account;
   "ai/embeddings": typeof ai_embeddings;
   auth: typeof auth;
   bookings: typeof bookings;
+  crons: typeof crons;
   deck: typeof deck;
   http: typeof http;
   "lib/access": typeof lib_access;
+  "lib/account": typeof lib_account;
+  "lib/avatar": typeof lib_avatar;
   "lib/errors": typeof lib_errors;
   "lib/match": typeof lib_match;
   "lib/openai": typeof lib_openai;
