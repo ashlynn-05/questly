@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button, ErrorText, Input } from "@/components/ui";
 import { SocialButtons } from "@/components/SocialButtons";
-import { ThemeToggle } from "@/components/questly/theme";
+import { Screen } from "@/components/questly/Screen";
 
 function SignUpForm() {
   const router = useRouter();
@@ -37,12 +37,7 @@ function SignUpForm() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center gap-6 bg-ground px-5 py-10">
-      <div className="flex items-start justify-between gap-3">
-        <p className="board text-[11px] text-accent">Questly</p>
-        <ThemeToggle />
-      </div>
-
+    <Screen badge={false}>
       <h1 className="display text-[38px] text-text">Create an account</h1>
 
       <form action={onSubmit} className="flex flex-col gap-3">
@@ -74,7 +69,7 @@ function SignUpForm() {
           Sign in
         </Link>
       </p>
-    </main>
+    </Screen>
   );
 }
 
