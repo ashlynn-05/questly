@@ -337,7 +337,16 @@ export default function StartPage() {
           // `self-start` shrinks this to its content width, and "BACK" at 11px
           // is nowhere near the 44px target floor this project holds itself
           // to. The padding is what makes the target, not the label.
-          className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:opacity-50"
+          //
+          // Disabled swaps the token, never the opacity -- the same rule
+          // `Plate.tsx` states, which this control is not exempt from. This
+          // sits on `--ground` (the `<main>` above is `bg-ground`), so
+          // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
+          // 2.63:1 light, both under the 4.5:1 this project does not waive for
+          // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
+          // and it is the tone the rest of the funnel already uses for "not
+          // right now".
+          className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:text-dim"
         >
           Back
         </button>
