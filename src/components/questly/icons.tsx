@@ -97,3 +97,14 @@ export const Question = (p: P) => (
     <path d="M12 18v.2" />
   </svg>
 );
+
+/**
+ * Back. An arrow into the shaft rather than a lone chevron: a chevron on its
+ * own is a disclosure marker everywhere else in this product's vocabulary, and
+ * a stop on a line is somewhere you travel back along, not something you fold.
+ */
+export const Back = (p: P) => (
+  <svg {...S} {...p}>
+    <path d="M19 12H5.5M11 5.5 4.5 12l6.5 6.5" />
+  </svg>
+);

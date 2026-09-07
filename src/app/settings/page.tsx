@@ -16,8 +16,10 @@ import { Plate } from "@/components/questly/Plate";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { Hint } from "@/components/questly/Hint";
+import { Back } from "@/components/questly/icons";
 import { Input } from "@/components/ui";
 import type { HelpTopic } from "@/lib/help";
+import { groupAnswers } from "@/lib/answers";
 
 /**
  * The account screen the product did not have.
@@ -285,7 +287,27 @@ export default function SettingsPage() {
 
   return (
     <Screen>
-      <h1 className="display text-[38px] text-text">Settings</h1>
+      {/* The way back, at the top where a back control belongs, drawn rather
+          than written. It used to be the words "Back to Questly" at the very
+          bottom of the page -- past six sections, reachable only by scrolling
+          the whole screen you were trying to leave. As a roundel it joins the
+          two already in the band above it: same circle, same 44px target, and
+          the arrow says "back along the line" in the product's own vocabulary
+          instead of spending a line of type on it.
+
+          `items-center` and not `baseline`: the roundel is a shape, and
+          aligning a circle to the baseline of a 38px display face hangs it low
+          against the cap height. */}
+      <div className="flex items-center gap-3">
+        <Link
+          href="/start"
+          aria-label="Back to Questly"
+          className="flex size-[44px] shrink-0 items-center justify-center rounded-full border border-dim text-accent"
+        >
+          <Back className="size-[20px]" />
+        </Link>
+        <h1 className="display text-[38px] text-text">Settings</h1>
+      </div>
 
       {/* Mounted empty and filled later: a live region inserted into the DOM
           with its text already inside it is frequently never announced.
@@ -384,45 +406,41 @@ export default function SettingsPage() {
           </p>
         ) : (
           <>
-            {/* A profile written before the answers were stored has the derived
-                taste sentence and nothing to show underneath it. Saying so is
-                better than rendering seven blanks that read as "no opinion". */}
-            {profile.answers === undefined ? (
-              <p className="text-[13px] leading-snug text-dim">
-                This profile predates the answers being kept, so there is nothing to show
-                — retaking the quiz will store them.
-              </p>
-            ) : (
-              <ul className="flex flex-col">
-                {QUIZ_CARDS.map((card) => {
-                  const answer = profile.answers?.[card.id];
-                  return (
-                    <li
-                      key={card.id}
-                      className="flex items-baseline justify-between gap-3 border-b border-hairline py-2 last:border-b-0"
-                    >
-                      <span className="text-[14px] leading-snug text-text">{card.text}</span>
-                      {/* Fixed width so seven answers read as one column down
-                          the right edge rather than seven ragged endings. */}
-                      <span className="board w-[42px] shrink-0 text-right text-[11px] text-dim">
-                        {answer === "more" ? "More" : answer === "less" ? "Less" : "—"}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            <div className="flex items-baseline justify-between gap-3 pt-2">
-              <h3 className="board text-[11px] text-accent">What the night is for</h3>
+            {/* Grouped by leaning, not listed by card. `src/lib/answers.ts`
+                says why: seven rows with the same word down the right-hand
+                edge is the shape of a table, not the shape of an answer. */}
+            <div className="flex flex-col gap-5">
+              {groupAnswers(QUIZ_CARDS, profile.answers).map((group) => (
+                <div key={group.key} className="flex flex-col gap-1.5">
+                  <h3 className="board text-[11px] text-dim">{group.label}</h3>
+                  <ul className="flex flex-col gap-1.5">
+                    {group.cards.map((card) => (
+                      <li key={card.id} className="text-[15px] leading-snug text-text">
+                        {card.text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
-            <p className="text-[14px] leading-snug text-text">
-              {profile.goals && profile.goals.length > 0
-                ? QUIZ_GOALS.filter((g) => profile.goals?.includes(g.id))
-                    .map((g) => g.text)
-                    .join(" · ")
-                : "Nothing in particular."}
-            </p>
+
+            <div className="flex flex-col gap-1.5 pt-1">
+              <h3 className="board text-[11px] text-dim">What the night is for</h3>
+              {/* A list, not a sentence joined with middle dots. Three goals
+                  dot-joined ran to three wrapped lines and read as one long
+                  clause; separate lines are the same words, countable. */}
+              {profile.goals && profile.goals.length > 0 ? (
+                <ul className="flex flex-col gap-1.5">
+                  {QUIZ_GOALS.filter((g) => profile.goals?.includes(g.id)).map((g) => (
+                    <li key={g.id} className="text-[15px] leading-snug text-text">
+                      {g.text}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[15px] leading-snug text-dim">Nothing in particular.</p>
+              )}
+            </div>
           </>
         )}
 
@@ -462,7 +480,12 @@ export default function SettingsPage() {
             session sit on the same line as the sentence explaining what they
             cost. They used to be a button followed by a paragraph, which put
             the warning BELOW the control it was warning about. */}
-        <div className="flex items-center justify-between gap-3">
+        {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+            area rather than indent: without it these two labels start three
+            pixels in from the column every other row in this screen is flush
+            with. The negative margin is on the row so it holds in the armed
+            state too, where the trigger is replaced by two buttons. */}
+        <div className="-ml-3 flex items-center justify-between gap-3">
           <ConfirmButton
             label="Sign out"
             confirmLabel="Yes, sign out"
@@ -475,7 +498,12 @@ export default function SettingsPage() {
           <Hint topic="signout" />
         </div>
 
-        <div className="flex items-center justify-between gap-3">
+        {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+            area rather than indent: without it these two labels start three
+            pixels in from the column every other row in this screen is flush
+            with. The negative margin is on the row so it holds in the armed
+            state too, where the trigger is replaced by two buttons. */}
+        <div className="-ml-3 flex items-center justify-between gap-3">
           <ConfirmButton
             label="Delete my account"
             confirmLabel="Yes, delete it"
@@ -497,13 +525,6 @@ export default function SettingsPage() {
           <Hint topic="deletion" />
         </div>
       </Section>
-
-      <Link
-        href="/start"
-        className="board flex min-h-[44px] min-w-[44px] w-fit items-center px-1 text-[11px] text-accent underline underline-offset-4"
-      >
-        Back to Questly
-      </Link>
     </Screen>
   );
 }

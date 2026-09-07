@@ -70,7 +70,11 @@ export function Hint({ topic }: { topic: HelpTopic }) {
         onClick={(event) => {
           if (event.target === dialog.current) dialog.current.close();
         }}
-        className="w-[calc(100vw-40px)] max-w-[380px] max-h-[80vh] overflow-y-auto rounded-[6px] border border-dim bg-ground p-5 text-text"
+        // `m-auto` is load-bearing, not a tidy-up: the UA stylesheet centres an
+        // open modal dialog with `margin: auto`, and Tailwind's preflight resets
+        // `margin: 0` on every element, so without a class to win that cascade
+        // the dialog pins itself to the top-left corner of the viewport.
+        className="m-auto max-h-[80vh] w-[calc(100vw-40px)] max-w-[380px] overflow-y-auto rounded-[6px] border border-dim bg-ground p-5 text-text"
         style={{ boxShadow: "var(--shadow)" }}
       >
         <h2 id={id} className="board text-[11px] text-accent">
