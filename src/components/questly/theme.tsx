@@ -1,70 +1,88 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { resolveThemeMode, THEME_STORAGE_KEY, type ThemeMode } from "@/lib/theme";
+import { MenuRoundel } from "./MenuRoundel";
 
-type Mode = ThemeMode;
+/**
+ * The colour switch, collapsed from a three-button bar into one roundel.
+ *
+ * The export keeps its old name because ten screens mount it and none of them
+ * cared which shape it was.
+ *
+ * The bar spent about 200px of every header on a control almost nobody touches
+ * twice, and it sat next to the account link with no visual relationship to it.
+ * Both are now nodes on the header: same size, same shape, same interaction.
+ *
+ * Still three states, not two. "System" is the real default -- a two-way switch
+ * silently overrides whatever the phone already decided, which is the wrong
+ * answer for a product used both at 6pm and at 11am. Collapsing to a cycling
+ * button was the other option and is rejected: cycling hides two of the three
+ * options behind a guess about what comes next, and there is nowhere else in
+ * this product they could be discovered.
+ */
 
-/** Kept as a local alias so the store reads below stay short. */
-const STORAGE_KEY = THEME_STORAGE_KEY;
-
-const OPTIONS: Array<{ id: Mode; label: string }> = [
+const OPTIONS: Array<{ id: ThemeMode; label: string }> = [
   { id: "dark", label: "Night" },
   { id: "system", label: "Auto" },
   { id: "light", label: "Day" },
 ];
 
 /**
- * What the page is ACTUALLY running in. The ORDER lives in `@/lib/theme`
- * alongside the pre-paint script that has to apply the same one, because every
- * time the two were written separately they drifted, and every drift is the
- * same bug: the page in one mode with this switch claiming the other. This
- * function is now only the browser plumbing -- read the URL, read the store,
- * hand both to the one resolver. See `src/lib/theme.ts` for the history.
+ * The glyph is drawn, not lettered, because the roundel is 44px and three
+ * different words do not fit one. Shape carries the state, not colour: a moon,
+ * a half-lit circle, a sun -- distinguishable without seeing the difference
+ * between apricot and iris.
  */
-function resolveMode(): Mode {
-  try {
-    return resolveThemeMode(
-      new URLSearchParams(location.search).get("theme"),
-      localStorage.getItem(STORAGE_KEY),
+function Glyph({ mode }: { mode: ThemeMode }) {
+  if (mode === "dark") {
+    return (
+      <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true" fill="currentColor">
+        <path d="M16.3 12.9A7.2 7.2 0 0 1 7.1 3.7a7.2 7.2 0 1 0 9.2 9.2Z" />
+      </svg>
     );
-  } catch {
-    // No URL and no store to read (Safari's "Block All Cookies", some
-    // embedded webviews). Whatever the OS says, then.
-    return "system";
   }
+  if (mode === "light") {
+    return (
+      <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true" fill="currentColor">
+        <circle cx="10" cy="10" r="4.1" />
+        <g stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+          <path d="M10 1.6v2.2M10 16.2v2.2M18.4 10h-2.2M3.8 10H1.6M15.9 4.1l-1.6 1.6M5.7 14.3l-1.6 1.6M15.9 15.9l-1.6-1.6M5.7 5.7 4.1 4.1" />
+        </g>
+      </svg>
+    );
+  }
+  // Auto: half the roundel lit. The same "it depends" the setting means.
+  return (
+    <svg viewBox="0 0 20 20" className="size-[18px]" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M10 2.8a7.2 7.2 0 0 1 0 14.4Z" fill="currentColor" />
+    </svg>
+  );
 }
 
-/**
- * Three states, not two. "System" is the real default -- a two-way switch would
- * silently override whatever the phone already decided, which is the wrong
- * answer for a product used both at 6pm and at 11am.
- *
- * `role="radiogroup"` is a promise about behaviour, not just a name: exactly one
- * option is a tab stop, and the arrow keys move between them (and select as
- * they go, which is what the WAI-ARIA radio-group pattern specifies).
- */
 export function ThemeToggle() {
-  const [mode, setMode] = useState<Mode>("system");
-  const buttons = useRef<Array<HTMLButtonElement | null>>([]);
+  const [mode, setMode] = useState<ThemeMode>("system");
 
   useEffect(() => {
     // `location.search` and `localStorage` do not exist while this renders on
     // the server, so this read cannot move into the render body or a useState
     // initialiser: the hydration render has to produce what the server sent,
-    // which is "system". A one-shot read of a browser store at mount has
-    // nowhere to put its result except state, which is exactly the shape
-    // `react-hooks/set-state-in-effect` flags -- and here nothing downstream
-    // depends on the value at all. It drives this widget's own highlight and
-    // nothing else; the DOM is already in the right mode, because the pre-paint
-    // script in `@/lib/theme` set `data-theme` before anything was drawn -- and
-    // it resolves through the same `resolveThemeMode`, so they cannot disagree.
-    // So the worst
-    // case this disable buys is one extra render of a three-button switch.
-    // `useSyncExternalStore` would express the same thing without an effect;
-    // it is not used because this value has no subscribers beyond this
-    // component and no writer beyond `choose` below, which sets state directly.
-    const resolved = resolveMode();
+    // which is "system". Nothing downstream depends on the value -- the DOM is
+    // already in the right mode, because the pre-paint script in `@/lib/theme`
+    // set `data-theme` before anything was drawn, resolving through the same
+    // `resolveThemeMode` so the two cannot disagree. The worst this disable
+    // buys is one extra render of one roundel.
+    let resolved: ThemeMode = "system";
+    try {
+      resolved = resolveThemeMode(
+        new URLSearchParams(location.search).get("theme"),
+        localStorage.getItem(THEME_STORAGE_KEY),
+      );
+    } catch {
+      // No URL and no store to read (Safari's "Block All Cookies", some
+      // embedded webviews). Whatever the OS says, then.
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMode(resolved);
 
@@ -72,10 +90,7 @@ export function ThemeToggle() {
     // where nothing has cleared it. In development, React's Strict Mode
     // remounts once and resets <html> to only the attributes it owns from JSX,
     // dropping `data-theme` -- so a stored "light" silently reverted to the OS
-    // mode a moment after load, with this switch still (correctly) showing Day.
-    // useEffect rather than useLayoutEffect: that costs one frame on the dev
-    // remount only, and avoids the server-render warning useLayoutEffect emits.
-    // See the Next 16 guide's "Re-applying attributes in development".
+    // mode a moment after load, with this control still (correctly) showing Day.
     try {
       const root = document.documentElement;
       if (resolved === "system") root.removeAttribute("data-theme");
@@ -85,16 +100,16 @@ export function ThemeToggle() {
     }
   }, []);
 
-  function choose(next: Mode) {
+  function choose(next: ThemeMode) {
     setMode(next);
     const root = document.documentElement;
     try {
       if (next === "system") {
         root.removeAttribute("data-theme");
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(THEME_STORAGE_KEY);
       } else {
         root.setAttribute("data-theme", next);
-        localStorage.setItem(STORAGE_KEY, next);
+        localStorage.setItem(THEME_STORAGE_KEY, next);
       }
     } catch {
       // The mode still changed for this page; only remembering it is lost.
@@ -103,78 +118,22 @@ export function ThemeToggle() {
     }
   }
 
-  function onKeyDown(event: React.KeyboardEvent, index: number) {
-    const step =
-      event.key === "ArrowRight" || event.key === "ArrowDown"
-        ? 1
-        : event.key === "ArrowLeft" || event.key === "ArrowUp"
-          ? -1
-          : 0;
-    if (step === 0) return;
-    event.preventDefault();
-    const next = (index + step + OPTIONS.length) % OPTIONS.length;
-    choose(OPTIONS[next].id);
-    buttons.current[next]?.focus();
-  }
+  const current = OPTIONS.find((o) => o.id === mode) ?? OPTIONS[1];
 
   return (
-    <div
-      role="radiogroup"
-      aria-label="Colour mode"
-      // The group needs its own boundary: `--ground-raised` measures 1.17:1
-      // against `--ground` in dark and 1.18:1 in light, so without this the
-      // whole switch has no visible edge. `--text-dim` as a border is 5.26:1 /
-      // 6.21:1 -- `--hairline` would be 1.44:1 / 1.39:1 and no better than
-      // nothing.
-      className="inline-flex shrink-0 rounded-[6px] border border-dim p-[2px]"
-      style={{ background: "var(--ground-raised)" }}
+    <MenuRoundel
+      // The current state is IN the name, because the glyph alone cannot say
+      // it to a screen reader and "Colour mode" would leave somebody with no
+      // way to know what it is set to without opening the menu.
+      label={`Colour mode: ${current.label}`}
+      items={OPTIONS.map((o) => ({
+        // A tick would be colour-and-glyph on a row that already has a label,
+        // so the current one says so in words instead.
+        label: o.id === mode ? `${o.label} — on` : o.label,
+        onSelect: () => choose(o.id),
+      }))}
     >
-      {OPTIONS.map((o, i) => {
-        const on = mode === o.id;
-        return (
-          <button
-            key={o.id}
-            ref={(node) => {
-              buttons.current[i] = node;
-            }}
-            role="radio"
-            aria-checked={on}
-            // Exactly one tab stop for the group. Exactly one option is always
-            // checked, so there is always exactly one.
-            tabIndex={on ? 0 : -1}
-            onClick={() => choose(o.id)}
-            onKeyDown={(event) => onKeyDown(event, i)}
-            // 44px, not the 32px the padding alone gave: this product's own
-            // target floor, the same one the landing page applies to the link
-            // two lines away. The label is 10px, so the box has to make the
-            // target, not the text.
-            //
-            // The border is always there, transparent when unselected, so
-            // selecting an option cannot shift the other two sideways.
-            className="board flex min-h-[44px] min-w-[44px] items-center justify-center rounded-[4px] border px-3.5 text-[10px]"
-            style={
-              on
-                ? {
-                    background: "var(--action)",
-                    color: "var(--on-action)",
-                    // The selected fill is 2.53:1 against this group's
-                    // `--ground-raised` in dark and 2.74:1 in light -- under
-                    // the 3:1 SC 1.4.11 asks of the visual indication of a
-                    // state, and `--action` cannot move because `--on-action`
-                    // is exactly 4.92:1 on it. So the edge carries the
-                    // boundary, exactly as it does on every other orange field
-                    // in this product: white in dark (8.76:1 on the raised
-                    // surface, 3.46:1 on the fill), ink in light (13.49:1 and
-                    // 4.92:1). See globals.css and Plate.tsx.
-                    borderColor: "var(--action-edge)",
-                  }
-                : { color: "var(--text)", borderColor: "transparent" }
-            }
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
+      <Glyph mode={mode} />
+    </MenuRoundel>
   );
 }
