@@ -64,8 +64,25 @@ export function ThemeToggle() {
     // `useSyncExternalStore` would express the same thing without an effect;
     // it is not used because this value has no subscribers beyond this
     // component and no writer beyond `choose` below, which sets state directly.
+    const resolved = resolveMode();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMode(resolveMode());
+    setMode(resolved);
+
+    // Re-apply the attribute the pre-paint script set. A no-op in production,
+    // where nothing has cleared it. In development, React's Strict Mode
+    // remounts once and resets <html> to only the attributes it owns from JSX,
+    // dropping `data-theme` -- so a stored "light" silently reverted to the OS
+    // mode a moment after load, with this switch still (correctly) showing Day.
+    // useEffect rather than useLayoutEffect: that costs one frame on the dev
+    // remount only, and avoids the server-render warning useLayoutEffect emits.
+    // See the Next 16 guide's "Re-applying attributes in development".
+    try {
+      const root = document.documentElement;
+      if (resolved === "system") root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", resolved);
+    } catch {
+      // Nothing to recover: the page keeps whatever mode it painted in.
+    }
   }, []);
 
   function choose(next: Mode) {

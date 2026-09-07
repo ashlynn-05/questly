@@ -24,14 +24,25 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en" className={`${archivo.variable} h-full antialiased`} suppressHydrationWarning>
-      {/* Runs before first paint so a light-mode visitor never sees a dark
-          flash. React 19 hoists a bare <script> in a layout into <head> on its
-          own, so no manual <head> wrapper is needed -- the Next 16 guide
-          (node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md)
-          writes one, and either works; the earlier comment here claimed a
-          manual <head> breaks hydration, which the docs contradict. */}
-      <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-      <body className="min-h-full flex flex-col">
+      <head>
+        {/* Runs before first paint so a light-mode visitor never sees a dark
+            flash, which is why it is inline and synchronous rather than
+            deferred. It must sit inside an explicit <head>: React does NOT
+            hoist a bare sync <script> out of <html> -- it refuses to order it
+            and logs "cannot render a sync or defer <script> outside the main
+            document", then reports <script> as an invalid child of <html> and
+            fails hydration. An earlier comment here claimed the hoist happens;
+            it does not. The Next 16 guide writes the explicit <head> for the
+            same reason:
+            node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      {/* Grammarly and friends stamp their own attributes (data-gr-ext-installed,
+          data-new-gr-c-s-check-loaded) onto <body> before React hydrates, and
+          suppressHydrationWarning does not cascade from <html> -- it covers one
+          element only. Without this, every visitor with the extension sees a
+          hydration mismatch the app cannot fix. */}
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ConvexClientProvider initialToken={initialToken}>
           {children}
         </ConvexClientProvider>
