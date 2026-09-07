@@ -89,12 +89,19 @@ async function exhaustTheDeck(t: T, quests: Id<"quests">[]) {
 
 // No key, no network. `plans.generate` runs for real behind the match, so an
 // unstubbed `fetch` here would be a live call from the test suite.
+//
+// The key is deleted for the WHOLE FILE and never put back. It used to be
+// restored in `afterEach`, and that is what made this file bill a real OpenAI
+// call on every run: the last test schedules `plans.generate` via `runAfter(0)`
+// and the job was still pending when teardown handed it the real key back.
+// Nothing here wants a key, so the safe state is the permanent one.
+// (`originalFetch` is the suite-wide guard from `vitest.setup.ts`, not the real
+// `fetch`, so restoring it cannot reach the wire either.)
 const originalFetch = globalThis.fetch;
 let fetchMock: ReturnType<typeof vi.fn>;
-const savedKey = process.env.OPENAI_API_KEY;
+delete process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
-  delete process.env.OPENAI_API_KEY;
   fetchMock = vi.fn(async (url: string) => {
     throw new Error(`Unexpected fetch to ${url}`);
   });
@@ -105,8 +112,6 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
   vi.useRealTimers();
-  if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
-  else process.env.OPENAI_API_KEY = savedKey;
 });
 
 // --- unanimity ------------------------------------------------------------
@@ -449,6 +454,11 @@ test("the host removing a stuck member unblocks a room that was waiting on it", 
   await t.mutation(api.rooms.removeMember, {
     code: "3333", sessionKey: "k-bec", memberId: samId,
   });
+  // The match this unblocks schedules `plans.generate`. Drain it HERE: a job
+  // left pending outlives the test, fires after teardown, and takes whatever
+  // `fetch` and `OPENAI_API_KEY` are by then. That is how this file was making
+  // a live billable call on every run.
+  await runScheduled(t);
 
   const room = await t.run(async (ctx) => ctx.db.get(roomId));
   expect(room!.status).toBe("matched");

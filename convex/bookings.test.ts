@@ -13,12 +13,18 @@ const START = 1_800_000_000_000;
 // OPENAI_API_KEY set -- a reviewer's laptop, CI -- `npm test` was making a live
 // billable call, and `generate` swallows failures by design so nothing ever
 // said so. No key, and a `fetch` that shouts if anything tries the wire.
+//
+// The key is deleted for the WHOLE FILE and never put back. Restoring it in
+// `afterEach` -- the shape this file was originally given -- is what left
+// `swipes.test.ts` billing a real call: an undrained `runAfter(0)` job fires
+// after teardown and takes whatever the key and `fetch` are by then. Nothing
+// here wants a key, so the safe state is the permanent one. (`originalFetch` is
+// the suite-wide guard from `vitest.setup.ts`, not the real `fetch`.)
 const originalFetch = globalThis.fetch;
 let fetchMock: ReturnType<typeof vi.fn>;
-const savedKey = process.env.OPENAI_API_KEY;
+delete process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
-  delete process.env.OPENAI_API_KEY;
   fetchMock = vi.fn(async (url: string) => {
     throw new Error(`Unexpected fetch to ${url}`);
   });
@@ -29,8 +35,6 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
   vi.useRealTimers();
-  if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
-  else process.env.OPENAI_API_KEY = savedKey;
 });
 
 /**
