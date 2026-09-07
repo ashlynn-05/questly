@@ -169,8 +169,13 @@ test("the match schedules the plan, and the plan lands on the room", async () =>
   expect(plans[0].roomId).toBe(roomId);
   expect(plans[0].questId).toBe(a);
   expect(plans[0].stops.length).toBeGreaterThan(0);
-  // No key is set, so this is the canned night -- and it never touched the wire.
-  expect(fetchMock).not.toHaveBeenCalled();
+  // No key is set, so this is the canned night. Assert the canned night's own
+  // shape rather than "fetch was not called": the key is checked before the
+  // client is ever built, so that assertion could not have failed, and it said
+  // nothing about whether the room actually ended up with a usable plan.
+  expect(plans[0].stops[0].name).toMatch(/^Meet outside /);
+  expect(plans[0].stops.some((s) => s.slot === "main")).toBe(true);
+  expect(plans[0].shareMessage.length).toBeGreaterThan(0);
 });
 
 test("a room that already matched does not schedule a second plan build", async () => {

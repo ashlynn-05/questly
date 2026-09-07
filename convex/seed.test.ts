@@ -51,12 +51,45 @@ test("every mood gets a seeded open room, so matchmaking is never empty", async 
   }
 });
 
-test("every seeded room is flagged as a demo and has a host in it", async () => {
+// A seeded room used to arrive with a fake host already sitting in it, which
+// meant the demo rooms on the browse screen were advertising a person who does
+// not exist and were counted towards unanimity forever. They now ship with an
+// empty roster and an unclaimed host seat: the first real person through the
+// door takes it, so the room is genuinely joinable and nobody is invented.
+test("every seeded room is flagged as a demo and starts with nobody in it", async () => {
   const t = convexTest(schema, modules);
   await t.mutation(internal.seed.run, {});
   const open = await t.query(api.rooms.openRooms, { mood: "grass" });
+  expect(open.length).toBeGreaterThanOrEqual(1);
   expect(open.every((r) => r.demo)).toBe(true);
-  expect(open.every((r) => r.memberCount >= 1)).toBe(true);
+  expect(open.every((r) => r.memberCount === 0)).toBe(true);
+});
+
+test("the first person to join a seeded room takes the empty host seat", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.seed.run, {});
+  const [room] = await t.query(api.rooms.openRooms, { mood: "grass" });
+
+  const first = await t.mutation(api.rooms.join, { code: room.code, name: "Tam" });
+  const second = await t.mutation(api.rooms.join, { code: room.code, name: "Bec" });
+
+  const roster = await t.run(async (ctx) => {
+    const doc = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", room.code))
+      .unique();
+    if (!doc) throw new Error("seeded room vanished");
+    return await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", doc._id))
+      .collect();
+  });
+
+  expect(roster.length).toBe(2);
+  const tam = roster.find((m) => m.sessionKey === first.sessionKey);
+  const bec = roster.find((m) => m.sessionKey === second.sessionKey);
+  expect(tam?.isHost).toBe(true);
+  expect(bec?.isHost).toBe(false);
 });
 
 test("seeding twice does not duplicate the rooms either", async () => {

@@ -64,7 +64,7 @@ test("rooms.get never leaks any member's session key", async () => {
   const t = convexTest(schema, modules);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
   const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
-  await t.mutation(api.rooms.join, { code, name: "Tam" });
+  const guest = await t.mutation(api.rooms.join, { code, name: "Tam" });
 
   const view = await asHost.query(api.rooms.get, { code, sessionKey });
   // Prove the view is populated before asserting an absence: a null view, or an
@@ -72,7 +72,15 @@ test("rooms.get never leaks any member's session key", async () => {
   // and a security assertion that can pass vacuously is not an assertion.
   expect(view).not.toBeNull();
   expect(view!.members).toHaveLength(2);
-  expect(JSON.stringify(view)).not.toContain("sessionKey");
+
+  // The keys themselves, not the field name. A projection that emitted another
+  // member's key under some other label -- `token`, `k`, a bare array -- would
+  // hand every capability in the room to whoever opened devtools, and a check
+  // for the string "sessionKey" would have stayed green through it.
+  const serialised = JSON.stringify(view);
+  expect(serialised).not.toContain(guest.sessionKey);
+  expect(serialised).not.toContain(sessionKey);
+  expect(serialised).not.toContain("sessionKey");
 });
 
 test("rooms.get returns null for a session key that is not in the room", async () => {
@@ -614,9 +622,12 @@ async function roomWithPlan(t: TestConvex<typeof schema>, names: string[]) {
       score: 1, scoreBreakdown: {},
     }),
   );
+  // Through the lease, exactly as `plans.generate` does.
+  const token = await t.mutation(internal.plans.markGenerating, { roomId });
   await t.mutation(internal.plans.writePlan, {
     roomId,
     questId,
+    token: token as string,
     stops: [
       {
         id: "s1", slot: "main", name: "The Long Weekend", startAt: CREATE.whenAt,

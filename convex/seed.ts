@@ -1,5 +1,5 @@
+import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
-import { newSessionKey } from "./lib/access";
 
 /**
  * Demonstration inventory. These are invented businesses at real Melbourne
@@ -85,12 +85,29 @@ export const PARTNERS = [
  * Open rooms for the matchmaking lobby. Solo mode has a cold start on both
  * sides: nobody joins an empty list, so nobody is ever in the list. These four
  * break that, and every surface that shows them says they are demo rooms.
+ *
+ * They are seeded with NO members, and that is the fix rather than an omission.
+ *
+ * They used to carry a seeded host member whose `sessionKey` was generated,
+ * written and then returned to nobody. Since `deck.build` is host-only, no
+ * function promotes a member to host, and `removeMember` refuses to remove one,
+ * a visitor who tapped one of these joined a room that could never start a deck
+ * -- by anyone, ever. Four dead ends were the first thing the product offered a
+ * new visitor.
+ *
+ * With no member row the host seat is empty and `rooms.join` hands it to the
+ * first person through the door (see the `demo` branch there), so the room
+ * becomes a real room they can actually run. Nothing about the honesty
+ * treatment changes: `demo: true` is still stored, still projected by
+ * `openRooms` and `rooms.get`, and still announced on every screen -- and the
+ * fabricated host NAMES are gone, which is one fewer invented person on screen,
+ * not one more.
  */
 const DEMO_ROOMS = [
-  { code: "1001", mood: "grass" as const, host: "Priya", headcount: 4, budgetPerHeadCents: 0 },
-  { code: "1002", mood: "meet" as const, host: "Dan", headcount: 6, budgetPerHeadCents: 3000 },
-  { code: "1003", mood: "treat" as const, host: "Yuki", headcount: 4, budgetPerHeadCents: 5000 },
-  { code: "1004", mood: "new" as const, host: "Marco", headcount: 5, budgetPerHeadCents: 3000 },
+  { code: "1001", mood: "grass" as const, headcount: 4, budgetPerHeadCents: 0 },
+  { code: "1002", mood: "meet" as const, headcount: 6, budgetPerHeadCents: 3000 },
+  { code: "1003", mood: "treat" as const, headcount: 4, budgetPerHeadCents: 5000 },
+  { code: "1004", mood: "new" as const, headcount: 5, budgetPerHeadCents: 3000 },
 ];
 
 const MELBOURNE_TZ = "Australia/Melbourne";
@@ -188,6 +205,7 @@ function tonight(): number {
 
 export const run = internalMutation({
   args: {},
+  returns: v.object({ inserted: v.number(), updated: v.number(), rooms: v.number() }),
   handler: async (ctx) => {
     let inserted = 0;
     let updated = 0;
@@ -215,7 +233,11 @@ export const run = internalMutation({
         .unique();
       if (existing) continue;
 
-      const roomId = await ctx.db.insert("rooms", {
+      // `hostUserId` is a provenance record only -- nothing authorises against
+      // it; `members.isHost` is what every host check reads. A demo room keeps
+      // this marker so a seeded room is identifiable in the data even if `demo`
+      // were ever missed, and the real host arrives as a member row instead.
+      await ctx.db.insert("rooms", {
         hostUserId: `questly-demo-host-${demo.code}`,
         mood: demo.mood,
         headcount: demo.headcount,
@@ -228,16 +250,6 @@ export const run = internalMutation({
         status: "lobby",
         code: demo.code,
         demo: true,
-      });
-
-      // The session key is unguessable like any other, so the seeded host seat
-      // cannot be taken over from the client.
-      await ctx.db.insert("members", {
-        roomId,
-        name: demo.host,
-        isHost: true,
-        sessionKey: newSessionKey(),
-        joinedAt: Date.now(),
       });
       rooms += 1;
     }

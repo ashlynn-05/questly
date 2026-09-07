@@ -224,12 +224,27 @@ export const join = mutation({
     // from the roster, which is worse than an extra row someone can leave. They
     // get a fresh row; keeping the issued sessionKey and sending it back is the
     // client's job.
+    // A seeded demo room is created with an EMPTY roster precisely so its host
+    // seat is claimable, and the first person through the door takes it.
+    //
+    // Without this the demo rooms are dead ends: `deck.build` is host-only, and
+    // a room whose host seat belongs to a session key nobody holds can never
+    // start. This is deliberately not a general "promote someone when the host
+    // is missing" rule -- `rooms.create` always writes a host, so the only
+    // rooms that can reach here with an empty roster are the seeded ones, and
+    // narrowing it to `demo` keeps it that way rather than leaving a path by
+    // which a real room's host seat could ever change hands.
+    //
+    // Claiming the seat does not launder the room: `demo` stays true, so every
+    // screen keeps saying this is demonstration data.
+    const claimsHostSeat = room.demo === true && roster.length === 0;
+
     const newKey = newSessionKey();
     await ctx.db.insert("members", {
       roomId: room._id,
       name: trimmed,
       userId: userId ?? undefined,
-      isHost: false,
+      isHost: claimsHostSeat,
       sessionKey: newKey,
       joinedAt: Date.now(),
     });

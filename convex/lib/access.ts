@@ -89,11 +89,19 @@ export function refuseIfBooked(room: Doc<"rooms">): void {
   }
 }
 
+/**
+ * `.take(MAX_ROOM_MEMBERS)` rather than `.collect().length`, which the Convex
+ * guidelines name explicitly as the way to accidentally scan an unbounded
+ * table. The roster genuinely cannot exceed `MAX_ROOM_MEMBERS` -- `rooms.join`
+ * enforces it -- so the two are the same number today. The `take` is what keeps
+ * them the same number if that ceiling ever moves, on a helper called from
+ * every `settleProposal`.
+ */
 export async function memberCount(ctx: Ctx, roomId: Id<"rooms">): Promise<number> {
   const members = await ctx.db
     .query("members")
     .withIndex("by_room", (q) => q.eq("roomId", roomId))
-    .collect();
+    .take(MAX_ROOM_MEMBERS);
   return members.length;
 }
 

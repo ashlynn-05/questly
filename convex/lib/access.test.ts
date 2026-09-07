@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { expect, test } from "vitest";
 import schema from "../schema";
@@ -10,7 +10,10 @@ import {
 
 const modules = import.meta.glob("../**/*.ts");
 
-async function seedRoom(t: ReturnType<typeof convexTest>) {
+// Schema-aware, so the seed below is checked against the real `rooms` and
+// `members` shapes. A bare `ReturnType<typeof convexTest>` drops the schema
+// type parameter and would accept any object at all.
+async function seedRoom(t: TestConvex<typeof schema>) {
   return await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
       hostUserId: "u1", mood: "grass", headcount: 2, budgetPerHeadCents: 0,
