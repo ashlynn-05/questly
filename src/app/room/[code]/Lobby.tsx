@@ -10,6 +10,13 @@ import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { errorCode, userMessage } from "@/lib/errors";
+import {
+  FINALIZE_RULES,
+  FINALIZE_SECONDS_OPTIONS,
+  SWIPE_SECONDS_OPTIONS,
+  type FinalizeRule,
+} from "@convex/lib/rules";
+import { FINALIZE_RULE_LABELS, asOption, rulesLine } from "@/lib/houseRules";
 import type { BuildFailure, RoomView } from "./page";
 
 /**
@@ -40,6 +47,7 @@ export function Lobby({
   const build = useAction(api.deck.build);
   const removeMember = useMutation(api.rooms.removeMember);
   const leaveRoom = useMutation(api.rooms.leave);
+  const setRules = useMutation(api.rooms.setRules);
 
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -99,6 +107,27 @@ export function Lobby({
       setLeaving(false);
       setError(userMessage(e, "Could not leave that room. Please try again."));
       return "trigger";
+    }
+  }
+
+  /**
+   * The host's rules, sent one field at a time.
+   *
+   * `rooms.setRules` writes only the arguments that arrive, so a change to the
+   * timer cannot quietly re-send whatever value this phone last rendered for
+   * the vote rule -- which is what would happen if the whole set went every
+   * time and two hosts were in the lobby at once.
+   */
+  async function saveRules(next: {
+    swipeSeconds?: (typeof SWIPE_SECONDS_OPTIONS)[number];
+    finalizeRule?: FinalizeRule;
+    finalizeSeconds?: (typeof FINALIZE_SECONDS_OPTIONS)[number];
+  }) {
+    setError(null);
+    try {
+      await setRules({ code, sessionKey, ...next });
+    } catch (e) {
+      setError(userMessage(e, "Could not change the rules. Please try again."));
     }
   }
 
@@ -205,6 +234,85 @@ export function Lobby({
         <p aria-live="polite" className="text-[12px] leading-snug break-words text-dim">
           {copied ?? ""}
         </p>
+
+        {/* The two house rules, set here because here is the last moment
+            before either of them binds anybody: the timer starts the instant
+            the deck does, and a group that finds out about it on the first
+            card was never told. Non-hosts are told what the host chose rather
+            than shown controls that would be refused. */}
+        {view.you.isHost ? (
+          <fieldset className="m-0 flex flex-col gap-3 border-0 border-t border-hairline p-0 pt-4">
+            <legend className="board p-0 text-[11px] text-accent">House rules</legend>
+
+            <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-dim">
+              Seconds to answer a card
+              <select
+                value={view.room.swipeSeconds}
+                onChange={(e) => {
+                  const seconds = asOption(SWIPE_SECONDS_OPTIONS, e.target.value);
+                  if (seconds !== null) void saveRules({ swipeSeconds: seconds });
+                }}
+                className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              >
+                {SWIPE_SECONDS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 0 ? "No timer" : `${s} seconds`}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-dim">
+              Who settles the night
+              <select
+                value={view.room.finalizeRule}
+                onChange={(e) => {
+                  const rule = asOption(FINALIZE_RULES, e.target.value);
+                  if (rule !== null) void saveRules({ finalizeRule: rule });
+                }}
+                className="min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              >
+                {FINALIZE_RULES.map((rule) => (
+                  <option key={rule} value={rule}>
+                    {FINALIZE_RULE_LABELS[rule]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/* Only where there is a vote to run out. Under "anyone" and "the
+                host" the tap books, so a window would be counting down on
+                nothing. */}
+            {view.room.finalizeRule === "majority" || view.room.finalizeRule === "all" ? (
+              <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-dim">
+                How long to vote
+                <select
+                  value={view.room.finalizeSeconds}
+                  onChange={(e) => {
+                    const seconds = asOption(FINALIZE_SECONDS_OPTIONS, e.target.value);
+                    if (seconds !== null) void saveRules({ finalizeSeconds: seconds });
+                  }}
+                  className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+                >
+                  {FINALIZE_SECONDS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s === 0 ? "No limit" : `${s / 60} min`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            <p className="text-[12px] leading-snug text-dim">
+              {rulesLine(view.room.swipeSeconds, view.room.finalizeRule)} Changing who settles
+              it clears any votes already cast.
+            </p>
+          </fieldset>
+        ) : (
+          <p className="border-t border-hairline pt-4 text-[13px] leading-snug text-dim">
+            {hostName} set the rules: {rulesLine(view.room.swipeSeconds, view.room.finalizeRule)}
+          </p>
+        )}
 
         {view.you.isHost ? (
           <Plate
