@@ -9,6 +9,7 @@ import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
 import { useCountdown } from "@/components/questly/useCountdown";
 import { clockFace } from "@/lib/countdown";
 import { errorCode, userMessage } from "@/lib/errors";
+import { lockLine, proposalLine } from "@/lib/houseRules";
 import type { RoomView } from "./page";
 
 const time = (at: number) =>
@@ -75,6 +76,15 @@ export function Plan({
   // The server enforces this split too. A room of one edits directly; a room of
   // two or more proposes and votes.
   const isGroup = view.members.length > 1;
+  /**
+   * Whether locking is a vote HERE, which is the rule and the roster together.
+   *
+   * `plans.setLocked` applies a lock directly in a room of one whatever the
+   * rule says, because `needed(1)` is 1 and a proposal would carry itself. A
+   * button offering to "ask the room" when there is no room to ask would be
+   * describing something the server is not going to do.
+   */
+  const lockByVote = view.room.lockRule === "vote" && isGroup;
 
   /**
    * The plan's arrival REPLACES this screen, so focus moves with it.
@@ -374,6 +384,12 @@ export function Plan({
           {view.members.length === 1 ? "person" : "people"}, starting{" "}
           <span className="num">{time(view.room.whenAt)}</span>.
         </p>
+        {/* The rule next to the controls it governs. Only in a group: in a room
+            of one every lock is a tap regardless of what the host chose, and
+            saying otherwise here would be a promise the server does not keep. */}
+        {isGroup ? (
+          <p className="mt-2 text-[12px] leading-snug text-dim">{lockLine(view.room.lockRule)}</p>
+        ) : null}
       </div>
 
       {/* The rail belongs to the container; every stop carries its own node and
@@ -399,7 +415,12 @@ export function Plan({
                     positioned, so this costs no layout. */}
                 <p aria-live="polite" className="sr-only">
                   {proposal
-                    ? `${proposal.proposedByName} wants to swap ${stop.name} for ${proposal.replacement.name}. ${proposal.yes} of ${proposal.needed} needed.`
+                    ? `${proposalLine(
+                        proposal.kind,
+                        proposal.proposedByName,
+                        stop.name,
+                        proposal.replacement?.name ?? null,
+                      )} ${proposal.yes} of ${proposal.needed} needed.`
                     : ""}
                 </p>
 
@@ -428,15 +449,33 @@ export function Plan({
                 </div>
 
                 <div className="mt-3 flex gap-2">
-                  {/* A genuine toggle, so it announces as one. The label stays
-                      put and the pressed state, the filled roundel and the
-                      "Locked" line carry the state -- never colour alone. */}
-                  <Plate
-                    variant="ghost"
-                    selected={stop.locked}
-                    label="Lock this stop"
-                    onClick={() => void toggleLock(stop.id, !stop.locked)}
-                  />
+                  {lockByVote ? (
+                    /* Under the vote rule this is not a toggle and must not
+                       announce as one: the tap opens a proposal, and the stop
+                       does not change until the room agrees. So the label says
+                       what the tap actually does, and there is no pressed
+                       state to claim otherwise. Withheld entirely while a
+                       proposal is open on this stop, because the server refuses
+                       a second one and the vote block below already carries the
+                       decision. */
+                    proposal ? null : (
+                      <Plate
+                        variant="ghost"
+                        label={stop.locked ? "Ask the room to unlock this" : "Ask the room to lock this"}
+                        onClick={() => void toggleLock(stop.id, !stop.locked)}
+                      />
+                    )
+                  ) : (
+                    /* A genuine toggle, so it announces as one. The label stays
+                       put and the pressed state, the filled roundel and the
+                       "Locked" line carry the state -- never colour alone. */
+                    <Plate
+                      variant="ghost"
+                      selected={stop.locked}
+                      label="Lock this stop"
+                      onClick={() => void toggleLock(stop.id, !stop.locked)}
+                    />
+                  )}
                   {/* Not offered on a locked stop, and not offered while this
                       stop already has a proposal open: the server refuses both,
                       and a control that exists only to be rejected is worse
@@ -453,10 +492,19 @@ export function Plan({
                 {proposal ? (
                   <div className="mt-3 rounded-[6px] border border-hairline p-3">
                     <p className="board text-[10px] text-accent">
-                      {proposal.proposedByName} wants to swap this
+                      {proposal.proposedByName} wants to{" "}
+                      {proposal.kind === "swap"
+                        ? "swap this"
+                        : proposal.kind === "lock"
+                          ? "lock this"
+                          : "unlock this"}
                     </p>
                     <p className="mt-1 text-[15px] leading-snug text-text">
-                      {proposal.replacement.name}
+                      {proposal.kind === "swap"
+                        ? (proposal.replacement?.name ?? "Somewhere else")
+                        : proposal.kind === "lock"
+                          ? "Nobody swaps it while it is locked."
+                          : "It goes back to being swappable."}
                     </p>
                     {proposal.reason ? (
                       <p className="mt-1 text-[13px] leading-snug text-dim">
@@ -470,7 +518,7 @@ export function Plan({
                     <p className="num mt-2 text-[13px] text-dim">
                       {proposal.yes} of {proposal.needed} needed
                     </p>
-                    {stop.locked ? (
+                    {stop.locked && proposal.kind === "swap" ? (
                       // A lock does not close voting, and withholding the
                       // buttons here was too blunt: `proposals.vote` writes the
                       // row first and only throws STOP_LOCKED when a DECIDING

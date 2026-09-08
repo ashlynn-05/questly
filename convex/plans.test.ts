@@ -1187,11 +1187,15 @@ test("a paid room's mood fallback still asks for that mood's own types", async (
 // --- setLocked ------------------------------------------------------------
 //
 // The first tests this mutation has ever had. Issue #11 asked whether locking
-// should become host-only or go to a vote; the ruling was neither, and the
-// stop now records WHO locked it instead -- see the comment above
-// `plans.setLocked` and section 15 of `docs/questly-handover.md`. These pin
-// both halves: that the permission did not change, and that the attribution
-// works and is not client-supplied.
+// should become host-only or go to a vote; the ruling was that attribution
+// comes first and unconditionally -- the stop records WHO locked it -- and
+// that the vote is then a house rule a room can turn on. Host-only was refused
+// outright. See the comment above `plans.setLocked` and section 15 of
+// `docs/questly-handover.md`.
+//
+// These pin all three: that the default permission did not change, that the
+// attribution works and is not client-supplied, and that a room whose
+// `lockRule` is "vote" cannot have a lock land without a majority.
 
 /** A room with a plan and a roster, so a non-host has a sessionKey to lock with. */
 async function seedLockRoom(t: T, names: string[], code = "4460") {
@@ -1324,5 +1328,204 @@ test("a swap cannot smuggle a lock or somebody else's name onto a stop", async (
   const stops = await planStops(t, roomId);
   expect(stops[0].name).toBe("Somewhere else");
   expect(stops[0].locked).toBe(false);
+  expect(stops[0].lockedBy).toBeUndefined();
+});
+
+// --- setLocked under lockRule: "vote" --------------------------------------
+//
+// The other half of the #11 ruling. A room that turns this on is saying that a
+// reversible signal is still a way to win an argument without having it, so the
+// lock stops being a tap and becomes a proposal on the same table a swap uses.
+
+/** Turn on the vote rule for a room that is already seeded. */
+async function voteToLock(t: T, roomId: Id<"rooms">) {
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "vote" }));
+}
+
+const openProposals = (t: T, roomId: Id<"rooms">) =>
+  t.run(async (ctx) =>
+    ctx.db
+      .query("proposals")
+      .withIndex("by_room_status", (q) => q.eq("roomId", roomId).eq("status", "open"))
+      .collect(),
+  );
+
+test("under the vote rule a lock is asked for, not taken", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4470");
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+
+  // The stop has not moved: two people, so `needed(2)` is 2 and Tam is one.
+  expect((await planStops(t, roomId))[0].locked).toBe(false);
+
+  const open = await openProposals(t, roomId);
+  expect(open).toHaveLength(1);
+  expect(open[0].kind).toBe("lock");
+  expect(open[0].stopId).toBe("a");
+  // A lock replaces nothing, and the row says so rather than storing the
+  // current stop back over itself.
+  expect(open[0].replacement).toBeUndefined();
+});
+
+test("the majority carries the lock, and it is attributed to whoever asked", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam", "Sam"], "4471");
+  await voteToLock(t, roomId);
+
+  // Tam asks. That is one yes of the two `needed(3)` wants.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+  expect((await planStops(t, roomId))[0].locked).toBe(false);
+
+  const [proposal] = await openProposals(t, roomId);
+  await t.mutation(api.proposals.vote, {
+    code, sessionKey: "k-Sam", proposalId: proposal._id, vote: "yes",
+  });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(true);
+  // The proposer's name, not the deciding voter's: Tam wanted it locked.
+  expect(stops[0].lockedBy).toBe("Tam");
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+});
+
+test("a room that says no leaves the stop unlocked", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4472");
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+  const [proposal] = await openProposals(t, roomId);
+  await t.mutation(api.proposals.vote, {
+    code, sessionKey: "k-Bec", proposalId: proposal._id, vote: "no",
+  });
+
+  expect((await planStops(t, roomId))[0].locked).toBe(false);
+  expect((await planStops(t, roomId))[0].lockedBy).toBeUndefined();
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+});
+
+test("unlocking goes to the room too, or the rule would be one-way", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4473");
+  // Locked BEFORE the rule was turned on, which is how a room that switches
+  // mid-plan actually looks.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: false });
+  // Still locked: asking is not unlocking.
+  expect((await planStops(t, roomId))[0].locked).toBe(true);
+
+  const [proposal] = await openProposals(t, roomId);
+  expect(proposal.kind).toBe("unlock");
+  await t.mutation(api.proposals.vote, {
+    code, sessionKey: "k-Bec", proposalId: proposal._id, vote: "yes",
+  });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(false);
+  expect(stops[0].lockedBy).toBeUndefined();
+});
+
+test("asking for a lock that is already there opens nothing", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4474");
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+  await voteToLock(t, roomId);
+
+  // A proposal here would collect yeses for something that has happened, and
+  // would hold the stop's one proposal slot while it did it.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+  expect((await planStops(t, roomId))[0].lockedBy).toBe("Bec");
+});
+
+test("a lock vote and a swap vote cannot both be open on one stop", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4475");
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.proposals.open, {
+    code, sessionKey: "k-Bec", stopId: "a",
+    replacement: stop({ id: "a", name: "Somewhere else" }),
+    reason: "closer",
+  });
+
+  // Two contradictory votes on one stop would be settled by whichever majority
+  // happened to land second.
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true }),
+    "PROPOSAL_EXISTS",
+    /already an open proposal/i,
+  );
+  expect(await openProposals(t, roomId)).toHaveLength(1);
+});
+
+test("a room of one locks directly however the rule is set", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4476");
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+
+  // `needed(1)` is 1, so a proposal would be opened and carried by its own
+  // opening yes in the same transaction -- the same outcome, two rows heavier.
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+  expect((await planStops(t, roomId))[0].lockedBy).toBe("Bec");
+});
+
+test("the vote rule is off unless a room turns it on", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4477");
+
+  // The regression guard on the shipped ruling: every room that existed before
+  // `lockRule` did has no such column, and locking must still be one tap.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+  expect((await planStops(t, roomId))[0].locked).toBe(true);
+});
+
+test("a booked room refuses the ask as flatly as it refuses the tap", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4478");
+  await voteToLock(t, roomId);
+  await t.run(async (ctx) => ctx.db.patch(roomId, { status: "booked" }));
+
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true }),
+    "ROOM_BOOKED",
+    /./,
+  );
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+});
+
+test("a lock the room agreed to survives the proposer walking out", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam", "Sam"], "4479");
+  await voteToLock(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+  // Tam leaves. Their opening yes goes with them, and `resolveOpenProposals`
+  // re-decides against the two who are left: Sam is undecided, so `needed(2)`
+  // of 2 is still reachable and the proposal stays open.
+  await t.mutation(api.rooms.leave, { code, sessionKey: "k-Tam" });
+
+  const [proposal] = await openProposals(t, roomId);
+  expect(proposal).toBeDefined();
+  await t.mutation(api.proposals.vote, {
+    code, sessionKey: "k-Bec", proposalId: proposal._id, vote: "yes",
+  });
+  await t.mutation(api.proposals.vote, {
+    code, sessionKey: "k-Sam", proposalId: proposal._id, vote: "yes",
+  });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(true);
+  // Nobody left to attribute it to, so it is recorded without a name rather
+  // than blocked or signed by whoever happened to decide it.
   expect(stops[0].lockedBy).toBeUndefined();
 });

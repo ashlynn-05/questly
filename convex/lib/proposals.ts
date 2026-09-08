@@ -1,9 +1,50 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { memberCount, needed } from "./access";
+import { applyStopLock } from "./lock";
 import { applyStopSwap } from "./swap";
 
 type ProposalStatus = Doc<"proposals">["status"];
+
+/**
+ * Do the thing the room just agreed to.
+ *
+ * The ONE place `kind` is read and the one place `replacement` is unwrapped, so
+ * the nullability that a lock proposal introduces is handled once rather than
+ * at every reader. `?? "swap"` is the whole of the backward compatibility: a
+ * proposal written before locking could be voted on has no `kind` and is a swap
+ * by definition.
+ */
+async function applyProposal(ctx: MutationCtx, proposal: Doc<"proposals">): Promise<void> {
+  const kind = proposal.kind ?? "swap";
+
+  if (kind === "swap") {
+    if (!proposal.replacement) {
+      // Not user-actionable and not reachable from any client: `proposals.open`
+      // requires a replacement and is the only writer of a swap row. A plain
+      // Error rather than throwUserError, because there is no sentence that
+      // would help the person who happened to cast the deciding vote.
+      throw new Error(`settleProposal: swap proposal ${proposal._id} has no replacement.`);
+    }
+    await applyStopSwap(ctx, proposal.roomId, proposal.stopId, proposal.replacement);
+    return;
+  }
+
+  // The proposer's name, not the deciding voter's: they are the one who asked
+  // for the lock, and "Locked by Tam" on a stop the room voted to protect is
+  // still true. A proposer who has since left leaves the lock unattributed
+  // rather than blocking it -- `lockedBy` is optional and the screen falls back
+  // to the bare word, which is the same thing it does for a stop locked before
+  // the field existed.
+  const proposer = await ctx.db.get(proposal.proposedBy);
+  await applyStopLock(
+    ctx,
+    proposal.roomId,
+    proposal.stopId,
+    kind === "lock",
+    proposer?.name ?? null,
+  );
+}
 
 /**
  * The one place a proposal's outcome is decided.
@@ -17,8 +58,8 @@ type ProposalStatus = Doc<"proposals">["status"];
  * It resolves in BOTH directions, and that is what keeps a proposal from
  * hanging:
  *
- *  - enough yeses for the roster as it stands now -> apply the swap and accept,
- *    the instant the majority exists rather than whenever the next vote lands;
+ *  - enough yeses for the roster as it stands now -> apply it and accept, the
+ *    instant the majority exists rather than whenever the next vote lands;
  *  - not enough undecided members left to ever reach it -> reject, because
  *    every remaining vote has already been cast (or the people who would have
  *    cast them are gone) and nothing further will ever arrive.
@@ -50,7 +91,7 @@ export async function settleProposal(
   const undecided = Math.max(0, total - votes.length);
 
   if (yes >= need) {
-    await applyStopSwap(ctx, proposal.roomId, proposal.stopId, proposal.replacement);
+    await applyProposal(ctx, proposal);
     await ctx.db.patch(proposal._id, { status: "accepted" });
     return "accepted";
   }

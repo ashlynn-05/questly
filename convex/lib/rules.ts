@@ -118,3 +118,26 @@ export async function clearFinalizeVotes(
     await ctx.db.delete(vote._id);
   }
 }
+
+/**
+ * Who may put a lock on a stop.
+ *
+ * The third house rule, and the one issue #11 was actually about. "anyone" is
+ * what shipped and what stays the default: a lock is a signal, it is reversible
+ * in one tap, and it costs nobody anything. "vote" is for the room that found
+ * out the hard way that a reversible signal is still a way to win an argument
+ * without having it -- under it, locking and unlocking both become proposals
+ * the room votes on, through the same `proposals` table a swap already uses.
+ *
+ * Host-only locking is deliberately NOT offered. It was the other option in the
+ * issue and it was ruled out on its merits, not on cost: it does not remove the
+ * silent lock, it hands the same silent lock to one person, and it puts a
+ * privileged user into a product that has otherwise avoided one. The ruling is
+ * in `docs/questly-handover.md` section 15.
+ */
+export const LOCK_RULES = ["anyone", "vote"] as const;
+export type LockRule = (typeof LOCK_RULES)[number];
+
+export const DEFAULT_LOCK_RULE: LockRule = "anyone";
+
+export const lockRuleValidator = v.union(v.literal("anyone"), v.literal("vote"));

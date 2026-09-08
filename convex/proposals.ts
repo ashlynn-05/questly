@@ -80,6 +80,10 @@ export const open = mutation({
       roomId: room._id,
       stopId: args.stopId,
       proposedBy: member._id,
+      // Written even though `settleProposal` defaults an absent `kind` to this
+      // for the rows that predate locking: a row whose meaning has to be
+      // inferred is one somebody will eventually infer wrong.
+      kind: "swap",
       // Sanitised at the door rather than when the proposal is applied, so the
       // room votes on the same object that would be stored -- a proposal the
       // room accepts must never then be refused at the swap. See

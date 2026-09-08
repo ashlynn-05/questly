@@ -13,10 +13,18 @@ import { errorCode, userMessage } from "@/lib/errors";
 import {
   FINALIZE_RULES,
   FINALIZE_SECONDS_OPTIONS,
+  LOCK_RULES,
   SWIPE_SECONDS_OPTIONS,
   type FinalizeRule,
+  type LockRule,
 } from "@convex/lib/rules";
-import { FINALIZE_RULE_LABELS, asOption, rulesLine } from "@/lib/houseRules";
+import {
+  FINALIZE_RULE_LABELS,
+  LOCK_RULE_LABELS,
+  asOption,
+  lockLine,
+  rulesLine,
+} from "@/lib/houseRules";
 import type { BuildFailure, RoomView } from "./page";
 
 /**
@@ -122,6 +130,7 @@ export function Lobby({
     swipeSeconds?: (typeof SWIPE_SECONDS_OPTIONS)[number];
     finalizeRule?: FinalizeRule;
     finalizeSeconds?: (typeof FINALIZE_SECONDS_OPTIONS)[number];
+    lockRule?: LockRule;
   }) {
     setError(null);
     try {
@@ -303,14 +312,33 @@ export function Lobby({
               </label>
             ) : null}
 
+            <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-dim">
+              Who can lock a stop
+              <select
+                value={view.room.lockRule}
+                onChange={(e) => {
+                  const rule = asOption(LOCK_RULES, e.target.value);
+                  if (rule !== null) void saveRules({ lockRule: rule });
+                }}
+                className="min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              >
+                {LOCK_RULES.map((rule) => (
+                  <option key={rule} value={rule}>
+                    {LOCK_RULE_LABELS[rule]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <p className="text-[12px] leading-snug text-dim">
               {rulesLine(view.room.swipeSeconds, view.room.finalizeRule)} Changing who settles
-              it clears any votes already cast.
+              it clears any votes already cast. {lockLine(view.room.lockRule)}
             </p>
           </fieldset>
         ) : (
           <p className="border-t border-hairline pt-4 text-[13px] leading-snug text-dim">
-            {hostName} set the rules: {rulesLine(view.room.swipeSeconds, view.room.finalizeRule)}
+            {hostName} set the rules: {rulesLine(view.room.swipeSeconds, view.room.finalizeRule)}{" "}
+            {lockLine(view.room.lockRule)}
           </p>
         )}
 

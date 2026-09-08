@@ -737,6 +737,7 @@ test("a room starts with no card timer and the permissive settle rule", async ()
   expect(view!.room.swipeSeconds).toBe(0);
   expect(view!.room.finalizeRule).toBe("anyone");
   expect(view!.room.finalizeSeconds).toBe(0);
+  expect(view!.room.lockRule).toBe("anyone");
   expect(view!.finalize).toMatchObject({ votes: 0, needed: 1, youVoted: false, deadlineAt: null });
 });
 
@@ -794,6 +795,41 @@ test("sending one rule leaves the other two exactly as they were", async () => {
     finalizeRule: "majority",
     finalizeSeconds: 300,
   });
+});
+
+test("the host can put locking to a vote, and every phone in the room sees it", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "vote" });
+
+  // Read back through the GUEST's key: this rule changes which control the
+  // people who are not the host are shown, so it has to reach them.
+  const view = await t.query(api.rooms.get, { code, sessionKey: guest });
+  expect(view!.room.lockRule).toBe("vote");
+});
+
+test("a guest cannot put locking to a vote either", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await expectUserError(
+    t.mutation(api.rooms.setRules, { code, sessionKey: guest, lockRule: "vote" }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room.lockRule).toBe("anyone");
+});
+
+test("moving the lock rule leaves the finalize vote alone", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "vote" });
+
+  // Two independent rules. Clearing the booking votes because the LOCK rule
+  // moved would throw away consent to a question nothing changed about.
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room).toMatchObject({ finalizeRule: "all", lockRule: "vote" });
 });
 
 test("changing who settles the night throws away the votes already cast", async () => {
