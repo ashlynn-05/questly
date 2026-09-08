@@ -30,6 +30,19 @@ export const stopValidator = v.object({
     v.literal("partner"),
   ),
   locked: v.boolean(),
+  /**
+   * The name of whoever locked this stop, cleared when it is unlocked.
+   *
+   * OPTIONAL, and it must stay optional: every plan document stored before this
+   * field existed has no such key, and a required field would fail validation
+   * for all of them.
+   *
+   * A name, not a member id. A lock is a social signal shown on a screen where
+   * names are how people are identified, and a member who leaves takes their
+   * row with them -- an id would go dangling and the lock would stop saying
+   * who left it, which is the whole point of recording it.
+   */
+  lockedBy: v.optional(v.string()),
 });
 
 // The `events` and `snippets` tables were Create-Next-App scaffolding and are
@@ -39,6 +52,13 @@ export const stopValidator = v.object({
 // anyone holding the deployment URL. Neither had a product feature underneath.
 /** One more-likely / less-likely card answer. */
 export const answerValidator = v.union(v.literal("more"), v.literal("less"));
+
+/** What a room is being asked to agree to. See the `proposals` table below. */
+export const proposalKindValidator = v.union(
+  v.literal("swap"),
+  v.literal("lock"),
+  v.literal("unlock"),
+);
 
 export default defineSchema({
   profiles: defineTable({
@@ -151,6 +171,38 @@ export default defineSchema({
     // labelled everywhere they are shown: a fabricated stranger presented as a
     // real one would breach the product's honesty constraints.
     demo: v.optional(v.boolean()),
+    /**
+     * The three house rules the host sets, and the one piece of state the
+     * second of them needs. All optional, and all of them must stay optional:
+     * every room opened before these existed has none of these keys.
+     *
+     * `swipeSeconds` is how long one card stays up before it passes itself.
+     * Absent or 0 is no timer, which is what every existing room has and what a
+     * new room starts with.
+     *
+     * A plain number rather than a union of the offered values, deliberately:
+     * the allow-list belongs at the mutation boundary (`rooms.setRules`), where
+     * refusing a bad value can produce a sentence. Putting it here as well
+     * would mean retiring an option later breaks every room that chose it.
+     */
+    swipeSeconds: v.optional(v.number()),
+    // Who has to say yes before the night is booked, and how long they get.
+    // See `convex/lib/rules.ts` for the four values and why the default is the
+    // permissive one.
+    finalizeRule: v.optional(
+      v.union(v.literal("anyone"), v.literal("host"), v.literal("majority"), v.literal("all")),
+    ),
+    finalizeSeconds: v.optional(v.number()),
+    // When the open vote started, and the whole of the window. Cleared when the
+    // vote passes, when it is retracted to nothing, when the roster moves, and
+    // when the host changes the rule -- so its presence IS "a vote is open".
+    finalizeStartedAt: v.optional(v.number()),
+    // Whether putting a lock on a stop is a tap by anyone, a tap by the host,
+    // or a vote. See `convex/lib/rules.ts` for the three values and why the
+    // default is the permissive one.
+    lockRule: v.optional(
+      v.union(v.literal("anyone"), v.literal("host"), v.literal("vote")),
+    ),
   })
     .index("by_code", ["code"])
     .index("by_visibility_status", ["visibility", "status"])
@@ -235,7 +287,27 @@ export default defineSchema({
     roomId: v.id("rooms"),
     stopId: v.string(),
     proposedBy: v.id("members"),
-    replacement: stopValidator,
+    /**
+     * What the room is being asked to agree to.
+     *
+     * Optional because every proposal written before locking could be voted on
+     * is a swap, and a migration to stamp a field that `?? "swap"` already
+     * answers would be work for nothing. `settleProposal` reads it through that
+     * default in the one place a proposal is applied; `proposals.open` writes
+     * it explicitly, so no new row is ambiguous.
+     */
+    kind: v.optional(proposalKindValidator),
+    /**
+     * The stop that would take this one's place -- absent on a lock or unlock,
+     * which changes nothing about what the stop IS.
+     *
+     * The alternative was to store the current stop here with `locked` flipped,
+     * which would have kept this field required. It was rejected for being a
+     * lie in the data: a row saying it replaces the Alderman with the Alderman
+     * is one every future reader has to decode, and the screen would still need
+     * `kind` to avoid offering "swap this for itself" as a vote.
+     */
+    replacement: v.optional(stopValidator),
     reason: v.string(),
     status: v.union(
       v.literal("open"),
@@ -254,6 +326,26 @@ export default defineSchema({
     .index("by_proposal", ["proposalId"])
     // A departing member takes their votes with them; finding them must not be
     // a full-table scan.
+    .index("by_member", ["memberId"]),
+
+  /**
+   * One row per member who is in favour of booking the night as it stands.
+   *
+   * Yes only, and no `vote` column: retracting is deleting the row. A stop swap
+   * is a choice between two things, so `proposalVotes` has to record WHICH way
+   * you went; settling the night is a choice between doing it and not doing it
+   * yet, and "not yet" is the absence of a yes. A no column here would be a
+   * veto, which is a different product and not one the host was offered.
+   */
+  finalizeVotes: defineTable({
+    roomId: v.id("rooms"),
+    memberId: v.id("members"),
+    at: v.number(),
+  })
+    .index("by_room", ["roomId"])
+    .index("by_room_member", ["roomId", "memberId"])
+    // A departing member takes their vote with them, exactly as they take their
+    // proposal votes -- and finding it must not be a full-table scan.
     .index("by_member", ["memberId"]),
 
   bookings: defineTable({

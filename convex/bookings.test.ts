@@ -600,3 +600,302 @@ test("a member removed by the host after booking leaves the booking alone too", 
   expect(view!.booking!.headcount).toBe(3);
   expect(view!.booking!.totalCents).toBe(4200);
 });
+
+// --- who settles the night
+
+/** The room's own view of its open vote, straight out of the tables. */
+async function voteState(t: T, code: string) {
+  return await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", code))
+      .unique();
+    const votes = await ctx.db
+      .query("finalizeVotes")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .collect();
+    const booking = await ctx.db
+      .query("bookings")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .first();
+    return {
+      votes: votes.length,
+      startedAt: room!.finalizeStartedAt,
+      status: room!.status,
+      booked: booking !== null,
+    };
+  });
+}
+
+test("under host-only a guest cannot book, and nothing is written", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "host",
+  });
+
+  await expectUserError(
+    t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  // Not a vote, not a pending anything: a refused tap leaves no trace at all.
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 0, booked: false, status: "matched" });
+});
+
+test("under host-only the host's tap books it outright, with no vote to run", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "host",
+  });
+
+  const settled = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  expect(settled).toMatchObject({ booked: true, ref: "QL-6666" });
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 0, booked: true, status: "booked" });
+});
+
+test("under everyone, one yes books nothing and the last yes books it", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+
+  const first = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  // Short of the threshold is the ORDINARY outcome, so it is a value and not a
+  // throw: nothing went wrong, the room is simply not there yet.
+  expect(first).toEqual({ booked: false, ref: null, deepLink: null });
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 1, booked: false });
+
+  const second = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+  expect(second.booked).toBe(true);
+  expect(second.ref).toBe("QL-6666");
+  expect(await voteState(t, "6666")).toMatchObject({ booked: true, status: "booked" });
+});
+
+test("under most of you, two out of three is enough and the third is not asked", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t, { members: ["Bec", "Tam", "Sam"] });
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "majority",
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  const settled = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+  expect(settled.booked).toBe(true);
+});
+
+test("voting twice is voting once", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t, { members: ["Bec", "Tam", "Sam"] });
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  // A double tap or a reconnect must not let one person supply two other
+  // people's missing yeses.
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 1, booked: false });
+});
+
+test("taking your yes back leaves the room short again", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.bookings.retract, { code: "6666", sessionKey: "k-bec" });
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 0, booked: false });
+
+  // And the other member alone still cannot settle it, which is the whole
+  // point of being able to take it back.
+  const settled = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+  expect(settled.booked).toBe(false);
+});
+
+test("the last person out closes the window rather than leaving a dead clock", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+    finalizeSeconds: 300,
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  expect((await voteState(t, "6666")).startedAt).toEqual(expect.any(Number));
+
+  await t.mutation(api.bookings.retract, { code: "6666", sessionKey: "k-bec" });
+  // Cleared, so the next yes starts a fresh five minutes instead of inheriting
+  // whatever was left of an abandoned window.
+  expect((await voteState(t, "6666")).startedAt).toBeUndefined();
+});
+
+test("retracting a vote you never cast is not an error", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+  await expect(
+    t.mutation(api.bookings.retract, { code: "6666", sessionKey: "k-tam" }),
+  ).resolves.toBeNull();
+});
+
+test("a vote that ran out is not carried into the next one", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId } = await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+    finalizeSeconds: 60,
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+  // Wind the window back past its own deadline. Nothing is scheduled to fire at
+  // one, so the expiry has to be decided by the next tap -- and this is that
+  // next tap.
+  await t.run(async (ctx) => {
+    await ctx.db.patch(roomId, { finalizeStartedAt: Date.now() - 120_000 });
+  });
+
+  const settled = await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  // Bec's yes started a NEW vote. If Tam's stale one had been counted, this
+  // room of two would have booked on a vote cast in a window that had closed.
+  expect(settled.booked).toBe(false);
+  expect(await voteState(t, "6666")).toMatchObject({ votes: 1, booked: false });
+});
+
+test("booking clears the votes that carried it", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+    finalizeSeconds: 300,
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+
+  const settled = await voteState(t, "6666");
+  expect(settled).toMatchObject({ votes: 0, booked: true });
+  expect(settled.startedAt).toBeUndefined();
+});
+
+test("a member leaving abandons the open vote instead of passing it", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t, { members: ["Bec", "Tam", "Sam"] });
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-tam" });
+  await t.mutation(api.rooms.leave, { code: "6666", sessionKey: "k-sam" });
+
+  // Two yeses and a roster of two would be unanimity -- and the room must NOT
+  // book on it. `bookings.confirm` freezes the headcount and the total, so a
+  // yes cast while three people were splitting the bill is not consent to two
+  // people splitting it. Everybody still here votes again.
+  const state = await voteState(t, "6666");
+  expect(state).toMatchObject({ votes: 0, booked: false, status: "matched" });
+  expect(state.startedAt).toBeUndefined();
+});
+
+test("a non-member can neither vote nor take a vote back", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.rooms.setRules, {
+    code: "6666",
+    sessionKey: "k-bec",
+    finalizeRule: "all",
+  });
+
+  await expectUserError(
+    t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-nobody" }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+  await expectUserError(
+    t.mutation(api.bookings.retract, { code: "6666", sessionKey: "k-nobody" }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+});
+
+test("a vote cannot be taken back once the night is booked", async () => {
+  const t = convexTest(schema, modules);
+  await matchedRoom(t);
+  await t.mutation(api.bookings.confirm, { code: "6666", sessionKey: "k-bec" });
+
+  await expectUserError(
+    t.mutation(api.bookings.retract, { code: "6666", sessionKey: "k-bec" }),
+    "ROOM_BOOKED",
+    /booked/i,
+  );
+});
+
+test("a room with no plan yet records no vote, whatever the rule is", async () => {
+  const t = convexTest(schema, modules);
+  const ids = await t.run(async (ctx) => {
+    const roomId = await ctx.db.insert("rooms", {
+      hostUserId: "u1", mood: "treat", headcount: 2, budgetPerHeadCents: 3000,
+      whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
+      visibility: "private", status: "matched", code: "5151",
+      finalizeRule: "all",
+    });
+    for (const [i, name] of ["Bec", "Tam"].entries()) {
+      await ctx.db.insert("members", {
+        roomId, name, isHost: i === 0, sessionKey: `k-${name.toLowerCase()}`, joinedAt: i + 1,
+      });
+    }
+    const questId = await ctx.db.insert("quests", {
+      roomId, rank: 0, source: "places", placeId: "p", title: "Nowhere", blurb: "",
+      priceLabel: "$14", priceCents: 1400, distanceKm: 1, discountPct: 0,
+      score: 1, scoreBreakdown: {},
+    });
+    await ctx.db.patch(roomId, { matchedQuestId: questId });
+    return { roomId };
+  });
+
+  await expectUserError(
+    t.mutation(api.bookings.confirm, { code: "5151", sessionKey: "k-bec" }),
+    "PLAN_NOT_READY",
+    /still being written/i,
+  );
+  // The plan guard runs BEFORE the vote is recorded, so a room nobody could
+  // book anyway never accumulates a tally that looks like consent.
+  const votes = await t.run(async (ctx) =>
+    ctx.db
+      .query("finalizeVotes")
+      .withIndex("by_room", (q) => q.eq("roomId", ids.roomId))
+      .collect(),
+  );
+  expect(votes).toHaveLength(0);
+});

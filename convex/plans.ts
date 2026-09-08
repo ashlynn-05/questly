@@ -5,6 +5,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import schema, { slotValidator, stopValidator } from "./schema";
 import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
+import { applyStopLock } from "./lib/lock";
+import { settleProposal } from "./lib/proposals";
+import { DEFAULT_LOCK_RULE } from "./lib/rules";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
 import { FREE_TYPES, MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
@@ -417,17 +420,41 @@ export const replaceStop = mutation({
 /**
  * Pin a stop, or unpin it.
  *
- * DELIBERATELY a direct edit even in a group, and NOT routed through a
- * proposal -- do not "fix" this later. A lock changes nothing about the night:
- * it is a signal to the room that someone cares about this stop, it is fully
- * reversible by anyone in one tap, and it costs nobody anything. Making the
- * room vote on a signal would be ceremony, and it would mean a stop could not
- * be protected until a majority agreed to protect it. Content changes -- what
- * the stop actually IS -- are the thing the room votes on, and those go through
- * `proposals.open`.
+ * A lock changes nothing about the night: it is a signal to the room that
+ * someone cares about this stop, and it is reversible in one tap. Content
+ * changes -- what the stop actually IS -- are a different thing, and in a group
+ * they have always gone through `proposals.open`.
  *
- * Locking is unanimous by construction: anyone can lock, anyone can unlock. It
- * is not a permission system, and it must never become one.
+ * ISSUE #11 ASKED WHO MAY LOCK. It offered three answers: host-only, a room
+ * vote, or keep it open. The complaint underneath it was real and is worth
+ * restating: one person QUIETLY locking a stop everyone else wanted to change
+ * is a way to win an argument without having it.
+ *
+ * The answer came in two parts, because that sentence has two halves:
+ *
+ *  1. The silence, which is unconditional. A lock recorded nothing but a
+ *     boolean, so the screen said "Locked" and never said by whom. That is
+ *     anonymity, not authority, and no amount of restricting WHO may lock would
+ *     have fixed it. Every lock now records `lockedBy` and the screen says
+ *     whose it is, in every room, under every rule -- a silent lock was never a
+ *     feature anybody chose, so it is not one a room can choose back.
+ *
+ *  2. The authority, which is the room's to decide. `lockRule` is a house rule
+ *     the host sets, and all three of the issue's answers are offered:
+ *       - "anyone"  the default, and what every room opened before this had;
+ *       - "host"    only the host may lock or unlock, enforced below on the
+ *                   member row's `isHost` and on nothing a client says;
+ *       - "vote"    locking and unlocking both become proposals the room votes
+ *                   on, through the same table a swap already uses.
+ *
+ * Host-only was argued against here before it was asked for, and the argument
+ * is kept in `docs/questly-handover.md` section 15 rather than deleted: it does
+ * not by itself remove the silent lock, and it introduces this product's first
+ * content privilege. Part 1 answers the first objection -- the lock says whose
+ * it is whichever rule is on -- and the second was a judgement about what a
+ * group wants, which is the product owner's to make and not this file's. What
+ * this file is responsible for is that the privilege is enforced on the server,
+ * from the member row, and that is what the check below does.
  */
 export const setLocked = mutation({
   args: {
@@ -439,7 +466,10 @@ export const setLocked = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const room = await roomByCode(ctx, args.code);
-    await requireMember(ctx, room._id, args.sessionKey);
+    // The member row, not just the check: `lockedBy` is written from its `name`
+    // below, and the opening yes on a lock proposal is cast as this member.
+    // Still no host check -- see the ruling above.
+    const member = await requireMember(ctx, room._id, args.sessionKey);
     // Locking AND unlocking are both refused once the night is booked -- see
     // refuseIfBooked for why releasing a lock is the same problem as a swap.
     refuseIfBooked(room);
@@ -453,13 +483,102 @@ export const setLocked = mutation({
     if (!plan) throwUserError("PLAN_NOT_READY", "There is no plan to edit yet.");
 
     // A typo'd stop id must not report success while changing nothing.
-    if (!plan.stops.some((s) => s.id === args.stopId)) {
-      throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
+    const stop = plan.stops.find((s) => s.id === args.stopId);
+    if (!stop) throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
+
+    const rule = room.lockRule ?? DEFAULT_LOCK_RULE;
+
+    // Read off the member row `requireMember` returned, never from an argument.
+    // A `hostSessionKey` or an `isHost` in the args would be the client saying
+    // it is the host, which is not evidence that it is.
+    //
+    // Refused for locking AND unlocking. A rule that let anyone release the
+    // host's lock would leave the host able to protect nothing, which is not
+    // the rule the room turned on.
+    if (rule === "host" && !member.isHost) {
+      throwUserError(
+        "NOT_THE_HOST",
+        "The host looks after the locks in this room. Ask them to pin it.",
+      );
     }
 
-    await ctx.db.patch(plan._id, {
-      stops: plan.stops.map((s) => (s.id === args.stopId ? { ...s, locked: args.locked } : s)),
+    const members = await memberCount(ctx, room._id);
+
+    // A room of one is nobody to vote with. `needed(1)` is 1, so a proposal
+    // here would be opened, carried by its own opening yes, and applied in the
+    // same transaction -- the same outcome, two rows heavier, and with an
+    // accepted proposal in the history for a decision nobody deliberated.
+    if (rule !== "vote" || members < 2) {
+      await applyStopLock(
+        ctx,
+        room._id,
+        args.stopId,
+        args.locked,
+        // The name comes off the member row `requireMember` already returned,
+        // never from an argument. A client-supplied name here would let anyone
+        // sign someone else's name to a lock, which is worse than the silence
+        // this field exists to end.
+        args.locked ? member.name : null,
+      );
+      return null;
+    }
+
+    // Already where the room is being asked to put it.
+    //
+    // Only on this path. Locking an already-locked stop directly is a no-op
+    // with one deliberate effect -- it moves `lockedBy` to whoever tapped last,
+    // which is how a room passes an existing lock to the person who now cares
+    // about it. A proposal cannot do that quietly: it would sit on the rail
+    // collecting yeses for a change that has already happened, and it would
+    // hold the stop's one proposal slot while it did it.
+    if (stop.locked === args.locked) return null;
+
+    // One open proposal per stop, and a lock proposal counts. Two live
+    // proposals on one stop would let the room vote twice on the same slot;
+    // worse here than for a swap, because a lock vote and a swap vote on the
+    // same stop are directly contradictory and whichever majority landed second
+    // would win by timing.
+    const clash = await ctx.db
+      .query("proposals")
+      .withIndex("by_room_stop", (q) => q.eq("roomId", room._id).eq("stopId", args.stopId))
+      .filter((q) => q.eq(q.field("status"), "open"))
+      .first();
+    if (clash) {
+      throwUserError(
+        "PROPOSAL_EXISTS",
+        "There is already an open proposal for that stop. Settle that first.",
+      );
+    }
+
+    const proposalId = await ctx.db.insert("proposals", {
+      roomId: room._id,
+      stopId: args.stopId,
+      proposedBy: member._id,
+      kind: args.locked ? "lock" : "unlock",
+      // No `replacement`: a lock does not change what the stop is. See the
+      // field's note in the schema for why the current stop is not stored here
+      // to keep it non-optional.
+      //
+      // No reason either. The swap sheet asks for one because "why this place
+      // instead" is a real question; "why protect this" is answered by the
+      // proposer's name, which the card already shows.
+      reason: "",
+      status: "open",
     });
+
+    // Asking is agreeing, exactly as in `proposals.open`, and recorded as a
+    // real row rather than implied by `proposedBy` so one tally counts every
+    // yes the same way -- and so it leaves with the proposer instead of
+    // outliving them as a phantom.
+    await ctx.db.insert("proposalVotes", { proposalId, memberId: member._id, vote: "yes" });
+
+    const proposal = await ctx.db.get(proposalId);
+    // Not user-actionable: the row was inserted above in this same transaction.
+    if (!proposal) throw new Error("plans.setLocked: the proposal vanished mid-transaction.");
+
+    // In a room of two, needed(2) is 2, so this settles nothing yet and the
+    // other person decides. The threshold is never written here as a literal.
+    await settleProposal(ctx, proposal);
     return null;
   },
 });

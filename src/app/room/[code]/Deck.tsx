@@ -8,6 +8,8 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
+import { useCountdown, useNow } from "@/components/questly/useCountdown";
+import { MapTile } from "@/components/questly/frame";
 import { photoSrc } from "@/lib/photo";
 import { userMessage } from "@/lib/errors";
 import { SwipeCard } from "./SwipeCard";
@@ -147,6 +149,59 @@ export function Deck({
     [quest, cast, code, sessionKey],
   );
 
+  /**
+   * The host's card timer, as a deadline for THIS card on THIS phone.
+   *
+   * Per member, not per room, and that follows from the deck itself: `index` is
+   * your own swipe count, so two people are looking at different cards at the
+   * same moment and a shared deadline would take the card away from whoever
+   * arrived at it last. It restarts on every card, and on a room whose host
+   * turns the timer off it is null and nothing runs at all.
+   */
+  const swipeSeconds = view.room.swipeSeconds;
+  const questId = quest?._id ?? null;
+
+  /**
+   * The deadline is minted DURING the render that first shows the card, not in
+   * an effect afterwards, using React's own "adjusting state when a prop
+   * changes" shape: compare against the key the state was built for, and set it
+   * if it has moved. An effect would mint it a paint later, which on a slow
+   * phone is a visible jump from no timer to a running one, and it is the shape
+   * `react-hooks/set-state-in-effect` exists to refuse.
+   *
+   * The clock comes from `useNow` rather than from `Date.now()`: a render must
+   * be pure, and the tick store is how this codebase reads the time inside one.
+   */
+  const timerOn = swipeSeconds > 0 && questId !== null;
+  const now = useNow(timerOn);
+  const cardKey = `${questId ?? "none"}:${swipeSeconds}`;
+  const [card, setCard] = useState<{ key: string; deadlineAt: number | null }>({
+    key: "",
+    deadlineAt: null,
+  });
+  if (card.key !== cardKey) {
+    setCard({ key: cardKey, deadlineAt: timerOn ? now + swipeSeconds * 1000 : null });
+  }
+
+  /**
+   * Out of time is a pass, never a yes.
+   *
+   * A timer that decided FOR you in the direction of doing something would put
+   * a night on the table nobody chose; passing costs the room one card.
+   *
+   * Fired from the interval rather than from an effect watching the count, so
+   * the swipe does not depend on a render landing. Nothing needs a fired-once
+   * guard on top of the one inside the hook: `swipe` refuses a second call
+   * while one is in flight, a successful cast advances `index` and mints a new
+   * deadline, and a failed one leaves the card up with its error and both
+   * buttons still working.
+   */
+  const passOnTime = useCallback(() => {
+    void swipe("no");
+  }, [swipe]);
+
+  const left = useCountdown(card.deadlineAt, passOnTime);
+
   // Swiping is never the only path: the buttons below are the primary control
   // and the arrow keys are the shortcut, so nobody has to be able to drag.
   useEffect(() => {
@@ -282,6 +337,17 @@ export function Deck({
       <div className="flex items-baseline justify-between gap-3">
         <p className="board text-[11px] text-accent">
           <span className="num">{index + 1}</span> of <span className="num">{deckSize}</span>
+          {/* aria-hidden, and not a live region: a number that changes every
+              second would be read out every second, which would make the card
+              itself unusable with a screen reader. The one announcement of the
+              timer is in the card's own sr-only summary below, once per card,
+              which is where a person needs to know it is running. Sighted
+              users get the count; nobody gets a ticking earful. */}
+          {left !== null ? (
+            <span aria-hidden="true" className={left <= 5 ? "num ml-3 text-danger" : "num ml-3 text-dim"}>
+              {left}s
+            </span>
+          ) : null}
         </p>
         {/* Names are not used here: `waitingOn` includes you while you are still
             swiping, and "Still swiping: you" is nonsense. Counts say the same
@@ -347,6 +413,9 @@ export function Deck({
           ? `About ${quest.priceLabel} each, `
           : "Cost not listed for this one, "}
         {quest.distanceKm} kilometres away.
+        {swipeSeconds > 0
+          ? ` ${swipeSeconds} seconds to answer, and then it passes itself.`
+          : ""}
       </p>
 
       {/* Mounted before its text arrives, like every other announcement in
@@ -381,8 +450,15 @@ export function Deck({
           onClick={() => void swipe("yes")}
         />
       </div>
+      {/* The timer is the host's rule, so the screen says whose it is and what
+          it does BEFORE it does it. A card that vanishes with no warning reads
+          as a bug, and a pass nobody chose is exactly the thing to be honest
+          about. */}
       <p className="text-center text-[12px] text-dim">
-        Swipe the card, or use the buttons. Arrow keys work too.
+        Arrow keys work too.
+        {swipeSeconds > 0
+          ? ` ${hostName} set ${swipeSeconds} seconds a card — run out and it counts as a nah.`
+          : ""}
       </p>
     </section>
   );

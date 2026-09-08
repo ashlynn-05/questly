@@ -1,12 +1,25 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import schema, { moodValidator, stopValidator } from "./schema";
+import schema, { moodValidator, proposalKindValidator, stopValidator } from "./schema";
 import {
   MAX_ROOM_MEMBERS,
-  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, requireLiveUserId, requireMember, roomByCode, safeUserId,
+  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, refuseIfBooked, requireLiveUserId, requireMember, roomByCode, safeUserId,
 } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { detachMember } from "./lib/roster";
+import {
+  DEFAULT_FINALIZE_RULE,
+  DEFAULT_LOCK_RULE,
+  type FinalizeRule,
+  type LockRule,
+  clearFinalizeVotes,
+  finalizeRuleValidator,
+  finalizeSecondsValidator,
+  lockRuleValidator,
+  swipeSecondsValidator,
+  voteDeadlineAt,
+  votesNeeded,
+} from "./lib/rules";
 import { isOverBudget } from "./lib/stops";
 
 const memberViewValidator = v.object({
@@ -53,6 +66,35 @@ const roomViewValidator = v.union(
         v.literal("booked"),
       ),
       matchedQuestId: v.optional(v.id("quests")),
+      // The host's three house rules, projected as concrete values rather
+      // than as the optional columns they are stored in: every screen that
+      // draws them needs a number and a rule, not a maybe.
+      swipeSeconds: v.number(),
+      finalizeRule: finalizeRuleValidator,
+      finalizeSeconds: v.number(),
+      lockRule: lockRuleValidator,
+    }),
+    /**
+     * The open vote to settle the night, or the empty shape of one.
+     *
+     * Projected for every room, including the ones whose rule needs no vote,
+     * so the screen never has to decide whether this field exists before it
+     * can read it. Under "anyone" and "host" the threshold is one person and
+     * nothing is ever recorded, which reads correctly: nobody has voted, and
+     * one vote is what it takes.
+     */
+    finalize: v.object({
+      votes: v.number(),
+      needed: v.number(),
+      youVoted: v.boolean(),
+      // Names, like `waitingOn` and like a stop's `lockedBy`. The screen shows
+      // who is already in so the room knows who it is waiting on.
+      voters: v.array(v.string()),
+      // When the window runs out, or null when there is no open vote or no
+      // deadline at all. The clock is the client's: this is the instant, not a
+      // remaining count, so a phone that was asleep works out the truth rather
+      // than resuming a stale countdown.
+      deadlineAt: v.union(v.number(), v.null()),
     }),
     you: memberViewValidator,
     members: v.array(memberViewValidator),
@@ -74,7 +116,15 @@ const roomViewValidator = v.union(
       v.object({
         _id: v.id("proposals"),
         stopId: v.string(),
-        replacement: stopValidator,
+        // What the room is being asked to agree to. Concrete here even though
+        // the column is optional: the screen draws a different card for each,
+        // and "absent means swap" is a rule the backend already applies once,
+        // in `settleProposal`, and should not be teaching the client as well.
+        kind: proposalKindValidator,
+        // Null on a lock or an unlock, which replaces nothing. `kind` is what
+        // says which -- a reader must never work it out from this being null,
+        // because the two would disagree the first time one of them changed.
+        replacement: v.union(stopValidator, v.null()),
         reason: v.string(),
         proposedByName: v.string(),
         yes: v.number(),
@@ -335,7 +385,10 @@ export const get = query({
         return {
           _id: p._id,
           stopId: p.stopId,
-          replacement: p.replacement,
+          // The same `?? "swap"` the backend applies: rows written before a
+          // lock could be voted on carry no kind and are swaps by definition.
+          kind: p.kind ?? "swap",
+          replacement: p.replacement ?? null,
           reason: p.reason,
           proposedByName: members.find((m) => m._id === p.proposedBy)?.name ?? "Someone",
           yes: votes.filter((vote) => vote.vote === "yes").length,
@@ -348,6 +401,13 @@ export const get = query({
     );
 
     const yourSwipes = swipes.filter((s) => s.memberId === you._id);
+
+    const finalizeRule = room.finalizeRule ?? DEFAULT_FINALIZE_RULE;
+    const finalizeSeconds = room.finalizeSeconds ?? 0;
+    const finalizeVotes = await ctx.db
+      .query("finalizeVotes")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .collect();
 
     // sessionKey is deliberately absent from every member projected here: it is
     // a capability, and one member must never be able to act as another.
@@ -370,6 +430,30 @@ export const get = query({
         demo: room.demo === true,
         status: room.status,
         matchedQuestId: room.matchedQuestId,
+        // Absent is off, and off is what every room opened before the host
+        // could set a timer has.
+        swipeSeconds: room.swipeSeconds ?? 0,
+        finalizeRule,
+        finalizeSeconds,
+        lockRule: room.lockRule ?? DEFAULT_LOCK_RULE,
+      },
+      finalize: {
+        votes: finalizeVotes.length,
+        needed: votesNeeded(finalizeRule, members.length),
+        youVoted: finalizeVotes.some((vote) => vote.memberId === you._id),
+        // Members who have left took their votes with them, so a vote row
+        // without a member row cannot happen -- but the join is written to
+        // survive one rather than to print "undefined" if it ever does.
+        voters: finalizeVotes
+          .map((vote) => members.find((m) => m._id === vote.memberId)?.name)
+          .filter((name): name is string => name !== undefined),
+        // Deliberately NOT zeroed out here when the window has already run out.
+        // A query does not re-run because time passed, so a server that
+        // decided "lapsed" at read time would keep saying whatever was true
+        // when the last write happened. The instant is the honest thing to
+        // hand over; the screen counts it down and `bookings.confirm` clears
+        // the votes on the next tap.
+        deadlineAt: voteDeadlineAt(room.finalizeStartedAt, finalizeSeconds),
       },
       you: { _id: you._id, name: you.name, isHost: you.isHost },
       members: members.map((m) => ({ _id: m._id, name: m.name, isHost: m.isHost })),
@@ -444,6 +528,102 @@ export const openRooms = query({
     // decides whether anyone reaches a room at all -- offering it only to
     // refuse the tap is worse than not offering it.
     return withCounts.filter((r) => r.memberCount < r.headcount);
+  },
+});
+
+/**
+ * The host's three house rules: how long a card stays up, who settles the
+ * night, and whether locking a stop is a tap or a vote.
+ *
+ * One mutation for all of them, because they are one decision made in one
+ * place -- the
+ * lobby, before anyone is looking at a card -- and because a second copy of the
+ * host check is a second place for it to be got wrong.
+ *
+ * Host is read off the member row this session key resolves to. There is no
+ * `hostSessionKey` argument and no `isHost` argument: the client saying it is
+ * the host is not evidence that it is.
+ *
+ * Every field is optional and only the ones that arrive are written, so the
+ * lobby's three controls can each move on their own without sending the other
+ * two back at whatever value that phone last rendered.
+ */
+export const setRules = mutation({
+  args: {
+    code: v.string(),
+    sessionKey: v.string(),
+    swipeSeconds: v.optional(swipeSecondsValidator),
+    finalizeRule: v.optional(finalizeRuleValidator),
+    finalizeSeconds: v.optional(finalizeSecondsValidator),
+    lockRule: v.optional(lockRuleValidator),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const room = await roomByCode(ctx, args.code);
+    // After requireMember, so a stranger is told they are a stranger rather
+    // than being told who the host of a room they are not in is.
+    const caller = await requireMember(ctx, room._id, args.sessionKey);
+    if (!caller.isHost) {
+      throwUserError("NOT_THE_HOST", "Only the host can change the rules of this room.");
+    }
+    // A booked night is frozen, and that includes the rule that settled it.
+    refuseIfBooked(room);
+
+    const patch: {
+      swipeSeconds?: number;
+      finalizeRule?: FinalizeRule;
+      finalizeSeconds?: number;
+      finalizeStartedAt?: undefined;
+      lockRule?: LockRule;
+    } = {};
+    if (args.swipeSeconds !== undefined) patch.swipeSeconds = args.swipeSeconds;
+    if (args.finalizeRule !== undefined) patch.finalizeRule = args.finalizeRule;
+    if (args.finalizeSeconds !== undefined) patch.finalizeSeconds = args.finalizeSeconds;
+    if (args.lockRule !== undefined) patch.lockRule = args.lockRule;
+
+    // Turning the vote OFF closes the votes it was running.
+    //
+    // A lock proposal is a question the room can only be asked under one rule.
+    // Left open across the switch it outlives its own premise: the stop becomes
+    // tappable, somebody locks and unlocks it, and then a late yes on the
+    // orphaned proposal re-locks a stop the room has since deliberately let go
+    // -- under a rule that says a lock is a tap, decided by a vote nobody is
+    // still running. `applyProposal` refuses to rewrite a stop already in the
+    // asked-for state, which stops the attribution being stolen, but it cannot
+    // tell a stale question from a live one. This can.
+    //
+    // Closed as rejected, not deleted, for the reason `resolveOpenProposals`
+    // closes an unappliable one that way: a proposal that vanishes is one
+    // nobody can see was decided.
+    if (args.lockRule !== undefined && args.lockRule !== (room.lockRule ?? DEFAULT_LOCK_RULE)) {
+      const open = await ctx.db
+        .query("proposals")
+        .withIndex("by_room_status", (q) => q.eq("roomId", room._id).eq("status", "open"))
+        .collect();
+      for (const proposal of open) {
+        if (proposal.kind === "lock" || proposal.kind === "unlock") {
+          await ctx.db.patch(proposal._id, { status: "rejected" });
+        }
+      }
+    }
+
+    // Changing either half of the vote throws away the votes already cast.
+    //
+    // A yes is consent to a specific question, and "should we book this?" under
+    // "everyone agrees" is not the same question as it is under "most of you
+    // do". Keeping the tally would let a host turn two yeses out of four into a
+    // booking by moving the threshold under them, which is the one thing a vote
+    // exists to stop.
+    const rulesMoved =
+      (args.finalizeRule !== undefined && args.finalizeRule !== (room.finalizeRule ?? DEFAULT_FINALIZE_RULE)) ||
+      (args.finalizeSeconds !== undefined && args.finalizeSeconds !== (room.finalizeSeconds ?? 0));
+    if (rulesMoved) {
+      await clearFinalizeVotes(ctx, room._id);
+      patch.finalizeStartedAt = undefined;
+    }
+
+    await ctx.db.patch(room._id, patch);
+    return null;
   },
 });
 

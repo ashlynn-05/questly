@@ -53,7 +53,14 @@ export const open = mutation({
       .filter((q) => q.eq(q.field("status"), "open"))
       .first();
     if (clash) {
-      throwUserError("PROPOSAL_EXISTS", "Someone has already proposed a change to that stop.");
+      // Not "a change": under `lockRule: "vote"` the blocker may be a proposal
+      // to LOCK the stop, which proposes no change to what the stop is. One
+      // sentence that is true of both beats a precise one that is sometimes a
+      // lie about what the room is actually being asked.
+      throwUserError(
+        "PROPOSAL_EXISTS",
+        "There is already an open proposal for that stop. Settle that first.",
+      );
     }
 
     // Fail fast, on the person who caused it.
@@ -80,6 +87,10 @@ export const open = mutation({
       roomId: room._id,
       stopId: args.stopId,
       proposedBy: member._id,
+      // Written even though `settleProposal` defaults an absent `kind` to this
+      // for the rows that predate locking: a row whose meaning has to be
+      // inferred is one somebody will eventually infer wrong.
+      kind: "swap",
       // Sanitised at the door rather than when the proposal is applied, so the
       // room votes on the same object that would be stored -- a proposal the
       // room accepts must never then be refused at the swap. See

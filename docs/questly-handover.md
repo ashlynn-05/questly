@@ -526,3 +526,162 @@ running dev server. Pushed to `zany-cheetah-110`: `npx convex
 function-spec` lists `account.deleteAccount/restoreAccount/deletionStatus/
 purgeExpired` and `profiles.myRooms/renameMe/setAvatar/clearAvatar/
 generateAvatarUploadUrl`, so the new fields and indexes are live.
+
+---
+
+## 15. Who may lock a stop (issue #11)
+
+**Ruling, as amended twice: attribution first and unconditionally; and then
+all three of the issue's answers, offered as a house rule the host sets.**
+
+This section was written three times, and each version is kept rather than
+overwritten, because two of them argued against something that was later built.
+A handover that only records the decision that survived is a handover that
+cannot tell the reader whether a question was considered or merely missed.
+
+- **15a** is what shipped first, and still stands unchanged.
+- **15b** added `lockRule: "vote"` when the product owner asked for it.
+- **15c** added `"host"` when the product owner asked for that too, over an
+  objection recorded here in 15b and now answered.
+
+### 15a. What shipped first: the lock says whose it is
+
+`plans.setLocked` still lets any member lock or unlock any stop, directly, in
+the default room. What changed is that a lock is no longer anonymous:
+`stopValidator` carries an optional `lockedBy`, the lock write puts the locking
+member's name on it (taken from the member row `requireMember` returns, never
+from an argument), clears it on unlock, and the plan screen reads "Locked by
+Tam" instead of "Locked".
+
+The argument for changing the behaviour was that "one person quietly locking a
+stop everyone else wanted to change is a way to win an argument without having
+it". That is a real description of how groups go wrong, and the operative word
+is *quietly*. Silence was the defect that needed no rule to fix, so it was
+fixed for every room and is not configurable.
+
+### 15b. What shipped second: the vote, at the product owner's request
+
+`rooms.lockRule` is a third house rule beside `swipeSeconds` and
+`finalizeRule`, set by the host in the lobby:
+
+- `"anyone"` -- the default, and what every room opened before the column
+  existed has. Locking is one tap, as in 15a.
+- `"vote"` -- locking **and** unlocking become proposals on the existing
+  `proposals` table. `plans.setLocked` opens one with `kind: "lock"` or
+  `"unlock"` and casts the asker's own yes; `settleProposal` applies it when
+  `needed(n)` yeses land, through `applyStopLock`.
+
+The default did not move. A rule that flipped under every room already open
+would have retired a shipped decision silently, which is the thing 15a was
+careful not to do in the other direction.
+
+**How the machinery objections were answered.** The first draft of this section
+rejected the vote for not fitting the `proposals` table. Building it settled
+each point concretely rather than in the abstract:
+
+- *"`replacement` is required."* It is now `v.optional`, with `kind` as the
+  explicit discriminant. The nullability is unwrapped in exactly one place --
+  `applyProposal` in `convex/lib/proposals.ts` -- so no other reader handles it.
+  Storing the current stop back over itself would have kept the field required
+  and was rejected as a lie in the data.
+- *"A lock vote and a swap proposal on one stop would collide."* They are
+  refused, by the same `by_room_stop` check `proposals.open` already uses.
+  Allowing both would mean two contradictory majorities on one stop settled by
+  whichever landed second. The room settles one, then opens the other.
+- *"A stop cannot be protected until a majority agrees."* True, and that is now
+  what the room asked for by turning the rule on. It is not imposed on a room
+  that did not.
+
+**Why host-only was refused at this point.** Recorded as written, because 15c
+overturns it:
+
+- The defect named in the issue is silence, not authority. Host-only locking
+  gives the same unattributable lock to one person and makes them the only one
+  who can undo it -- the identical failure with a smaller cast.
+- It would create this product's first content privilege. Section 3 describes an
+  authorization model whose entire shape is "a capability proves membership,
+  never identity"; the only existing host powers are removing a member,
+  settling the room, and setting the house rules -- all of them about the room,
+  none of them about the plan.
+- A room that wants the host to decide can have that by asking. A room that
+  wants it *enforced* wants `"vote"`, which enforces it without inventing a
+  privileged user.
+
+### 15c. What shipped third: `"host"`, and why the objection above did not hold
+
+The product owner asked for all three of the issue's answers to be available to
+the host. They are. `LOCK_RULES` is now `["anyone", "host", "vote"]`.
+
+Under `"host"`, `plans.setLocked` refuses any member whose row does not carry
+`isHost`, for **locking and unlocking alike**. The asymmetric version -- host
+locks, anyone unlocks -- was considered and rejected in the same breath: it
+would leave the host able to protect nothing, which is not the rule a room
+turning this on is asking for.
+
+Taking the two objections in 15b in turn:
+
+1. *"It does not remove the silent lock."* Correct, and it does not have to.
+   15a already removed it, unconditionally and under every rule. That objection
+   was an argument for doing 15a **first**, which is what happened; it was never
+   an argument against ever doing this. Held as a blocker after 15a shipped, it
+   was answering a question that had already been settled.
+2. *"It creates the first content privilege."* This one is true and stands as a
+   description. What it is not is a decision: whether a group wants the person
+   who organised the night to settle this sort of thing is a product judgement
+   about how real groups behave, and that judgement belongs to the product
+   owner, not to the file enforcing it. It is also **opt-in and reversible** --
+   no room gets it without its host choosing it, and any host can choose back.
+
+What the codebase remains responsible for, and does:
+
+- The privilege is enforced **server-side**, read off `members.isHost`, never
+  from an argument. There is no `hostSessionKey` and no `isHost` in the args.
+- The plan screen withholds the lock control from a non-host under this rule
+  rather than offering one the server will reject, and `lockLine` states whose
+  job it is instead.
+- Switching **off** `"vote"` -- to `"host"` as much as to `"anyone"` -- closes
+  any open lock proposals as rejected. A proposal is a question only one rule
+  was running.
+
+**The honest summary:** two of the three arguments in 15b were sound and one of
+them (objection 1) had already been satisfied by the time it was being used to
+refuse this. The remaining cost is real and is now a choice a room makes, which
+is the right place for it.
+
+### What this cost
+
+Two optional schema columns (`rooms.lockRule`, `proposals.kind`), one required
+field relaxed to optional (`proposals.replacement`), a new
+`convex/lib/lock.ts` holding the single lock write that all three paths share,
+two branches in `setLocked`, one branch in `settleProposal`, a `<select>` in
+the lobby, and kind-aware copy on the plan screen.
+
+Adding `"host"` on top of that was one literal, one validator arm, one guard in
+`setLocked`, one label, one sentence in `lockLine`, and one condition on the
+plan screen -- which is itself worth noting: the shape 15b built for the vote
+is what made the third answer cheap.
+
+No authorization changed on the default path, so the four existing tests that
+exercise `setLocked` as a non-host -- `proposals.test.ts:322`, `:693`, `:719`,
+`:733` -- stand exactly as written, and so do the 15a tests.
+
+### What to watch
+
+- `lockedBy` is a name, not a member id, so a member who leaves still shows as
+  the person who left the lock. Deliberate -- it is a record of what happened,
+  and section 13 item 2 notes ids are not projected anyway -- but it is the sort
+  of choice a product owner might make differently.
+- A lock the room votes through is attributed to the **proposer**, not the
+  deciding voter. If the proposer has left by the time it carries, the lock is
+  recorded with no name at all rather than blocked or signed by someone who
+  merely agreed.
+- Under `"vote"`, a member who leaves takes their opening yes with them and
+  `resolveOpenProposals` re-decides the lock against the smaller roster, the
+  same as any swap. That is deliberately unlike the finalize vote, which is
+  abandoned on a roster change -- see the comment in `convex/lib/roster.ts` for
+  why the two differ.
+
+**If this is revisited:** measure whether rooms actually turn `"vote"` on. If
+almost none do, attribution alone was the whole fix and this rule is carrying
+schema weight for nothing. If many do, the next question is a lock that
+expires, which would get most of the same protection with no vote at all.

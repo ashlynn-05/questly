@@ -2,6 +2,7 @@ import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { resolveMatch } from "./match";
 import { resolveOpenProposals } from "./proposals";
+import { clearFinalizeVotes } from "./rules";
 
 /**
  * Take a member off the roster, and take everything that counted for them with
@@ -72,6 +73,22 @@ export async function detachMember(ctx: MutationCtx, member: Doc<"members">): Pr
   const room = await ctx.db.get(member.roomId);
   if (room?.status !== "booked") {
     await resolveOpenProposals(ctx, member.roomId);
+
+    // And the whole finalize vote, not only the leaver's row.
+    //
+    // The other two are re-decided against the smaller roster. This one is
+    // ABANDONED against it, and the difference is what a yes here means:
+    // `bookings.confirm` freezes `headcount` and `totalCents` at the moment it
+    // writes, so a yes cast while four people were splitting the bill is not
+    // consent to three people splitting it. Re-deciding would book the night
+    // on the strength of votes for a different night -- and it would do it
+    // from inside `rooms.leave`, which is not a place a booking should be able
+    // to appear from. Everyone still in the room votes again, on the room they
+    // are actually in.
+    await clearFinalizeVotes(ctx, member.roomId);
+    if (room?.finalizeStartedAt !== undefined) {
+      await ctx.db.patch(member.roomId, { finalizeStartedAt: undefined });
+    }
   }
   await resolveMatch(ctx, member.roomId);
 }
