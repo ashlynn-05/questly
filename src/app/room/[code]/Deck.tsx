@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
+import { AnimatePresence } from "motion/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
@@ -11,6 +12,7 @@ import { useCountdown, useNow } from "@/components/questly/useCountdown";
 import { MapTile } from "@/components/questly/frame";
 import { photoSrc } from "@/lib/photo";
 import { userMessage } from "@/lib/errors";
+import { SwipeCard } from "./SwipeCard";
 import type { RoomView } from "./page";
 
 /**
@@ -68,6 +70,18 @@ export function Deck({
    */
   const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Which plate the live drag is heading toward.
+   *
+   * This is the whole yes/no affordance. The card grows no stamp and no
+   * coloured glow: the CONTROL lights up instead, using `Plate`'s existing
+   * `selected` ring rather than a treatment invented for this one screen. Two
+   * things fall out of that. The deck speaks the same dialect as every chip and
+   * plate elsewhere in the product, and the gesture teaches itself -- the first
+   * drag shows you that dragging right IS the "I'm in" button.
+   */
+  const [lean, setLean] = useState<"yes" | "no" | null>(null);
 
   // R34: your position in the deck is YOUR swipe count, never a shared cursor.
   // Two people swipe at different speeds, and a shared index would show one of
@@ -346,51 +360,41 @@ export function Deck({
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-[10px] bg-ground-raised">
-        {src ? (
-          // eslint-disable-next-line @next/next/no-img-element -- Places photo URLs are signed redirects, not a fixed remote pattern
-          <img src={src} alt="" className="h-[200px] w-full object-cover" />
-        ) : (
-          <MapTile className="h-[200px] w-full" />
-        )}
+      {/* A one-cell grid, with both cards placed in that same cell by
+          `col-start-1 row-start-1` in `SwipeCard`. The leaving card and the
+          arriving card therefore OVERLAP instead of stacking, and the deck's
+          height stays the height of one card.
 
-        <div className="flex flex-col gap-3 p-4">
-          <h1 ref={headingRef} tabIndex={-1} className="display text-[28px] text-text">
-            {quest.title}
-          </h1>
-          {quest.blurb ? (
-            <p className="text-[14px] leading-snug text-dim">{quest.blurb}</p>
-          ) : null}
+          This is doing the job `mode="popLayout"` is advertised for, because
+          popLayout did not do it: measured live, the exiting card stayed
+          `position: static` for the whole 178ms exit and the page grew from
+          886px to 1167px -- which shoves both buttons off the bottom of a
+          phone at the exact moment a thumb is reaching for them. A grid cell
+          is two utility classes and cannot silently stop working.
 
-          <dl className="m-0 flex flex-wrap gap-x-6 gap-y-3">
-            <div>
-              {/* R68: when there IS a figure it comes from a Google price
-                  level, not from the venue, so it is labelled as an estimate
-                  everywhere it appears. When there is not one, the backend
-                  says so honestly rather than inventing a band -- and "we do
-                  not know what this costs" and "we estimate it costs $35" are
-                  different sentences that must not share a template. "Est.
-                  each / Price unknown" read as an estimate OF an unknown. */}
-              <dt className="board text-[10px] text-dim">
-                {priceKnown ? "Est. each" : "Cost"}
-              </dt>
-              <dd className="num m-0 text-[18px] text-text">
-                {priceKnown ? quest.priceLabel : "Not listed"}
-              </dd>
-            </div>
-            <div>
-              <dt className="board text-[10px] text-dim">Away</dt>
-              <dd className="num m-0 text-[18px] text-text">{quest.distanceKm} km</dd>
-            </div>
-            {quest.discountPct > 0 ? (
-              <div>
-                <dt className="board text-[10px] text-dim">Offer</dt>
-                <dd className="num m-0 text-[18px] text-accent">−{quest.discountPct}%</dd>
-              </div>
-            ) : null}
-          </dl>
-        </div>
-      </article>
+          Default (sync) mode, so the arriving card is there immediately.
+          `mode="wait"` would hold the deck empty for the length of the exit,
+          which reads as lag on the one screen where answering fast is the
+          point.
+
+          `initial={false}` because a card ARRIVING gets no animation. The
+          board-flip in globals.css is this product's authored moment and it
+          belongs to the match; a swipe is routine and gets no ceremony. */}
+      <div className="grid grid-cols-1 grid-rows-1">
+        <AnimatePresence initial={false}>
+          <SwipeCard
+            key={quest._id}
+            quest={quest}
+            src={src}
+            headingRef={headingRef}
+            onLean={setLean}
+            onCommit={(dir) => {
+              setLean(null);
+              void swipe(dir);
+            }}
+          />
+        </AnimatePresence>
+      </div>
 
       <p className="text-[12px] leading-snug text-dim">
         {priceKnown
@@ -427,9 +431,24 @@ export function Deck({
           and see the `inFlight` ref above for what `disabled` cost this screen:
           the CTA changing identity on every swipe, and focus falling to <body>
           under a keyboard user's finger. */}
+      {/* `selected` is the drag's affordance, not a state of the button itself:
+          it lights while a finger is heading this way and goes out if the drag
+          comes back. Same ring `Plate` already draws everywhere else. */}
       <div className="flex gap-3">
-        <Plate variant="raised" center label="Nah" onClick={() => void swipe("no")} />
-        <Plate variant="action" center label="I’m in" onClick={() => void swipe("yes")} />
+        <Plate
+          variant="raised"
+          center
+          label="Nah"
+          selected={lean === "no"}
+          onClick={() => void swipe("no")}
+        />
+        <Plate
+          variant="action"
+          center
+          label="I’m in"
+          selected={lean === "yes"}
+          onClick={() => void swipe("yes")}
+        />
       </div>
       {/* The timer is the host's rule, so the screen says whose it is and what
           it does BEFORE it does it. A card that vanishes with no warning reads

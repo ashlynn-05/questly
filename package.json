@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.12.5",
+    "@haptics/react": "^2.1.1",
     "@vis.gl/react-google-maps": "^1.10.0",
     "better-auth": "~1.6.30",
     "convex": "^1.45.0",
+    "motion": "^13.2.0",
     "next": "16.3.4",
     "openai": "^7.10.0",
     "react": "19.2.8",
