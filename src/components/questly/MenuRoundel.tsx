@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { motion, useReducedMotion } from "motion/react";
 import { menuKey, openIndex } from "@/lib/menu";
 
 /**
@@ -38,6 +39,17 @@ export type MenuItem = {
    * sit on a raised fill.
    */
   destructive?: boolean;
+  /**
+   * A drawn mark from `icons.tsx`. It inherits the row's `currentColor`, which
+   * is how it stays on a pairing somebody has already measured: `--text` and
+   * `--danger` are both computed against `--ground`, and this menu sits on
+   * `--ground` precisely so those numbers hold.
+   *
+   * On the destructive row this is not decoration. That row was told apart by
+   * colour and position alone, and "never colour alone" is a rule this
+   * codebase states in `Plate`, in `Chip` and in DESIGN.
+   */
+  icon?: ReactNode;
 };
 
 type Props = {
@@ -53,6 +65,7 @@ type Props = {
 export function MenuRoundel({ children, label, items, filled = false }: Props) {
   const router = useRouter();
   const id = useId();
+  const reduceMotion = useReducedMotion();
 
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -153,7 +166,10 @@ export function MenuRoundel({ children, label, items, filled = false }: Props) {
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls={open ? id : undefined}
+        // Always, not `open ? id : undefined`: the panel is always in the DOM
+        // now, so the id always resolves -- which is what the ARIA menu-button
+        // pattern asks for.
+        aria-controls={id}
         onClick={() => (open ? close(false) : openWith("pointer"))}
         onKeyDown={onButtonKeyDown}
         // 44px, this product's target floor, and the circle IS the target --
@@ -178,17 +194,42 @@ export function MenuRoundel({ children, label, items, filled = false }: Props) {
         {children}
       </button>
 
-      {open ? (
-        <div
-          id={id}
-          role="menu"
-          aria-label={label}
-          // Right-aligned to the roundel, because both roundels live at the
-          // right edge of a header and a left-aligned menu would open off the
-          // screen on a phone.
-          className="absolute right-0 z-50 mt-2 flex min-w-[184px] flex-col rounded-[6px] border border-dim bg-ground p-[6px]"
-          style={{ boxShadow: "var(--shadow)" }}
-        >
+      {/* Always mounted, hidden by `inert` rather than by unmounting.
+          `AnimatePresence` was the other way to animate a close and it costs
+          two defects: an exiting panel is still inside
+          `button.parentElement`, so the capture-phase pointerdown handler
+          above reads a click on it as "inside the menu" and swallows that
+          click; and it lingers in the accessibility tree with no way to set
+          `aria-hidden` from an exit animation.
+
+          `inert` closes both. It is also STRICTER than what was here before:
+          one attribute takes the whole subtree out of the tab order, out of
+          hit-testing and out of the accessibility tree, where the old markup
+          unmounted a panel whose items still carried `tabIndex`. */}
+      <motion.div
+        id={id}
+        role="menu"
+        aria-label={label}
+        inert={!open}
+        initial={false}
+        animate={open ? { height: "auto", opacity: 1, y: 0 } : { height: 0, opacity: 0, y: -4 }}
+        transition={
+          reduceMotion
+            ? { duration: 0 }
+            : // Faster shut than open. Summoning can take its time; dismissing
+              // has to feel like it already happened.
+              { duration: open ? 0.16 : 0.12, ease: [0.16, 1, 0.3, 1] }
+        }
+        // Right-aligned to the roundel, because both roundels live at the
+        // right edge of a header and a left-aligned menu would open off the
+        // screen on a phone. The origin follows: it unrolls from under the
+        // roundel that was tapped, the way a destination blind drops.
+        style={{ boxShadow: "var(--shadow)", transformOrigin: "top right" }}
+        className="absolute right-0 z-50 mt-2 overflow-hidden rounded-[6px] border border-dim bg-ground"
+      >
+        {/* The padding lives in here, not on the animated box: padding on the
+            box would leave it 12px tall at `height: 0`. */}
+        <div className="flex min-w-[184px] flex-col p-[6px]">
           {items.map((item, i) => {
             const separated = item.destructive && i > 0;
             return (
@@ -208,17 +249,21 @@ export function MenuRoundel({ children, label, items, filled = false }: Props) {
                   onKeyDown={(event) => onItemKeyDown(event, i)}
                   // Full width so the target is the row, not the words. 44px
                   // tall for the same reason every other control here is.
-                  className={`flex min-h-[44px] w-full items-center rounded-[4px] px-3 text-left text-[15px] leading-snug ${
+                  className={`flex min-h-[44px] w-full items-center gap-3 rounded-[4px] px-3 text-left text-[15px] leading-snug ${
                     item.destructive ? "text-danger" : "text-text"
                   }`}
                 >
-                  {item.label}
+                  {/* Laid out the way `Plate` already lays out its own icon
+                      and label, so a row here and a row there are the same
+                      row. */}
+                  {item.icon ? <span className="shrink-0">{item.icon}</span> : null}
+                  <span className="min-w-0 flex-1">{item.label}</span>
                 </button>
               </div>
             );
           })}
         </div>
-      ) : null}
+      </motion.div>
     </div>
   );
 }

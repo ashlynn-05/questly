@@ -7,6 +7,7 @@ import { api } from "@convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { badgeLabel, initialsFor } from "@/lib/avatar";
 import { clearLocalState } from "@/lib/signout";
+import { Exit, PersonOut, Sliders } from "./icons";
 import { MenuRoundel } from "./MenuRoundel";
 
 /**
@@ -69,11 +70,12 @@ export function AccountBadge() {
       filled
       label={badgeLabel(name)}
       items={[
-        { label: "Settings", href: "/settings" },
-        { label: "Sign out", onSelect: () => void signOut() },
+        { label: "Settings", href: "/settings", icon: <Sliders /> },
+        { label: "Sign out", onSelect: () => void signOut(), icon: <Exit /> },
         {
           label: "Delete account",
           destructive: true,
+          icon: <PersonOut />,
           // Navigates to the confirm; does NOT delete. An account-ending
           // action one tap deep in a menu is a trap -- there is no undo for
           // the seats it gives up, and a menu is exactly where a mis-tap

@@ -108,3 +108,49 @@ export const Back = (p: P) => (
     <path d="M19 12H5.5M11 5.5 4.5 12l6.5 6.5" />
   </svg>
 );
+
+/**
+ * Settings. Sliders, not a gear.
+ *
+ * A gear is generic-machine vocabulary in a product whose whole visual
+ * language is transit signage, and a 2px-stroke gear rendered at 20px turns
+ * to mush at the notches. Two tracks with offset handles reads as a control
+ * panel and survives the size.
+ */
+export const Sliders = (p: P) => (
+  <svg {...S} {...p}>
+    <path d="M4 8.5h16M4 15.5h16" />
+    <circle cx="9.5" cy="8.5" r="2.2" />
+    <circle cx="15" cy="15.5" r="2.2" />
+  </svg>
+);
+
+/**
+ * Sign out. A door open on one side, with an arrow leaving through it.
+ *
+ * Not a power symbol: power means "off", and this ends a session rather than
+ * the thing the session was using.
+ */
+export const Exit = (p: P) => (
+  <svg {...S} {...p}>
+    {/* Three sides only. The missing fourth is the way out. */}
+    <path d="M12 4.5H5.5v15H12" />
+    <path d="M10.5 12H20M16.5 8.5 20 12l-3.5 3.5" />
+  </svg>
+);
+
+/**
+ * Delete account. The `People` figure, singular, leaving.
+ *
+ * Not a bin. That row NAVIGATES to a confirmation, it does not delete
+ * anything, and an icon promising an immediate destroy on a control that only
+ * opens a page is a lie the user has to discover by tapping it. The head and
+ * shoulders are `People`'s exact geometry, so the two read as one family.
+ */
+export const PersonOut = (p: P) => (
+  <svg {...S} {...p}>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3 20c0-3.3 2.7-5.5 6-5.5 1 0 1.9.2 2.7.6" />
+    <path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5" />
+  </svg>
+);
