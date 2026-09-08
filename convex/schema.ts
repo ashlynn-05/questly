@@ -197,10 +197,12 @@ export default defineSchema({
     // vote passes, when it is retracted to nothing, when the roster moves, and
     // when the host changes the rule -- so its presence IS "a vote is open".
     finalizeStartedAt: v.optional(v.number()),
-    // Whether putting a lock on a stop is a tap or a vote. See
-    // `convex/lib/rules.ts` for why "anyone" is the default and why host-only
-    // locking is not one of the values.
-    lockRule: v.optional(v.union(v.literal("anyone"), v.literal("vote"))),
+    // Whether putting a lock on a stop is a tap by anyone, a tap by the host,
+    // or a vote. See `convex/lib/rules.ts` for the three values and why the
+    // default is the permissive one.
+    lockRule: v.optional(
+      v.union(v.literal("anyone"), v.literal("host"), v.literal("vote")),
+    ),
   })
     .index("by_code", ["code"])
     .index("by_visibility_status", ["visibility", "status"])

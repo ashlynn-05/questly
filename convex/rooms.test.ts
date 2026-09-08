@@ -808,6 +808,17 @@ test("the host can put locking to a vote, and every phone in the room sees it", 
   expect(view!.room.lockRule).toBe("vote");
 });
 
+test("the host can hand locking to themselves, and it reaches the room", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "host" });
+
+  // Read through the GUEST's key: this rule takes a control away from them, so
+  // their screen is the one that most needs to know.
+  const view = await t.query(api.rooms.get, { code, sessionKey: guest });
+  expect(view!.room.lockRule).toBe("host");
+});
+
 test("a guest cannot put locking to a vote either", async () => {
   const t = convexTest(schema, modules);
   const { code, host, guest } = await roomWithGuest(t);

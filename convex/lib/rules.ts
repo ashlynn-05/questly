@@ -122,22 +122,34 @@ export async function clearFinalizeVotes(
 /**
  * Who may put a lock on a stop.
  *
- * The third house rule, and the one issue #11 was actually about. "anyone" is
- * what shipped and what stays the default: a lock is a signal, it is reversible
- * in one tap, and it costs nobody anything. "vote" is for the room that found
- * out the hard way that a reversible signal is still a way to win an argument
- * without having it -- under it, locking and unlocking both become proposals
- * the room votes on, through the same `proposals` table a swap already uses.
+ * The third house rule, and the one issue #11 was actually about. All three of
+ * the answers the issue offered are here, because which one a group wants turns
+ * out to depend on the group:
  *
- * Host-only locking is deliberately NOT offered. It was the other option in the
- * issue and it was ruled out on its merits, not on cost: it does not remove the
- * silent lock, it hands the same silent lock to one person, and it puts a
- * privileged user into a product that has otherwise avoided one. The ruling is
- * in `docs/questly-handover.md` section 15.
+ *  - "anyone" -- the default, and what shipped first. A lock is a signal, it is
+ *    reversible in one tap, and it costs nobody anything.
+ *  - "host" -- somebody organised the night, and in plenty of groups that
+ *    person is expected to settle this sort of thing. Enforced on the member
+ *    row's `isHost`, never on anything a client says about itself.
+ *  - "vote" -- for the room that found out the hard way that a reversible
+ *    signal is still a way to win an argument without having it. Locking and
+ *    unlocking both become proposals, through the same `proposals` table a swap
+ *    already uses.
+ *
+ * The default did not move and must not: a room opened before this column
+ * existed has no value here, and flipping those rooms to a stricter rule would
+ * retire a shipped decision under people already using it.
+ *
+ * The whole ruling, including why "host" was argued against before it was
+ * asked for, is in `docs/questly-handover.md` section 15.
  */
-export const LOCK_RULES = ["anyone", "vote"] as const;
+export const LOCK_RULES = ["anyone", "host", "vote"] as const;
 export type LockRule = (typeof LOCK_RULES)[number];
 
 export const DEFAULT_LOCK_RULE: LockRule = "anyone";
 
-export const lockRuleValidator = v.union(v.literal("anyone"), v.literal("vote"));
+export const lockRuleValidator = v.union(
+  v.literal("anyone"),
+  v.literal("host"),
+  v.literal("vote"),
+);

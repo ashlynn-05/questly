@@ -430,29 +430,31 @@ export const replaceStop = mutation({
  * restating: one person QUIETLY locking a stop everyone else wanted to change
  * is a way to win an argument without having it.
  *
- * Two of the three shipped, and in this order, because they answer different
- * halves of that sentence:
+ * The answer came in two parts, because that sentence has two halves:
  *
- *  1. The silence. A lock recorded nothing but a boolean, so the screen said
- *     "Locked" and never said by whom. That is anonymity, not authority, and no
- *     amount of restricting WHO may lock would have fixed it. Every lock now
- *     records `lockedBy` and the screen says whose it is. This is unconditional
- *     -- it is not a rule a room can turn off, because a silent lock was never
- *     a feature anybody chose.
+ *  1. The silence, which is unconditional. A lock recorded nothing but a
+ *     boolean, so the screen said "Locked" and never said by whom. That is
+ *     anonymity, not authority, and no amount of restricting WHO may lock would
+ *     have fixed it. Every lock now records `lockedBy` and the screen says
+ *     whose it is, in every room, under every rule -- a silent lock was never a
+ *     feature anybody chose, so it is not one a room can choose back.
  *
- *  2. The argument. For the rooms where attribution is not enough, `lockRule`
- *     is a house rule the host sets: "anyone" (the default, and what every
- *     existing room has) keeps the one-tap lock; "vote" routes both locking and
- *     unlocking through the same `proposals` table a swap already uses, so a
- *     lock carries when a majority of the room says so.
+ *  2. The authority, which is the room's to decide. `lockRule` is a house rule
+ *     the host sets, and all three of the issue's answers are offered:
+ *       - "anyone"  the default, and what every room opened before this had;
+ *       - "host"    only the host may lock or unlock, enforced below on the
+ *                   member row's `isHost` and on nothing a client says;
+ *       - "vote"    locking and unlocking both become proposals the room votes
+ *                   on, through the same table a swap already uses.
  *
- * Host-only locking is still NOT offered, and that is a ruling rather than an
- * omission: it does not remove the silent lock, it hands the same silent lock
- * to one person, and it puts a privileged user into a product that has
- * otherwise avoided one. A room that wants the host to decide can already have
- * that by asking; a room that wants it enforced wants the vote.
- *
- * The full ruling is in `docs/questly-handover.md` section 15.
+ * Host-only was argued against here before it was asked for, and the argument
+ * is kept in `docs/questly-handover.md` section 15 rather than deleted: it does
+ * not by itself remove the silent lock, and it introduces this product's first
+ * content privilege. Part 1 answers the first objection -- the lock says whose
+ * it is whichever rule is on -- and the second was a judgement about what a
+ * group wants, which is the product owner's to make and not this file's. What
+ * this file is responsible for is that the privilege is enforced on the server,
+ * from the member row, and that is what the check below does.
  */
 export const setLocked = mutation({
   args: {
@@ -485,13 +487,28 @@ export const setLocked = mutation({
     if (!stop) throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
 
     const rule = room.lockRule ?? DEFAULT_LOCK_RULE;
+
+    // Read off the member row `requireMember` returned, never from an argument.
+    // A `hostSessionKey` or an `isHost` in the args would be the client saying
+    // it is the host, which is not evidence that it is.
+    //
+    // Refused for locking AND unlocking. A rule that let anyone release the
+    // host's lock would leave the host able to protect nothing, which is not
+    // the rule the room turned on.
+    if (rule === "host" && !member.isHost) {
+      throwUserError(
+        "NOT_THE_HOST",
+        "The host looks after the locks in this room. Ask them to pin it.",
+      );
+    }
+
     const members = await memberCount(ctx, room._id);
 
     // A room of one is nobody to vote with. `needed(1)` is 1, so a proposal
     // here would be opened, carried by its own opening yes, and applied in the
     // same transaction -- the same outcome, two rows heavier, and with an
     // accepted proposal in the history for a decision nobody deliberated.
-    if (rule === "anyone" || members < 2) {
+    if (rule !== "vote" || members < 2) {
       await applyStopLock(
         ctx,
         room._id,

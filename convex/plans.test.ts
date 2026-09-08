@@ -1188,14 +1188,15 @@ test("a paid room's mood fallback still asks for that mood's own types", async (
 //
 // The first tests this mutation has ever had. Issue #11 asked whether locking
 // should become host-only or go to a vote; the ruling was that attribution
-// comes first and unconditionally -- the stop records WHO locked it -- and
-// that the vote is then a house rule a room can turn on. Host-only was refused
-// outright. See the comment above `plans.setLocked` and section 15 of
-// `docs/questly-handover.md`.
+// comes first and unconditionally -- the stop records WHO locked it, under
+// every rule -- and that all three of the issue's answers are then a house
+// rule the host sets. See the comment above `plans.setLocked` and section 15
+// of `docs/questly-handover.md`.
 //
-// These pin all three: that the default permission did not change, that the
-// attribution works and is not client-supplied, and that a room whose
-// `lockRule` is "vote" cannot have a lock land without a majority.
+// These pin all of it: that the DEFAULT permission did not change, that the
+// attribution works and is not client-supplied, that a room on "vote" cannot
+// have a lock land without a majority, and that a room on "host" refuses
+// everybody else in both directions.
 
 /** A room with a plan and a roster, so a non-host has a sessionKey to lock with. */
 async function seedLockRoom(t: T, names: string[], code = "4460") {
@@ -1233,11 +1234,12 @@ test("locking records who locked it, from the member row and not from the client
   expect(stops[0].lockedBy).toBe("Tam");
 });
 
-test("a NON-host may still lock and unlock, which is the whole ruling on #11", async () => {
+test("a NON-host may still lock and unlock in a room that chose no rule", async () => {
   const t = convexTest(schema, modules);
   const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam", "Sam"], "4461");
 
-  // Tam is not the host. This is the case host-only locking would have refused.
+  // Tam is not the host. This is the case `lockRule: "host"` refuses -- and the
+  // point is that a room which never chose that rule still does not get it.
   await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "b", locked: true });
   expect((await planStops(t, roomId))[1].lockedBy).toBe("Tam");
 
@@ -1612,4 +1614,90 @@ test("a late yes never steals the lock from whoever actually placed it", async (
   const stops = await planStops(t, roomId);
   expect(stops[0].locked).toBe(true);
   expect(stops[0].lockedBy).toBe("Bec");
+});
+
+// --- setLocked under lockRule: "host" --------------------------------------
+//
+// The third answer issue #11 offered. It was argued against in this codebase
+// before it was asked for, and the argument is kept in section 15 of the
+// handover rather than deleted -- but it is a rule the host turns on, not a
+// default, and what matters here is that the privilege is real: enforced on the
+// server, off the member row, in both directions.
+
+test("under the host rule the host locks, in one tap", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4490");
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "host" }));
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+
+  // No vote: this rule names one person, it does not ask the room.
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(true);
+  expect(stops[0].lockedBy).toBe("Bec");
+});
+
+test("under the host rule a guest is refused, and nothing moves", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4491");
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "host" }));
+  const before = await planStops(t, roomId);
+
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+
+  // Refused outright, not quietly turned into a proposal.
+  expect(await openProposals(t, roomId)).toHaveLength(0);
+  expect(await planStops(t, roomId)).toEqual(before);
+});
+
+test("the host rule refuses a guest's UNLOCK as well, or it protects nothing", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4492");
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "host" }));
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+
+  // The asymmetric version of this rule -- host locks, anyone unlocks -- would
+  // leave the host able to protect nothing, which is not the rule anyone
+  // turned on.
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: false }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  expect((await planStops(t, roomId))[0].locked).toBe(true);
+});
+
+test("a stranger under the host rule is a stranger, not a guest", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4493");
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "host" }));
+
+  // Membership is established before the rule is consulted, so somebody with
+  // no key is told they are not in the room rather than being told who the
+  // host of a room they are not in is.
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "not-a-key", stopId: "a", locked: true }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+  expect((await planStops(t, roomId))[0].locked).toBe(false);
+});
+
+test("switching to the host rule closes the votes the room was running", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam", "Sam"], "4494");
+  await t.run(async (ctx) => ctx.db.patch(roomId, { lockRule: "vote" }));
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+  expect(await openProposals(t, roomId)).toHaveLength(1);
+
+  await t.mutation(api.rooms.setRules, { code, sessionKey: "k-Bec", lockRule: "host" });
+
+  // Any move off "vote", not only the move back to "anyone": the question the
+  // proposal is asking is one only that rule was running.
+  expect(await openProposals(t, roomId)).toHaveLength(0);
 });

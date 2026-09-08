@@ -51,6 +51,7 @@ export function asOption<T extends string | number>(
 
 export const LOCK_RULE_LABELS: Record<LockRule, string> = {
   anyone: "Anyone, in one tap",
+  host: "Only the host",
   vote: "The room votes on it",
 };
 
@@ -69,7 +70,10 @@ export const LOCK_RULE_LABELS: Record<LockRule, string> = {
  * the host is setting it for the room that is about to exist.
  */
 export function lockLine(rule: LockRule, isGroup: boolean): string {
-  if (rule !== "vote") return "Anyone can lock a stop, and anyone can unlock it.";
+  if (rule === "anyone") return "Anyone can lock a stop, and anyone can unlock it.";
+  // The host rule needs no roster caveat: the host is in every room, including
+  // a room of one, so the sentence is true whoever is standing in it.
+  if (rule === "host") return "Only the host can lock a stop, or unlock one.";
   const rules = "Locking a stop goes to the room: it takes a majority, and so does unlocking.";
   return isGroup ? rules : `${rules} On your own, it is still one tap.`;
 }

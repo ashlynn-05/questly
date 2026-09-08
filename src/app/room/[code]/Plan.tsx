@@ -87,6 +87,17 @@ export function Plan({
   const lockByVote = view.room.lockRule === "vote" && isGroup;
 
   /**
+   * Whether this member may touch the lock at all.
+   *
+   * Under `lockRule: "host"` the server refuses everybody else, for locking and
+   * for unlocking alike. This file's opening promise is that the UI never
+   * offers a control the server is going to reject, so the control is withheld
+   * and the rule is stated instead -- `lockLine` above the list already says
+   * whose job it is, so nothing here has to repeat it.
+   */
+  const mayLock = view.room.lockRule !== "host" || view.you.isHost;
+
+  /**
    * The plan's arrival REPLACES this screen, so focus moves with it.
    *
    * The "It's a match" branch below is not a card changing inside a screen that
@@ -489,7 +500,7 @@ export function Plan({
                 </div>
 
                 <div className="mt-3 flex gap-2">
-                  {lockByVote ? (
+                  {!mayLock ? null : lockByVote ? (
                     /* Under the vote rule this is not a toggle and must not
                        announce as one: the tap opens a proposal, and the stop
                        does not change until the room agrees. So the label says

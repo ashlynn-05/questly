@@ -531,12 +531,18 @@ generateAvatarUploadUrl`, so the new fields and indexes are live.
 
 ## 15. Who may lock a stop (issue #11)
 
-**Ruling, as amended: attribution first and unconditionally; the vote is a
-house rule; host-only locking is refused.**
+**Ruling, as amended twice: attribution first and unconditionally; and then
+all three of the issue's answers, offered as a house rule the host sets.**
 
-This section was written once and then amended when the product owner asked for
-vote-to-lock as well. Both halves are recorded, in order, because the second
-does not retract the first -- it answers a different sentence in the issue.
+This section was written three times, and each version is kept rather than
+overwritten, because two of them argued against something that was later built.
+A handover that only records the decision that survived is a handover that
+cannot tell the reader whether a question was considered or merely missed.
+
+- **15a** is what shipped first, and still stands unchanged.
+- **15b** added `lockRule: "vote"` when the product owner asked for it.
+- **15c** added `"host"` when the product owner asked for that too, over an
+  objection recorded here in 15b and now answered.
 
 ### 15a. What shipped first: the lock says whose it is
 
@@ -553,7 +559,7 @@ it". That is a real description of how groups go wrong, and the operative word
 is *quietly*. Silence was the defect that needed no rule to fix, so it was
 fixed for every room and is not configurable.
 
-### 15b. What shipped second: `lockRule`, at the product owner's request
+### 15b. What shipped second: the vote, at the product owner's request
 
 `rooms.lockRule` is a third house rule beside `swipeSeconds` and
 `finalizeRule`, set by the host in the lobby:
@@ -586,7 +592,8 @@ each point concretely rather than in the abstract:
   what the room asked for by turning the rule on. It is not imposed on a room
   that did not.
 
-**Why host-only is still refused.** This is a ruling, not a gap:
+**Why host-only was refused at this point.** Recorded as written, because 15c
+overturns it:
 
 - The defect named in the issue is silence, not authority. Host-only locking
   gives the same unattributable lock to one person and makes them the only one
@@ -600,13 +607,59 @@ each point concretely rather than in the abstract:
   wants it *enforced* wants `"vote"`, which enforces it without inventing a
   privileged user.
 
+### 15c. What shipped third: `"host"`, and why the objection above did not hold
+
+The product owner asked for all three of the issue's answers to be available to
+the host. They are. `LOCK_RULES` is now `["anyone", "host", "vote"]`.
+
+Under `"host"`, `plans.setLocked` refuses any member whose row does not carry
+`isHost`, for **locking and unlocking alike**. The asymmetric version -- host
+locks, anyone unlocks -- was considered and rejected in the same breath: it
+would leave the host able to protect nothing, which is not the rule a room
+turning this on is asking for.
+
+Taking the two objections in 15b in turn:
+
+1. *"It does not remove the silent lock."* Correct, and it does not have to.
+   15a already removed it, unconditionally and under every rule. That objection
+   was an argument for doing 15a **first**, which is what happened; it was never
+   an argument against ever doing this. Held as a blocker after 15a shipped, it
+   was answering a question that had already been settled.
+2. *"It creates the first content privilege."* This one is true and stands as a
+   description. What it is not is a decision: whether a group wants the person
+   who organised the night to settle this sort of thing is a product judgement
+   about how real groups behave, and that judgement belongs to the product
+   owner, not to the file enforcing it. It is also **opt-in and reversible** --
+   no room gets it without its host choosing it, and any host can choose back.
+
+What the codebase remains responsible for, and does:
+
+- The privilege is enforced **server-side**, read off `members.isHost`, never
+  from an argument. There is no `hostSessionKey` and no `isHost` in the args.
+- The plan screen withholds the lock control from a non-host under this rule
+  rather than offering one the server will reject, and `lockLine` states whose
+  job it is instead.
+- Switching **off** `"vote"` -- to `"host"` as much as to `"anyone"` -- closes
+  any open lock proposals as rejected. A proposal is a question only one rule
+  was running.
+
+**The honest summary:** two of the three arguments in 15b were sound and one of
+them (objection 1) had already been satisfied by the time it was being used to
+refuse this. The remaining cost is real and is now a choice a room makes, which
+is the right place for it.
+
 ### What this cost
 
 Two optional schema columns (`rooms.lockRule`, `proposals.kind`), one required
 field relaxed to optional (`proposals.replacement`), a new
-`convex/lib/lock.ts` holding the single lock write that both paths share, one
-branch in `setLocked`, one branch in `settleProposal`, a `<select>` in the
-lobby, and kind-aware copy on the plan screen.
+`convex/lib/lock.ts` holding the single lock write that all three paths share,
+two branches in `setLocked`, one branch in `settleProposal`, a `<select>` in
+the lobby, and kind-aware copy on the plan screen.
+
+Adding `"host"` on top of that was one literal, one validator arm, one guard in
+`setLocked`, one label, one sentence in `lockLine`, and one condition on the
+plan screen -- which is itself worth noting: the shape 15b built for the vote
+is what made the third answer cheap.
 
 No authorization changed on the default path, so the four existing tests that
 exercise `setLocked` as a non-host -- `proposals.test.ts:322`, `:693`, `:719`,
