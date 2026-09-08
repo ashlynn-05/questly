@@ -526,3 +526,78 @@ running dev server. Pushed to `zany-cheetah-110`: `npx convex
 function-spec` lists `account.deleteAccount/restoreAccount/deletionStatus/
 purgeExpired` and `profiles.myRooms/renameMe/setAvatar/clearAvatar/
 generateAvatarUploadUrl`, so the new fields and indexes are live.
+
+---
+
+## 15. Who may lock a stop (issue #11)
+
+**Ruling: nobody's permission changes. The lock now says whose it is.**
+
+`plans.setLocked` still lets any member lock or unlock any unlocked stop,
+directly, with no vote. What changed is that a lock is no longer anonymous:
+`stopValidator` carries an optional `lockedBy`, `setLocked` writes the locking
+member's name onto it from the member row `requireMember` returns, clears it on
+unlock, and the plan screen reads "Locked by Tam" instead of "Locked".
+
+The issue asked for one of three things, and the argument for changing the
+behaviour was that "one person quietly locking a stop everyone else wanted to
+change is a way to win an argument without having it". That is a real
+description of how groups go wrong. The operative word is *quietly*.
+
+**Why option 3, and not option 1 (host-only).**
+
+- The defect named in the issue is silence, not authority. A stop recorded
+  `locked: boolean` and nothing else, so no screen could say who did it.
+  Host-only locking does not remove the silence -- it gives the same
+  unattributable lock to one person and makes them the only one who can undo
+  it. The host locking a stop quietly is the identical failure with a smaller
+  cast.
+- It would create this product's first non-host-management privilege. Section 3
+  describes an authorization model whose entire shape is "a capability proves
+  membership, never identity"; the only existing host powers are removing a
+  member and settling the room. A host who alone may pin content is a different
+  product, and the issue itself names that cost.
+- It contradicts a decision this codebase already made explicitly, in the
+  comment above `plans.setLocked`: locking "is not a permission system, and it
+  must never become one".
+- `convex/proposals.test.ts:322` is a test called "anyone in a group room can
+  lock and unlock a stop without a proposal", written under a comment beginning
+  "Correction 5". The current rule is not a default nobody examined; it is the
+  result of a previous review correcting the code *into* this shape. Nothing in
+  issue #11 is new evidence -- it is the same trade-off argued from the other
+  side -- so reversing it would be the second reversal of one decision.
+- A lock is reversible by anyone in one tap and changes nothing about the
+  night. It does not even close voting: `Plan.tsx` says so on screen, and
+  `proposals.vote` still records a no against a locked stop. Guarding that with
+  a privilege is disproportionate to what it does.
+
+**Why not option 2 (vote to lock).** It does not fit the machinery it would
+reuse.
+
+- `schema.ts` gives `proposals` a **required** `replacement: stopValidator`. A
+  lock proposal has no replacement, so this needs an optional field or a
+  discriminated kind on a validator every stored proposal already satisfies.
+- `proposals.open` enforces one open proposal per stop, on the `by_room_stop`
+  index. A lock vote and a swap proposal on the same stop would collide -- and
+  "I want to protect this stop" arriving *while* somebody proposes changing it
+  is exactly when a lock is wanted.
+- It is the ceremony the existing comment names, on a reversible signal, and it
+  means a stop cannot be protected until a majority agrees to protect it.
+
+**What this cost.** An optional schema field, six lines in `setLocked`, one
+line on the plan screen, and the first `setLocked` tests that have ever
+existed. No authorization changed, so the four existing tests that exercise
+`setLocked` as a non-host -- `proposals.test.ts:322`, `:693`, `:719`, `:733`
+-- stand exactly as written.
+
+**What to watch.** `lockedBy` is a name, not a member id, so a member who
+leaves still shows as the person who left the lock. That is deliberate -- it is
+a record of what happened, and section 13 item 2 notes ids are not projected
+yet anyway -- but it is the sort of choice a product owner might make
+differently.
+
+**If this is revisited:** the thing to measure first is whether attribution
+actually stopped the lock/unlock wars the issue predicts. If it did not, the
+next step is still not host-only. It is a lock that expires, or a record of the
+unlock as well as the lock, both of which keep the "anyone can undo it"
+property that makes this not a permission system.

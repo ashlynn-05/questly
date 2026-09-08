@@ -1183,3 +1183,146 @@ test("a paid room's mood fallback still asks for that mood's own types", async (
 
   expect(textQueries[1]).toBe("restaurant spa movie theater bakery");
 });
+
+// --- setLocked ------------------------------------------------------------
+//
+// The first tests this mutation has ever had. Issue #11 asked whether locking
+// should become host-only or go to a vote; the ruling was neither, and the
+// stop now records WHO locked it instead -- see the comment above
+// `plans.setLocked` and section 15 of `docs/questly-handover.md`. These pin
+// both halves: that the permission did not change, and that the attribution
+// works and is not client-supplied.
+
+/** A room with a plan and a roster, so a non-host has a sessionKey to lock with. */
+async function seedLockRoom(t: T, names: string[], code = "4460") {
+  const { roomId, questId } = await seedRoom(t, { code, budgetPerHeadCents: 3000 });
+  await t.run(async (ctx) => {
+    for (const [i, name] of names.entries()) {
+      await ctx.db.insert("members", {
+        roomId, name, isHost: i === 0, sessionKey: `k-${name}`, joinedAt: i,
+      });
+    }
+  });
+  await writePlanUnderLease(t, {
+    roomId, questId,
+    stops: [stop({ id: "a", name: "Gate" }), stop({ id: "b", name: "Nightcap" })],
+    shareMessage: "hi",
+  });
+  return { roomId, code };
+}
+
+const planStops = async (t: T, roomId: Id<"rooms">) =>
+  (await t.run(async (ctx) =>
+    ctx.db.query("plans").withIndex("by_room", (q) => q.eq("roomId", roomId)).first(),
+  ))!.stops;
+
+test("locking records who locked it, from the member row and not from the client", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"]);
+
+  await t.mutation(api.plans.setLocked, {
+    code, sessionKey: "k-Tam", stopId: "a", locked: true,
+  });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(true);
+  expect(stops[0].lockedBy).toBe("Tam");
+});
+
+test("a NON-host may still lock and unlock, which is the whole ruling on #11", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam", "Sam"], "4461");
+
+  // Tam is not the host. This is the case host-only locking would have refused.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "b", locked: true });
+  expect((await planStops(t, roomId))[1].lockedBy).toBe("Tam");
+
+  // And Sam, also not the host, can undo Tam's lock in one tap.
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Sam", stopId: "b", locked: false });
+  expect((await planStops(t, roomId))[1].locked).toBe(false);
+});
+
+test("unlocking clears the name rather than leaving a lie behind", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4462");
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: false });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].locked).toBe(false);
+  // Not merely falsy -- absent. A stale name on an unlocked stop is the sort of
+  // lie that survives because nothing renders it.
+  expect(stops[0].lockedBy).toBeUndefined();
+});
+
+test("re-locking replaces the previous name rather than keeping the first", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec", "Tam"], "4463");
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Tam", stopId: "a", locked: true });
+  expect((await planStops(t, roomId))[0].lockedBy).toBe("Tam");
+});
+
+test("a stranger is refused, and the plan is left untouched", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4464");
+  const before = await planStops(t, roomId);
+
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "not-a-key", stopId: "a", locked: true }),
+    "NOT_A_MEMBER",
+    /not a member/i,
+  );
+
+  expect(await planStops(t, roomId)).toEqual(before);
+});
+
+test("a stop id that is not in the plan is refused, and the plan is left untouched", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4465");
+  const before = await planStops(t, roomId);
+
+  await expectUserError(
+    t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "nope", locked: true }),
+    "STOP_NOT_FOUND",
+    /not in this plan/i,
+  );
+
+  expect(await planStops(t, roomId)).toEqual(before);
+});
+
+test("locking one stop leaves every other stop exactly as it was", async () => {
+  const t = convexTest(schema, modules);
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4466");
+  const before = await planStops(t, roomId);
+
+  await t.mutation(api.plans.setLocked, { code, sessionKey: "k-Bec", stopId: "a", locked: true });
+
+  const after = await planStops(t, roomId);
+  expect(after[1]).toEqual(before[1]);
+  // And the locked one changed in exactly two fields.
+  expect({ ...after[0], locked: false, lockedBy: undefined }).toEqual({
+    ...before[0],
+    lockedBy: undefined,
+  });
+});
+
+test("a swap cannot smuggle a lock or somebody else's name onto a stop", async () => {
+  const t = convexTest(schema, modules);
+  // Solo, because a group room routes a change through a proposal instead.
+  const { roomId, code } = await seedLockRoom(t, ["Bec"], "4467");
+
+  await t.mutation(api.plans.replaceStop, {
+    code, sessionKey: "k-Bec", stopId: "a",
+    // A client-authored replacement claiming both -- and signing a name that
+    // is not even in this room.
+    replacement: { ...stop({ id: "a", name: "Somewhere else" }), locked: true, lockedBy: "Tam" },
+  });
+
+  const stops = await planStops(t, roomId);
+  expect(stops[0].name).toBe("Somewhere else");
+  expect(stops[0].locked).toBe(false);
+  expect(stops[0].lockedBy).toBeUndefined();
+});

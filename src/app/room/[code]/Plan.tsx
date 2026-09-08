@@ -347,7 +347,15 @@ export function Plan({
                   <div className="min-w-0">
                     <p className="board text-[10px] text-accent">
                       {SLOT_LABEL[stop.slot]} · <span className="num">{time(stop.startAt)}</span>
-                      {stop.locked ? <span className="ml-2 text-dim">Locked</span> : null}
+                      {/* Who locked it, not just that it is locked. A silent
+                          lock was the actual complaint in issue #11 -- see the
+                          ruling above `plans.setLocked`. Falls back to the bare
+                          word for stops locked before the field existed. */}
+                      {stop.locked ? (
+                        <span className="ml-2 text-dim">
+                          {stop.lockedBy ? `Locked by ${stop.lockedBy}` : "Locked"}
+                        </span>
+                      ) : null}
                     </p>
                     <p className="mt-1 text-[19px] leading-snug text-text">{stop.name}</p>
                     {stop.note ? (

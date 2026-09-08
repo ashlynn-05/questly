@@ -47,7 +47,13 @@ export async function applyStopSwap(
 
   const next = [...plan.stops];
   // The stop keeps its id so open proposals and the UI keep pointing at it.
-  next[index] = { ...replacement, id: stopId, locked: false };
+  //
+  // `lockedBy` is stripped for the same reason `locked` is forced to false: the
+  // replacement object was authored by a client, and a swap must not be able to
+  // smuggle back either the lock or a claim about who set it. The new stop is
+  // nobody's lock, because it is not locked.
+  const { lockedBy: _lockedBy, ...clean } = replacement;
+  next[index] = { ...clean, id: stopId, locked: false };
 
   const recomputed = recomputeItinerary(next, room.whenAt);
   await ctx.db.patch(plan._id, {
