@@ -737,6 +737,7 @@ test("a room starts with no card timer and the permissive settle rule", async ()
   expect(view!.room.swipeSeconds).toBe(0);
   expect(view!.room.finalizeRule).toBe("anyone");
   expect(view!.room.finalizeSeconds).toBe(0);
+  expect(view!.room.lockRule).toBe("anyone");
   expect(view!.finalize).toMatchObject({ votes: 0, needed: 1, youVoted: false, deadlineAt: null });
 });
 
@@ -794,6 +795,74 @@ test("sending one rule leaves the other two exactly as they were", async () => {
     finalizeRule: "majority",
     finalizeSeconds: 300,
   });
+});
+
+test("the host can put locking to a vote, and every phone in the room sees it", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "vote" });
+
+  // Read back through the GUEST's key: this rule changes which control the
+  // people who are not the host are shown, so it has to reach them.
+  const view = await t.query(api.rooms.get, { code, sessionKey: guest });
+  expect(view!.room.lockRule).toBe("vote");
+});
+
+test("the host can hand locking to themselves, and it reaches the room", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "host" });
+
+  // Read through the GUEST's key: this rule takes a control away from them, so
+  // their screen is the one that most needs to know.
+  const view = await t.query(api.rooms.get, { code, sessionKey: guest });
+  expect(view!.room.lockRule).toBe("host");
+});
+
+test("a guest cannot put locking to a vote either", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host, guest } = await roomWithGuest(t);
+  await expectUserError(
+    t.mutation(api.rooms.setRules, { code, sessionKey: guest, lockRule: "vote" }),
+    "NOT_THE_HOST",
+    /host/i,
+  );
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room.lockRule).toBe("anyone");
+});
+
+test("moving the lock rule leaves the finalize vote alone", async () => {
+  const t = convexTest(schema, modules);
+  const { code, host } = await roomWithGuest(t);
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+
+  // A real vote on the table, not just the rule fields. Asserting only that
+  // `finalizeRule` survived would pass against a `setRules` that cleared the
+  // votes on every lock-rule change -- which is the regression this is named
+  // for.
+  const roomId = await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .first();
+    await ctx.db.insert("finalizeVotes", {
+      roomId: room!._id, memberId: member!._id, at: Date.now(),
+    });
+    await ctx.db.patch(room!._id, { finalizeStartedAt: Date.now() });
+    return room!._id;
+  });
+
+  await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "vote" });
+
+  // Two independent rules. Clearing the booking votes because the LOCK rule
+  // moved would throw away consent to a question nothing changed about.
+  const votes = await t.run(async (ctx) =>
+    ctx.db.query("finalizeVotes").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect(),
+  );
+  expect(votes).toHaveLength(1);
+  const view = await t.query(api.rooms.get, { code, sessionKey: host });
+  expect(view!.room).toMatchObject({ finalizeRule: "all", lockRule: "vote" });
 });
 
 test("changing who settles the night throws away the votes already cast", async () => {
