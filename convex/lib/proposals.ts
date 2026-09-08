@@ -30,6 +30,25 @@ async function applyProposal(ctx: MutationCtx, proposal: Doc<"proposals">): Prom
     return;
   }
 
+  // Somebody got there first.
+  //
+  // A lock proposal can outlive the state it was asking about: the host can
+  // move `lockRule` back to "anyone" while it is open, and then a tap settles
+  // the question before the vote does. Writing anyway would rewrite `lockedBy`
+  // onto the proposer and take the lock away from whoever actually placed it,
+  // which is a lie of exactly the kind the `lockedBy` field exists to end. The
+  // proposal is still accepted -- the room agreed, and it got what it wanted.
+  //
+  // The same guard `plans.setLocked` applies before opening one of these. It
+  // cannot live in `applyStopLock`, because the DIRECT path deliberately does
+  // re-attribute a re-lock to whoever tapped last.
+  const plan = await ctx.db
+    .query("plans")
+    .withIndex("by_room", (q) => q.eq("roomId", proposal.roomId))
+    .first();
+  const stop = plan?.stops.find((s) => s.id === proposal.stopId);
+  if (stop?.locked === (kind === "lock")) return;
+
   // The proposer's name, not the deciding voter's: they are the one who asked
   // for the lock, and "Locked by Tam" on a stop the room voted to protect is
   // still true. A proposer who has since left leaves the lock unattributed

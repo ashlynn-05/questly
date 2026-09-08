@@ -824,10 +824,32 @@ test("moving the lock rule leaves the finalize vote alone", async () => {
   const t = convexTest(schema, modules);
   const { code, host } = await roomWithGuest(t);
   await t.mutation(api.rooms.setRules, { code, sessionKey: host, finalizeRule: "all" });
+
+  // A real vote on the table, not just the rule fields. Asserting only that
+  // `finalizeRule` survived would pass against a `setRules` that cleared the
+  // votes on every lock-rule change -- which is the regression this is named
+  // for.
+  const roomId = await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .first();
+    await ctx.db.insert("finalizeVotes", {
+      roomId: room!._id, memberId: member!._id, at: Date.now(),
+    });
+    await ctx.db.patch(room!._id, { finalizeStartedAt: Date.now() });
+    return room!._id;
+  });
+
   await t.mutation(api.rooms.setRules, { code, sessionKey: host, lockRule: "vote" });
 
   // Two independent rules. Clearing the booking votes because the LOCK rule
   // moved would throw away consent to a question nothing changed about.
+  const votes = await t.run(async (ctx) =>
+    ctx.db.query("finalizeVotes").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect(),
+  );
+  expect(votes).toHaveLength(1);
   const view = await t.query(api.rooms.get, { code, sessionKey: host });
   expect(view!.room).toMatchObject({ finalizeRule: "all", lockRule: "vote" });
 });

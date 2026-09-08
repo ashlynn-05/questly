@@ -532,10 +532,11 @@ export const openRooms = query({
 });
 
 /**
- * The host's two house rules: how long a card stays up, and who settles the
- * night.
+ * The host's three house rules: how long a card stays up, who settles the
+ * night, and whether locking a stop is a tap or a vote.
  *
- * One mutation for both, because they are one decision made in one place -- the
+ * One mutation for all of them, because they are one decision made in one
+ * place -- the
  * lobby, before anyone is looking at a card -- and because a second copy of the
  * host check is a second place for it to be got wrong.
  *
@@ -578,16 +579,33 @@ export const setRules = mutation({
     if (args.swipeSeconds !== undefined) patch.swipeSeconds = args.swipeSeconds;
     if (args.finalizeRule !== undefined) patch.finalizeRule = args.finalizeRule;
     if (args.finalizeSeconds !== undefined) patch.finalizeSeconds = args.finalizeSeconds;
-    // Deliberately NOT accompanied by any cleanup of open lock proposals.
-    //
-    // Moving the finalize rule throws its votes away because the question
-    // changed underneath them. Moving THIS rule does not: a lock proposal asks
-    // "shall we protect this stop", and that question reads the same whether or
-    // not the room could also have got there in one tap. Switching to "anyone"
-    // mid-vote makes the lock available directly as well, and if somebody takes
-    // it, the proposal lands on a stop already locked -- which `applyStopLock`
-    // writes as the no-op it is rather than as a conflict.
     if (args.lockRule !== undefined) patch.lockRule = args.lockRule;
+
+    // Turning the vote OFF closes the votes it was running.
+    //
+    // A lock proposal is a question the room can only be asked under one rule.
+    // Left open across the switch it outlives its own premise: the stop becomes
+    // tappable, somebody locks and unlocks it, and then a late yes on the
+    // orphaned proposal re-locks a stop the room has since deliberately let go
+    // -- under a rule that says a lock is a tap, decided by a vote nobody is
+    // still running. `applyProposal` refuses to rewrite a stop already in the
+    // asked-for state, which stops the attribution being stolen, but it cannot
+    // tell a stale question from a live one. This can.
+    //
+    // Closed as rejected, not deleted, for the reason `resolveOpenProposals`
+    // closes an unappliable one that way: a proposal that vanishes is one
+    // nobody can see was decided.
+    if (args.lockRule !== undefined && args.lockRule !== (room.lockRule ?? DEFAULT_LOCK_RULE)) {
+      const open = await ctx.db
+        .query("proposals")
+        .withIndex("by_room_status", (q) => q.eq("roomId", room._id).eq("status", "open"))
+        .collect();
+      for (const proposal of open) {
+        if (proposal.kind === "lock" || proposal.kind === "unlock") {
+          await ctx.db.patch(proposal._id, { status: "rejected" });
+        }
+      }
+    }
 
     // Changing either half of the vote throws away the votes already cast.
     //

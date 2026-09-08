@@ -53,7 +53,14 @@ export const open = mutation({
       .filter((q) => q.eq(q.field("status"), "open"))
       .first();
     if (clash) {
-      throwUserError("PROPOSAL_EXISTS", "Someone has already proposed a change to that stop.");
+      // Not "a change": under `lockRule: "vote"` the blocker may be a proposal
+      // to LOCK the stop, which proposes no change to what the stop is. One
+      // sentence that is true of both beats a precise one that is sometimes a
+      // lie about what the room is actually being asked.
+      throwUserError(
+        "PROPOSAL_EXISTS",
+        "There is already an open proposal for that stop. Settle that first.",
+      );
     }
 
     // Fail fast, on the person who caused it.

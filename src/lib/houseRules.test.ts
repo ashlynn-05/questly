@@ -5,6 +5,7 @@ import {
   LOCK_RULE_LABELS,
   asOption,
   lockLine,
+  proposalCard,
   proposalLine,
   rulesLine,
 } from "./houseRules";
@@ -51,12 +52,39 @@ test("both lock rules have words, and the sentence says which one is on", () => 
   for (const rule of LOCK_RULES) {
     expect(LOCK_RULE_LABELS[rule]).toBeTruthy();
   }
-  expect(lockLine("vote")).toMatch(/majority/);
-  expect(lockLine("anyone")).toMatch(/anyone can unlock/i);
+  expect(lockLine("vote", true)).toMatch(/majority/);
+  expect(lockLine("anyone", true)).toMatch(/anyone can unlock/i);
   // Not the same sentence with a word swapped: the two rules make different
   // controls appear, and copy that reads the same either way is copy nobody
   // reads twice.
-  expect(lockLine("vote")).not.toBe(lockLine("anyone"));
+  expect(lockLine("vote", true)).not.toBe(lockLine("anyone", true));
+});
+
+test("a room of one is not promised a vote the server will not run", () => {
+  // `plans.setLocked` locks directly when the roster is under two, whatever the
+  // rule says. The lobby and the plan screen both say this sentence, so this is
+  // the one place the two can be kept honest.
+  expect(lockLine("vote", false)).toMatch(/still one tap/i);
+  expect(lockLine("vote", false)).not.toBe(lockLine("vote", true));
+  // The permissive rule needs no caveat: one tap is what it says either way.
+  expect(lockLine("anyone", false)).toBe(lockLine("anyone", true));
+});
+
+test("the vote card says the same thing the live region announces", () => {
+  // The screen reader hears `proposalLine` and the screen shows `proposalCard`.
+  // Both are built from one verb table, and this is what pins them together.
+  for (const kind of ["swap", "lock", "unlock"] as const) {
+    const card = proposalCard(kind, "Tam", "Nightcap");
+    const line = proposalLine(kind, "Tam", "The Gate", "Nightcap");
+    expect(card.heading).toBe(`Tam wants to ${kind} this`);
+    expect(line.startsWith(`Tam wants to ${kind} `)).toBe(true);
+  }
+});
+
+test("a lock card never offers a replacement it does not have", () => {
+  expect(proposalCard("lock", "Tam", null).detail).toBe("Nobody swaps it while it is locked.");
+  expect(proposalCard("unlock", "Tam", null).detail).toBe("It goes back to being swappable.");
+  expect(proposalCard("swap", "Tam", "Nightcap").detail).toBe("Nightcap");
 });
 
 test("a proposal says what it is actually asking for", () => {
@@ -67,9 +95,19 @@ test("a proposal says what it is actually asking for", () => {
   );
 });
 
-test("a lock proposal never mentions a replacement it does not have", () => {
-  // The screen reads `replacement?.name ?? null` off a nullable field, so the
-  // null path has to produce a sentence rather than the word "null".
-  expect(proposalLine("lock", "Tam", "The Gate", null)).not.toMatch(/null|swap/i);
-  expect(proposalLine("swap", "Tam", "The Gate", null)).not.toMatch(/null/i);
+test("the unreachable swap fallback still reads as a sentence", () => {
+  // `proposals.open` requires a replacement, so this branch is unreachable
+  // rather than defensive. Pinned to the exact string because `not.toMatch(
+  // /null/)` passes just as happily for "for undefined." -- and both halves of
+  // the copy have to fall back to the same words.
+  expect(proposalLine("swap", "Tam", "The Gate", null)).toBe(
+    "Tam wants to swap The Gate for somewhere else.",
+  );
+  expect(proposalCard("swap", "Tam", null).detail).toBe("Somewhere else");
+});
+
+test("the lock rule narrows out of a select like the other two", () => {
+  // The third consumer of `asOption`, and the one whose values are not numbers.
+  expect(asOption(LOCK_RULES, "vote")).toBe("vote");
+  expect(asOption(LOCK_RULES, "host")).toBeNull();
 });
