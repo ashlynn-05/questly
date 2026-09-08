@@ -20,6 +20,7 @@ const FULL: FunnelDraft = {
   budget: 5000,
   radiusKm: 20,
   whenId: "weekend",
+  whenMinutes: 20 * 60 + 15,
   quizSaved: true,
 };
 
@@ -53,6 +54,7 @@ test("a value outside its option set falls back rather than being trusted", () =
       headcount: 99,
       budget: 999999,
       radiusKm: 4000,
+      whenId: "someday",
     }),
   );
   expect(parsed).not.toBeNull();
@@ -62,6 +64,22 @@ test("a value outside its option set falls back rather than being trusted", () =
   expect(parsed?.headcount).toBe(EMPTY_DRAFT.headcount);
   expect(parsed?.budget).toBe(EMPTY_DRAFT.budget);
   expect(parsed?.radiusKm).toBe(EMPTY_DRAFT.radiusKm);
+  expect(parsed?.whenId).toBe(EMPTY_DRAFT.whenId);
+});
+
+// The chosen start time. It is minutes since midnight, so anything that is not
+// a whole number of minutes inside one day is not a time of day -- and a bad
+// one falling through would resolve to a room at some hour nobody picked.
+test("a stored start time that is not a time of day falls back to the preset", () => {
+  for (const whenMinutes of [-1, 1440, 12.5, "18:30", null, {}]) {
+    const parsed = parseDraft(JSON.stringify({ ...FULL, whenMinutes }));
+    expect(parsed?.whenMinutes).toBe(EMPTY_DRAFT.whenMinutes);
+  }
+});
+
+test("a stored start time that IS a time of day survives", () => {
+  expect(parseDraft(JSON.stringify({ ...FULL, whenMinutes: 0 }))?.whenMinutes).toBe(0);
+  expect(parseDraft(JSON.stringify({ ...FULL, whenMinutes: 1439 }))?.whenMinutes).toBe(1439);
 });
 
 // One bad field must not cost the other eleven answers -- re-asking twelve

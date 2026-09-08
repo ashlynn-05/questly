@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -25,6 +25,16 @@ import {
   type FunnelDraft,
   type Step,
 } from "@/lib/funnel";
+import {
+  PRESET_MINUTES,
+  WHEN_IDS,
+  WHEN_LABELS,
+  inputValueToMinutes,
+  isInThePast,
+  minutesToInputValue,
+  resolveWhenAt,
+  roomWhenLabel,
+} from "@/lib/when";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
   { id: "grass", label: "Touch grass", sub: "Outside, free, no booking needed." },
@@ -50,39 +60,8 @@ const BACK_TO: Partial<Record<Step, Step>> = { party: "mood", constraints: "part
  */
 const CBD = { lat: -37.8136, lng: 144.9631 };
 
-/** Tonight 6:30pm, tomorrow 6:30pm, Saturday 2pm -- in the user's own clock. */
-function whenOptions(): Array<{ id: string; label: string; at: number }> {
-  const at = (dayOffset: number, hour: number, minute: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + dayOffset);
-    d.setHours(hour, minute, 0, 0);
-    return d.getTime();
-  };
-  const today = new Date().getDay();
-  const untilSaturday = (6 - today + 7) % 7 || 7;
-  return [
-    { id: "tonight", label: "Tonight", at: at(0, 18, 30) },
-    { id: "tomorrow", label: "Tomorrow", at: at(1, 18, 30) },
-    { id: "weekend", label: "This weekend", at: at(untilSaturday, 14, 0) },
-  ];
-}
-
-/**
- * When an open room is meeting. A clock face alone cannot separate tonight
- * 6:30pm from Saturday 2pm, and the difference is the whole commitment -- so
- * the weekday goes in front of the time for anything that is not today. Today
- * keeps the bare time: "Sat" on a room happening in four hours would be noise.
- */
-function roomWhenLabel(at: number): string {
-  const d = new Date(at);
-  const time = d.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
-  const now = new Date();
-  const today =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  return today ? time : `${d.toLocaleDateString("en-AU", { weekday: "short" })} ${time}`;
-}
+/** The sentence a time already gone gets, on the client and on the server. */
+const PAST_WHEN = "That time has already passed. Pick a later time.";
 
 function StartFunnel() {
   const router = useRouter();
@@ -165,6 +144,7 @@ function StartFunnel() {
   }
 
   const { answers, cardIndex, goals, mood, visibility, headcount, budget, radiusKm } = draft;
+  const { whenId, whenMinutes } = draft;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,12 +153,17 @@ function StartFunnel() {
   // a sentence for -- without a way onward, that sentence is a dead end.
   const [needsSignIn, setNeedsSignIn] = useState(false);
 
-  // One source for the three times on offer. The draft holds the id, never a
-  // second copy of the option, so the timestamp sent to the server is always
-  // the one rendered next to the label -- and a draft restored tomorrow gets
-  // tomorrow's "Tonight", not yesterday's stale timestamp.
-  const whens = useMemo(() => whenOptions(), []);
-  const when = whens.find((w) => w.id === draft.whenId) ?? whens[0];
+  // The draft holds the id and, if the host moved it, a time of day -- never a
+  // timestamp. `resolveWhenAt` turns the pair into one at the moment the room
+  // is opened, so a draft restored tomorrow gets tomorrow's "Tonight" rather
+  // than yesterday's stale timestamp, and so does a page left open past
+  // midnight. That second case is why this is not memoised: the old code
+  // computed all three times once at mount and then handed out a dead one.
+  //
+  // It is also why nothing here calls `new Date()` during render. The value in
+  // the time field comes from the draft alone, so the server-rendered HTML and
+  // the hydrated tree cannot disagree about what time it is.
+  const whenValue = minutesToInputValue(whenMinutes ?? PRESET_MINUTES[whenId]);
 
   // The quiz is shown once per account: a returning host lands straight on the
   // mood step -- unless they came here from `/settings` to answer it again, in
@@ -291,6 +276,18 @@ function StartFunnel() {
       goTo("mood");
       return;
     }
+    // Resolved here, against the clock as it is NOW -- not at mount, and not
+    // when the chip was tapped. Somebody who sat on this screen while the hour
+    // turned gets the time they are looking at, not the one they arrived with.
+    const whenAt = resolveWhenAt(whenId, whenMinutes, new Date());
+    // The server refuses this too, and the server is the rule -- but a refusal
+    // that arrives after a round trip, on a screen that has already said
+    // "Opening...", is a worse way to learn you typed 6:30 when you meant
+    // 18:30. This is the message; `rooms.create` is the guard.
+    if (isInThePast(whenAt, Date.now())) {
+      setError(PAST_WHEN);
+      return;
+    }
     setBusy(true);
     setError(null);
     setNeedsSignIn(false);
@@ -306,7 +303,7 @@ function StartFunnel() {
         mood,
         headcount,
         budgetPerHeadCents: budget,
-        whenAt: when.at,
+        whenAt,
         centreLat: CBD.lat,
         centreLng: CBD.lng,
         radiusKm,
@@ -700,12 +697,33 @@ function StartFunnel() {
           <fieldset className="flex flex-col gap-3 border-0 p-0">
             <legend className="board text-[11px] text-accent">When</legend>
             <div className="flex flex-wrap gap-2">
-              {whens.map((w) => (
-                <Chip key={w.id} selected={when.id === w.id} onClick={() => edit({ whenId: w.id })}>
-                  {w.label}
+              {WHEN_IDS.map((id) => (
+                // Tapping a preset clears the chosen time as well as setting
+                // the day, so the fast path stays exactly one tap and produces
+                // exactly the timestamp it produced before any of this existed.
+                <Chip
+                  key={id}
+                  selected={whenId === id}
+                  onClick={() => edit({ whenId: id, whenMinutes: null })}
+                >
+                  {WHEN_LABELS[id]}
                 </Chip>
               ))}
             </div>
+            {/* A native time input, not a component: it is keyboard operable
+                and screen-reader labelled without any of that being written
+                here, and the eight production dependencies contain no UI kit
+                to take one from. The 44px floor is set explicitly because the
+                browser's own control does not meet it on its own. */}
+            <label className="flex items-center gap-3 text-[13px] text-dim">
+              Start at
+              <input
+                type="time"
+                value={whenValue}
+                onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
+                className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              />
+            </label>
           </fieldset>
 
           <fieldset className="flex flex-col gap-3 border-0 p-0">

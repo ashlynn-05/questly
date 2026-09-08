@@ -22,6 +22,7 @@ export type ErrorCode =
   | "FIELD_REQUIRED"
   | "HOST_CANNOT_LEAVE"
   | "NO_FREE_ROOM_CODE"
+  | "WHEN_IN_THE_PAST"
   | "NOT_THE_HOST"
   | "ROOM_WRONG_STATE"
   | "NO_CANDIDATES"

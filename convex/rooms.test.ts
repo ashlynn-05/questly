@@ -25,7 +25,11 @@ const CREATE = {
   mood: "grass" as const,
   headcount: 4,
   budgetPerHeadCents: 0,
-  whenAt: 1_800_000_000_000,
+  // A WEEK OUT, relative -- `rooms.create` now refuses a `whenAt` already past,
+  // and this used to be the fixed 1_800_000_000_000, which is 2027-01-15. That
+  // is future today and would have started failing every test in this file on
+  // a date nobody would have connected to the guard.
+  whenAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
   centreLat: -37.8,
   centreLng: 144.96,
   radiusKm: 5,
@@ -44,6 +48,38 @@ test("creating a room returns a code and makes the creator the host", async () =
   expect(view!.members[0]).toMatchObject({ name: "Bec", isHost: true });
   expect(view!.you.isHost).toBe(true);
   expect(view!.room.status).toBe("lobby");
+});
+
+// A room in the past is refused, and the refusal is the SERVER's -- the client
+// says the same sentence sooner, but it is not the rule. This fires on the
+// preset path too: "Tonight" resolves to 6:30pm today, which is already gone
+// by 11pm, so the default option produced a past room before this guard.
+test("a room whose time has already passed is refused, and no room is written", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await expectUserError(
+    asUser.mutation(api.rooms.create, { ...CREATE, whenAt: Date.now() - 60_000 }),
+    "WHEN_IN_THE_PAST",
+    /already passed/i,
+  );
+
+  // Refused, and nothing half-written: no room, and no member row for a room
+  // that does not exist.
+  const rooms = await t.run(async (ctx) => await ctx.db.query("rooms").collect());
+  expect(rooms).toHaveLength(0);
+  const members = await t.run(async (ctx) => await ctx.db.query("members").collect());
+  expect(members).toHaveLength(0);
+});
+
+test("the current instant is already too late, because a night starts at a time", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "u1", name: "Bec" });
+  await expectUserError(
+    asUser.mutation(api.rooms.create, { ...CREATE, whenAt: Date.now() }),
+    "WHEN_IN_THE_PAST",
+    /already passed/i,
+  );
 });
 
 test("a guest joins with a first name and no account", async () => {

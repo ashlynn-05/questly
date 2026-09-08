@@ -1,4 +1,5 @@
 import type { Mood } from "@convex/lib/scoring";
+import { WHEN_IDS, isValidMinutes, type WhenId } from "./when";
 
 /**
  * The twelve taps that open a room, kept somewhere a page load cannot destroy.
@@ -30,7 +31,18 @@ export type FunnelDraft = {
   headcount: number;
   budget: number;
   radiusKm: number;
-  whenId: string;
+  whenId: WhenId;
+  /**
+   * The time of day the host chose, as minutes since local midnight, or `null`
+   * to follow the preset `whenId` names.
+   *
+   * Minutes, NEVER an epoch. A timestamp written down here would be the exact
+   * bug the comment below is about: a draft restored tomorrow would carry
+   * yesterday's absolute time instead of tomorrow's "Tonight". See
+   * `src/lib/when.ts`, which turns the pair into a timestamp at the moment the
+   * room is opened and nowhere else.
+   */
+  whenMinutes: number | null;
   /**
    * Whether `profiles.saveQuiz` actually stored these answers. False after a
    * signed-out visitor finishes the quiz, which is what lets `/start` retry the
@@ -57,6 +69,7 @@ export const EMPTY_DRAFT: FunnelDraft = {
   budget: 0,
   radiusKm: 5,
   whenId: "tonight",
+  whenMinutes: null,
   quizSaved: false,
 };
 
@@ -106,7 +119,12 @@ export function parseDraft(raw: string | null): FunnelDraft | null {
     headcount: oneOf(d.headcount, HEADCOUNTS, EMPTY_DRAFT.headcount),
     budget: oneOf(d.budget, BUDGETS, EMPTY_DRAFT.budget),
     radiusKm: oneOf(d.radiusKm, RADII, EMPTY_DRAFT.radiusKm),
-    whenId: typeof d.whenId === "string" ? d.whenId : EMPTY_DRAFT.whenId,
+    // An allow-list, like every other constrained field here. This used to be a
+    // bare `typeof d.whenId === "string"`, which was harmless only because
+    // `/start` looked the id up and fell back -- now that the id also selects a
+    // preset TIME, an unknown one has to be refused where the rest are.
+    whenId: oneOf(d.whenId, WHEN_IDS, EMPTY_DRAFT.whenId),
+    whenMinutes: isValidMinutes(d.whenMinutes) ? d.whenMinutes : EMPTY_DRAFT.whenMinutes,
     quizSaved: d.quizSaved === true,
   };
 }

@@ -378,7 +378,11 @@ const CREATE = {
   mood: "grass" as const,
   headcount: 4,
   budgetPerHeadCents: 0,
-  whenAt: 1_800_000_000_000,
+  // A WEEK OUT, relative -- `rooms.create` now refuses a `whenAt` already past,
+  // and this used to be the fixed 1_800_000_000_000, which is 2027-01-15. That
+  // is future today and would have started failing every test in this file on
+  // a date nobody would have connected to the guard.
+  whenAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
   centreLat: -37.8,
   centreLng: 144.96,
   radiusKm: 5,
