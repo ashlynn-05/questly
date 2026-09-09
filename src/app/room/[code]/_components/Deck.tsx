@@ -9,11 +9,10 @@ import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { useCountdown, useNow } from "@/components/questly/useCountdown";
-import { MapTile } from "@/components/questly/frame";
 import { photoSrc } from "@/lib/photo";
 import { userMessage } from "@/lib/errors";
 import { SwipeCard } from "./SwipeCard";
-import type { RoomView } from "./page";
+import type { RoomView } from "../page";
 
 /**
  * Where a Places photo is fetched from. The card stores Google's opaque photo

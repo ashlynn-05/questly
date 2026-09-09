@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { Archivo } from "next/font/google";
 import "./globals.css";
-import { ConvexClientProvider } from "./ConvexClientProvider";
-import { ServiceWorker } from "./ServiceWorker";
+import { ConvexClientProvider } from "./_components/ConvexClientProvider";
+import { ServiceWorker } from "./_components/ServiceWorker";
 import { getToken } from "@/lib/auth-server";
 import { themeScript } from "@/lib/theme";
 

@@ -3,20 +3,13 @@
 import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
-import type { Mood } from "@convex/lib/scoring";
-import { Plate } from "@/components/questly/Plate";
-import { Chip } from "@/components/questly/Chip";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { storeSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
-  BUDGETS,
   EMPTY_DRAFT,
-  HEADCOUNTS,
-  RADII,
   forgetDraft,
   noDraft,
   restoredDraft,
@@ -27,28 +20,11 @@ import {
 } from "@/lib/funnel";
 import {
   PRESET_MINUTES,
-  WHEN_IDS,
-  WHEN_LABELS,
-  inputValueToMinutes,
   isInThePast,
   minutesToInputValue,
   resolveWhenAt,
-  roomWhenLabel,
 } from "@/lib/when";
-
-const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
-  { id: "grass", label: "Touch grass", sub: "Outside, free, no booking needed." },
-  { id: "meet", label: "Meet people", sub: "Rooms with strangers who showed up too." },
-  { id: "treat", label: "Treat yourself", sub: "One good thing, properly." },
-  { id: "new", label: "Do something new", sub: "Something you have not done before." },
-];
-
-/**
- * The seven more/less cards plus the goals question. The board line says
- * "question", not "card", because the eighth one is not a card to react to and
- * a counter that says otherwise is a small lie on the first screen anyone sees.
- */
-const TOTAL_QUESTIONS = QUIZ_CARDS.length + 1;
+import { StepViews } from "./_components/StepViews";
 
 /** Where a mis-tap goes back to. The quiz itself is answered forwards only. */
 const BACK_TO: Partial<Record<Step, Step>> = { party: "mood", constraints: "party" };
@@ -62,6 +38,7 @@ const CBD = { lat: -37.8136, lng: 144.9631 };
 
 /** The sentence a time already gone gets, on the client and on the server. */
 const PAST_WHEN = "That time has already passed. Pick a later time.";
+const OPEN_ROOMS_PAGE_SIZE = 8;
 
 function StartFunnel() {
   const router = useRouter();
@@ -173,10 +150,26 @@ function StartFunnel() {
   const current = draft.step ?? resumeAt;
 
   const lookingForRoom = current === "party" && visibility === "open";
-  const openRooms = useQuery(
-    api.rooms.openRooms,
+  const openRooms = usePaginatedQuery(
+    api.rooms.openRoomsPage,
     lookingForRoom && mood !== null ? { mood } : "skip",
+    { initialNumItems: OPEN_ROOMS_PAGE_SIZE },
   );
+  const openRoomResults = openRooms.results;
+  const openRoomsStatus = openRooms.status;
+  const loadMoreOpenRooms = openRooms.loadMore;
+
+  // A page can contain only full rooms. Keep walking the native cursor until
+  // there is something to show or the indexed query is exhausted.
+  useEffect(() => {
+    if (
+      lookingForRoom &&
+      openRoomResults.length === 0 &&
+      openRoomsStatus === "CanLoadMore"
+    ) {
+      loadMoreOpenRooms(OPEN_ROOMS_PAGE_SIZE);
+    }
+  }, [lookingForRoom, loadMoreOpenRooms, openRoomResults.length, openRoomsStatus]);
 
   /**
    * A step change swaps the whole <section> out, unmounting the control that
@@ -397,355 +390,29 @@ function StartFunnel() {
         </button>
       ) : null}
 
-      {current === "quiz" ? (
-        <section aria-labelledby="quiz-heading" className="flex flex-col gap-6">
-          <div>
-            <p className="board text-[11px] text-accent">
-              Question <span className="num">{cardIndex + 1}</span> of{" "}
-              <span className="num">{TOTAL_QUESTIONS}</span>
-            </p>
-            <h1
-              id="quiz-heading"
-              ref={headingRef}
-              tabIndex={-1}
-              className="display mt-3 text-[34px] text-text"
-            >
-              More likely, or less likely?
-            </h1>
-          </div>
-
-          {/* The heading never changes, only the card does -- so the card is
-              what gets announced when it turns over. */}
-          <p aria-live="polite" className="text-[19px] leading-snug text-text">
-            {QUIZ_CARDS[cardIndex].text}
-          </p>
-
-          <div className="flex flex-col gap-2">
-            {/* Both answers are raised. An orange plate on "More likely" puts
-                the house thumb on a preference instrument, and only the "more"
-                answers reach the embedding (convex/lib/quiz.ts), so the bias
-                would ride into every recommendation that follows. */}
-            {(["more", "less"] as const).map((dir) => (
-              <Plate
-                key={dir}
-                variant="raised"
-                label={dir === "more" ? "More likely" : "Less likely"}
-                onClick={() => {
-                  const answered = { ...answers, [QUIZ_CARDS[cardIndex].id]: dir };
-                  if (cardIndex + 1 < QUIZ_CARDS.length) {
-                    // Latch the step on the first answer. Until it is latched,
-                    // `current` is derived live from the `profiles.me`
-                    // subscription -- so a profile arriving mid-quiz (a second
-                    // tab finishing it) would swap this screen for the mood
-                    // picker and throw away every answer given so far.
-                    edit({ answers: answered, step: "quiz", cardIndex: cardIndex + 1 });
-                  } else goTo("goals", { answers: answered });
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {current === "goals" ? (
-        <section aria-labelledby="goals-heading" className="flex flex-col gap-6">
-          <div>
-            <p className="board text-[11px] text-accent">
-              Question <span className="num">{TOTAL_QUESTIONS}</span> of{" "}
-              <span className="num">{TOTAL_QUESTIONS}</span>
-            </p>
-            <h1
-              id="goals-heading"
-              ref={headingRef}
-              tabIndex={-1}
-              className="display mt-3 text-[34px] text-text"
-            >
-              What is the night for?
-            </h1>
-          </div>
-
-          <fieldset className="flex flex-col gap-3 border-0 p-0">
-            <legend className="board text-[11px] text-accent">Pick as many as are true</legend>
-            <div className="flex flex-wrap gap-2">
-              {QUIZ_GOALS.map((goal) => (
-                <Chip
-                  key={goal.id}
-                  face="prose"
-                  selected={goals.includes(goal.id)}
-                  onClick={() => toggleGoal(goal.id)}
-                >
-                  {goal.text}
-                </Chip>
-              ))}
-            </div>
-          </fieldset>
-
-          <p className="text-[12px] leading-snug text-dim">
-            These shape what we suggest. Picking none is a fine answer — the seven
-            cards already said plenty.
-          </p>
-
-          <Plate
-            variant="action"
-            label={
-              busy
-                ? "Working it out…"
-                : goals.length === 0
-                  ? "Nothing in particular"
-                  : "That is the night"
-            }
-            disabled={busy}
-            onClick={() => void finishQuiz()}
-          />
-        </section>
-      ) : null}
-
-      {current === "mood" ? (
-        <section aria-labelledby="mood-heading" className="flex flex-col gap-6">
-          <h1
-            id="mood-heading"
-            ref={headingRef}
-            tabIndex={-1}
-            className="display text-[38px] text-text"
-          >
-            What kind of night?
-          </h1>
-          <div className="flex flex-col gap-2">
-            {/* All four raised until one is tapped, and the chosen one carries
-                a ring plus `aria-pressed` -- never a fill colour alone. */}
-            {MOODS.map((m) => (
-              <Plate
-                key={m.id}
-                variant="raised"
-                selected={m.id === mood}
-                label={m.label}
-                sub={m.sub}
-                onClick={() =>
-                  // "Meet people" is the one mood whose entire point is strangers.
-                  goTo("party", {
-                    mood: m.id,
-                    visibility: m.id === "meet" ? "open" : "private",
-                  })
-                }
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {current === "party" ? (
-        <section aria-labelledby="party-heading" className="flex flex-col gap-6">
-          <h1
-            id="party-heading"
-            ref={headingRef}
-            tabIndex={-1}
-            className="display text-[38px] text-text"
-          >
-            Who is coming?
-          </h1>
-
-          {/* `disabled={busy}` on all three: a tap on a room below starts a
-              join, and without this a tap here during that flight renders the
-              constraints step just before router.push drags them into the
-              room they half-chose. */}
-          <div className="flex flex-col gap-2">
-            <Plate
-              variant="raised"
-              label="With friends"
-              sub="Open a room and send them the number."
-              disabled={busy}
-              onClick={() => goTo("constraints", { visibility: "private" })}
-            />
-            <Plate
-              variant="raised"
-              label="Just me"
-              sub="A solo sidequest. Same plan, no voting."
-              disabled={busy}
-              onClick={() => goTo("constraints", { visibility: "private", headcount: 1 })}
-            />
-            <Plate
-              variant="raised"
-              selected={visibility === "open"}
-              label="Meet people"
-              sub="Join a room that is already open."
-              disabled={busy}
-              onClick={() => edit({ visibility: "open" })}
-            />
-          </div>
-
-          {/* Tapping "Meet people" leaves all three Plates mounted and reveals
-              a list underneath them. Nothing is unmounted, so focus correctly
-              does not move -- which leaves a live region as the only thing
-              that can say anything happened, and until now there was none.
-              Mounted with the section and empty, because a region inserted
-              into the DOM with its text already inside it announces nothing.
-              `sr-only` is absolutely positioned, so it costs no layout. */}
-          <p aria-live="polite" className="sr-only">
-            {!lookingForRoom
-              ? ""
-              : openRooms === undefined
-                ? "Looking for open rooms."
-                : openRooms.length === 0
-                  ? "No rooms are open for this mood yet. You can open one others can join."
-                  : `${openRooms.length} open ${openRooms.length === 1 ? "room" : "rooms"} for this mood.`}
-          </p>
-
-          {lookingForRoom ? (
-            <div className="flex flex-col gap-2">
-              <h2 className="board text-[11px] text-accent">Open rooms right now</h2>
-              {openRooms === undefined ? (
-                <p className="text-[13px] text-dim">Looking…</p>
-              ) : (
-                <>
-                  {openRooms.length === 0 ? (
-                    <p className="text-[13px] text-dim">
-                      Nobody has a room open for this mood yet.
-                    </p>
-                  ) : (
-                    <>
-                      {openRooms.map((room) => (
-                        <Plate
-                          key={room.code}
-                          variant="raised"
-                          label={`Room ${room.code}`}
-                          sub={
-                            room.demo
-                              ? `Demonstration room · ${room.memberCount} of ${room.headcount} in`
-                              : `${room.memberCount} of ${room.headcount} in`
-                          }
-                          right={roomWhenLabel(room.whenAt)}
-                          disabled={busy}
-                          onClick={() => void joinOpenRoom(room.code)}
-                        />
-                      ))}
-                      {openRooms.some((room) => room.demo) ? (
-                        <p className="text-[12px] leading-snug text-dim">
-                          Rooms marked as demonstration rooms are seeded examples, not
-                          other people waiting.
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-
-                  {/* Below the list as well as instead of it. Four seeded
-                      demonstration rooms mean the empty branch is never taken
-                      on a seeded deployment, so hiding this control there made
-                      an open room something no real user could ever create --
-                      and the open-rooms pool something only the seed could
-                      fill. `visibility` is already "open" whenever this
-                      renders (that is what `lookingForRoom` means), so it is
-                      an open room that gets created. */}
-                  <Plate
-                    variant="action"
-                    label={
-                      openRooms.length === 0
-                        ? "Open one others can join"
-                        : "Open your own instead"
-                    }
-                    sub={
-                      openRooms.length === 0
-                        ? undefined
-                        : "It joins this list, so strangers can find it too."
-                    }
-                    disabled={busy}
-                    onClick={() => goTo("constraints")}
-                  />
-                </>
-              )}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {current === "constraints" ? (
-        <section aria-labelledby="constraints-heading" className="flex flex-col gap-7">
-          <h1
-            id="constraints-heading"
-            ref={headingRef}
-            tabIndex={-1}
-            className="display text-[38px] text-text"
-          >
-            Four answers and it is solved.
-          </h1>
-
-          <fieldset className="flex flex-col gap-3 border-0 p-0">
-            <legend className="board text-[11px] text-accent">How many</legend>
-            <div className="flex flex-wrap gap-2">
-              {/* Six, not "6+". Nothing downstream honours a plus: the room is
-                  costed and sized for the number sent, and joins are capped at
-                  MAX_ROOM_MEMBERS regardless. A label that promises more than
-                  the number does is a small lie about what was booked. */}
-              {HEADCOUNTS.map((n) => (
-                <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
-                  {n === 1 ? "Just me" : n}
-                </Chip>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="flex flex-col gap-3 border-0 p-0">
-            <legend className="board text-[11px] text-accent">Budget per head</legend>
-            <div className="flex flex-wrap gap-2">
-              {BUDGETS.map((cents) => (
-                <Chip key={cents} selected={budget === cents} onClick={() => edit({ budget: cents })}>
-                  {cents === 0 ? "$0" : `$${cents / 100}`}
-                </Chip>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="flex flex-col gap-3 border-0 p-0">
-            <legend className="board text-[11px] text-accent">When</legend>
-            <div className="flex flex-wrap gap-2">
-              {WHEN_IDS.map((id) => (
-                // Tapping a preset clears the chosen time as well as setting
-                // the day, so the fast path stays exactly one tap and produces
-                // exactly the timestamp it produced before any of this existed.
-                <Chip
-                  key={id}
-                  selected={whenId === id}
-                  onClick={() => edit({ whenId: id, whenMinutes: null })}
-                >
-                  {WHEN_LABELS[id]}
-                </Chip>
-              ))}
-            </div>
-            {/* A native time input, not a component: it is keyboard operable
-                and screen-reader labelled without any of that being written
-                here, and the eight production dependencies contain no UI kit
-                to take one from. The 44px floor is set explicitly because the
-                browser's own control does not meet it on its own. */}
-            <label className="flex items-center gap-3 text-[13px] text-dim">
-              Start at
-              <input
-                type="time"
-                value={whenValue}
-                onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
-                className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
-              />
-            </label>
-          </fieldset>
-
-          <fieldset className="flex flex-col gap-3 border-0 p-0">
-            <legend className="board text-[11px] text-accent">How far</legend>
-            <div className="flex flex-wrap gap-2">
-              {RADII.map((km) => (
-                <Chip key={km} selected={radiusKm === km} onClick={() => edit({ radiusKm: km })}>
-                  {km} km
-                </Chip>
-              ))}
-            </div>
-            <p className="text-[12px] text-dim">Measured from the Melbourne CBD.</p>
-          </fieldset>
-
-          <Plate
-            variant="action"
-            label={busy ? "Opening…" : "Open the room"}
-            disabled={busy}
-            onClick={() => void openTheRoom()}
-          />
-        </section>
-      ) : null}
+      <StepViews
+        current={current}
+        headingRef={headingRef}
+        cardIndex={cardIndex}
+        answers={answers}
+        goals={goals}
+        mood={mood}
+        visibility={visibility}
+        headcount={headcount}
+        budget={budget}
+        whenId={whenId}
+        whenValue={whenValue}
+        radiusKm={radiusKm}
+        busy={busy}
+        lookingForRoom={lookingForRoom}
+        openRooms={openRooms}
+        edit={edit}
+        goTo={goTo}
+        toggleGoal={toggleGoal}
+        finishQuiz={finishQuiz}
+        openTheRoom={openTheRoom}
+        joinOpenRoom={joinOpenRoom}
+      />
     </Screen>
   );
 }

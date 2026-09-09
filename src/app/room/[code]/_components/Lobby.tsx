@@ -25,7 +25,7 @@ import {
   lockLine,
   rulesLine,
 } from "@/lib/houseRules";
-import type { BuildFailure, RoomView } from "./page";
+import type { BuildFailure, RoomView } from "../page";
 
 /**
  * The waiting room. Its whole job is to make the room feel occupied while it

@@ -10,10 +10,10 @@ import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { errorCode, userMessage } from "@/lib/errors";
 import { roomRedirect, statusTransition } from "@/lib/room";
 import { useSessionKey } from "@/lib/session";
-import { Lobby } from "./Lobby";
-import { Deck } from "./Deck";
-import { Plan } from "./Plan";
-import { Booked } from "./Booked";
+import { Lobby } from "./_components/Lobby";
+import { Deck } from "./_components/Deck";
+import { Plan } from "./_components/Plan";
+import { Booked } from "./_components/Booked";
 
 /**
  * The shape every screen in the room is written against.

@@ -12,7 +12,7 @@ import {
 import { useHaptics } from "@haptics/react";
 import { MapTile } from "@/components/questly/frame";
 import { swipeIntent } from "@/lib/swipe";
-import type { RoomView } from "./page";
+import type { RoomView } from "../page";
 
 /**
  * One card, and the gesture that votes on it.

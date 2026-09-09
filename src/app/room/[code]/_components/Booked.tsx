@@ -4,7 +4,7 @@ import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/booking";
-import type { RoomView } from "./page";
+import type { RoomView } from "../page";
 
 const time = (at: number) =>
   new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
