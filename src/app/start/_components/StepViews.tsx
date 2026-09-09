@@ -1,18 +1,18 @@
 import type { RefObject } from "react";
 import { api } from "@convex/_generated/api";
-import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
-import type { Mood } from "@convex/lib/scoring";
+import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/account/quiz";
+import type { Mood } from "@convex/lib/deck/scoring";
 import { Plate } from "@/components/questly/Plate";
 import { Chip } from "@/components/questly/Chip";
-import { roomWhenLabel } from "@/lib/when";
+import { roomWhenLabel } from "@/lib/start/when";
 import {
   BUDGETS,
   HEADCOUNTS,
   RADII,
   type FunnelDraft,
   type Step,
-} from "@/lib/funnel";
-import { WHEN_IDS, WHEN_LABELS, inputValueToMinutes } from "@/lib/when";
+} from "@/lib/start/funnel";
+import { WHEN_IDS, WHEN_LABELS, inputValueToMinutes } from "@/lib/start/when";
 import type { UsePaginatedQueryReturnType } from "convex/react";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [

@@ -1,7 +1,7 @@
 "use client";
 
 import { Plate } from "@/components/questly/Plate";
-import { usePush } from "@/components/questly/usePush";
+import { usePush } from "@/hooks/usePush";
 import { Section } from "./Section";
 
 /**

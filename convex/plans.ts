@@ -4,19 +4,19 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { slotValidator, stopValidator } from "./validators";
-import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
+import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/rooms/access";
 import { isProviderReservationError, throwUserError } from "./lib/errors";
-import { applyStopLock } from "./lib/lock";
+import { applyStopLock } from "./lib/plans/lock";
 import { notifyRoom } from "./lib/push/notify";
-import { settleProposal } from "./lib/proposals";
-import { DEFAULT_LOCK_RULE } from "./lib/rules";
-import { applyStopSwap } from "./lib/swap";
+import { settleProposal } from "./lib/plans/proposals";
+import { DEFAULT_LOCK_RULE } from "./lib/rooms/rules";
+import { applyStopSwap } from "./lib/plans/swap";
 import { jsonCompletion } from "./lib/openai";
-import { FREE_TYPES, MOOD_TYPES } from "./lib/scoring";
-import { sanitizeClientStop, totalPerHeadCents, type Stop } from "./lib/stops";
+import { FREE_TYPES, MOOD_TYPES } from "./lib/deck/scoring";
+import { sanitizeClientStop, totalPerHeadCents, type Stop } from "./lib/plans/stops";
 import { generatePlan } from "./lib/plans/generation";
 import { optionsValidator, toOptions } from "./lib/plans/search";
-import { enqueuePlanGeneration } from "./lib/planQueue";
+import { enqueuePlanGeneration } from "./lib/plans/queue";
 import { publicAction, publicMutation } from "./lib/customFunctions";
 
 

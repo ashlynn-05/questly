@@ -1,6 +1,6 @@
 import type { MutableRefObject } from "react";
 import { Plate } from "@/components/questly/Plate";
-import { clockFace } from "@/lib/countdown";
+import { clockFace } from "@/lib/room/countdown";
 import type { RoomView } from "../page";
 
 type Plan = NonNullable<RoomView["plan"]>;

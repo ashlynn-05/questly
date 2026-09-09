@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { QueryCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { publicMutation, publicQuery } from "./lib/customFunctions";
-import { MAX_ROOM_MEMBERS, requireMember, roomByCode } from "./lib/access";
+import { MAX_ROOM_MEMBERS, requireMember, roomByCode } from "./lib/rooms/access";
 import { devicesOf, MAX_DEVICES_PER_OWNER, notificationFor, ownerKey } from "./lib/push/notify";
 import { enqueueTestPush } from "./lib/push/queue";
 import { pushEventValidator } from "./validators";

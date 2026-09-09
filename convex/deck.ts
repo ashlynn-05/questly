@@ -6,7 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 
 import schema from "./schema";
-import { MAX_ROOM_MEMBERS } from "./lib/access";
+import { MAX_ROOM_MEMBERS } from "./lib/rooms/access";
 import { questFields, findRecentDeck } from "./lib/deck/cache";
 import {
   VENUE_CATALOG_CEILING,

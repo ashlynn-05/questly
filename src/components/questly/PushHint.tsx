@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Plate } from "./Plate";
-import { usePush } from "./usePush";
+import { usePush } from "@/hooks/usePush";
 
 /**
  * The invitation to turn notifications on.

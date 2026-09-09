@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useRef, useState, type RefObject } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
-import type { Stop } from "@convex/lib/stops";
+import type { Stop } from "@convex/lib/plans/stops";
 import { Plate } from "@/components/questly/Plate";
-import { useCountdown } from "@/components/questly/useCountdown";
+import { useCountdown } from "@/hooks/useCountdown";
+import { useFocusOnArrival } from "@/hooks/useFocusOnArrival";
+import { useInFlight } from "@/hooks/useInFlight";
 import { errorCode, userMessage } from "@/lib/errors";
 import type { RoomView } from "../page";
 import { PlanBookingPanel } from "./PlanBookingPanel";
@@ -94,12 +96,7 @@ export function Plan({
    * silently. `status` does not change across this transition, so the shell's
    * policy correctly does not fire -- this is the one local move it cannot see.
    */
-  const hadPlan = useRef(plan !== null);
-  useEffect(() => {
-    if (!plan || hadPlan.current) return;
-    hadPlan.current = true;
-    headingRef.current?.focus();
-  }, [plan, headingRef]);
+  useFocusOnArrival(plan !== null, headingRef);
 
   /**
    * Booking is irreversible, so its confirmation gets the same focus treatment
@@ -176,37 +173,26 @@ export function Plan({
     void loadOptions(stopId, "ask");
   }
 
-  /**
-   * The in-flight guard for every write on this screen, as a ref rather than a
-   * `disabled` flag.
-   *
-   * A `disabled` flag used to sit on the very vote button being pressed, and on
-   * every option in an open sheet -- so casting a vote by keyboard disabled the
-   * control that had focus and dropped focus to <body>. This file states the
-   * rule twice already (`bookIt` and `askForThePlanAgain`); it just was not
-   * applied here. A ref only has to stop a second concurrent call, and does not
-   * re-render, so nothing under the user's finger changes state.
-   */
-  const writing = useRef(false);
+  // The guard for every write on this screen. A ref and not a `disabled` flag,
+  // which used to sit on the very vote button being pressed: see `useInFlight`.
+  const write = useInFlight();
 
   async function choose(stopId: string, replacement: Stop) {
-    if (writing.current) return;
-    writing.current = true;
     setError(null);
-    try {
-      if (isGroup) {
-        await openProposal({ code, sessionKey, stopId, replacement, reason: reason.trim() });
-      } else {
-        await replaceStop({ code, sessionKey, stopId, replacement });
+    await write(async () => {
+      try {
+        if (isGroup) {
+          await openProposal({ code, sessionKey, stopId, replacement, reason: reason.trim() });
+        } else {
+          await replaceStop({ code, sessionKey, stopId, replacement });
+        }
+        setSheetFor(null);
+        setOptions([]);
+        setReason("");
+      } catch (e) {
+        setError(userMessage(e, "Could not change that stop."));
       }
-      setSheetFor(null);
-      setOptions([]);
-      setReason("");
-    } catch (e) {
-      setError(userMessage(e, "Could not change that stop."));
-    } finally {
-      writing.current = false;
-    }
+    });
   }
 
   /**
@@ -229,45 +215,41 @@ export function Plan({
   }, []);
 
   async function toggleLock(stopId: string, locked: boolean) {
-    // The same in-flight guard every other write on this screen uses. It was
-    // survivable while a lock was an idempotent patch; under the vote rule a
-    // double tap makes the SECOND call collide with the proposal the first one
-    // opened, and the room is told PROPOSAL_EXISTS about its own tap.
-    if (writing.current) return;
-    writing.current = true;
+    // The guard matters here in particular. It was survivable while a lock was
+    // an idempotent patch; under the vote rule a double tap makes the SECOND
+    // call collide with the proposal the first one opened, and the room is told
+    // PROPOSAL_EXISTS about its own tap.
     setError(null);
-    try {
-      await setLocked({ code, sessionKey, stopId, locked });
-      // Under the vote rule the control that was just pressed is replaced by
-      // the vote block below it. Unmounting a focused <button> hands focus back
-      // to <body> -- the failure this file legislates against in three other
-      // places -- so it is handed to the block that took its place instead.
-      if (lockByVote) askedOn.current = stopId;
-    } catch (e) {
-      setError(
-        userMessage(
-          e,
-          // Under the vote rule the tap does not change the stop, it asks the
-          // room to, and an error saying otherwise names the wrong failure.
-          lockByVote ? "Could not ask the room about that stop." : "Could not change that stop.",
-        ),
-      );
-    } finally {
-      writing.current = false;
-    }
+    await write(async () => {
+      try {
+        await setLocked({ code, sessionKey, stopId, locked });
+        // Under the vote rule the control that was just pressed is replaced by
+        // the vote block below it. Unmounting a focused <button> hands focus
+        // back to <body> -- the failure this file legislates against in three
+        // other places -- so it is handed to the block that took its place.
+        if (lockByVote) askedOn.current = stopId;
+      } catch (e) {
+        setError(
+          userMessage(
+            e,
+            // Under the vote rule the tap does not change the stop, it asks the
+            // room to, and an error saying otherwise names the wrong failure.
+            lockByVote ? "Could not ask the room about that stop." : "Could not change that stop.",
+          ),
+        );
+      }
+    });
   }
 
   async function castVote(proposalId: RoomView["proposals"][number]["_id"], vote: "yes" | "no") {
-    if (writing.current) return;
-    writing.current = true;
     setError(null);
-    try {
-      await voteOnProposal({ code, sessionKey, proposalId, vote });
-    } catch (e) {
-      setError(userMessage(e, "Could not record that vote."));
-    } finally {
-      writing.current = false;
-    }
+    await write(async () => {
+      try {
+        await voteOnProposal({ code, sessionKey, proposalId, vote });
+      } catch (e) {
+        setError(userMessage(e, "Could not record that vote."));
+      }
+    });
   }
 
   async function bookIt() {
@@ -344,8 +326,8 @@ export function Plan({
           It&rsquo;s a match
         </h1>
         {/* This whole branch, heading included, is replaced when the plan
-            lands: the effect above moves focus onto the new heading, which is
-            what announces the itinerary. */}
+            lands: `useFocusOnArrival` above moves focus onto the new heading,
+            which is what announces the itinerary. */}
         <p className="text-[15px] leading-snug text-dim">Writing the plan…</p>
 
         {/* The plan-side twin of the deck's "Build it again". A build that is

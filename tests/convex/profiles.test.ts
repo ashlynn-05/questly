@@ -5,7 +5,7 @@ import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
-import { GOAL_IDS, QUIZ_CARDS, QUIZ_GOALS, tasteSentence, moodAffinity } from "../../convex/lib/quiz";
+import { GOAL_IDS, QUIZ_CARDS, QUIZ_GOALS, tasteSentence, moodAffinity } from "../../convex/lib/account/quiz";
 import { rateLimiter } from "../../convex/lib/rateLimits";
 
 const modules = import.meta.glob("../../convex/**/*.ts");

@@ -17,7 +17,7 @@ import {
   distanceKm,
   priceLevelToCents,
   scoreQuest,
-} from "../scoring";
+} from "./scoring";
 import { isProviderReservationError, throwUserError } from "../errors";
 import { jsonCompletion } from "../openai";
 

@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { publicMutation } from "./lib/customFunctions";
-import { requireMember, roomByCode } from "./lib/access";
+import { requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
-import { resolveMatch } from "./lib/match";
+import { resolveMatch } from "./lib/rooms/match";
 
 export const cast = publicMutation({
   args: {

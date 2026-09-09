@@ -1,8 +1,8 @@
 import type { RefObject } from "react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
-import { AVATAR_TYPES } from "@convex/lib/avatar";
-import { initialsFor } from "@/lib/avatar";
+import { AVATAR_TYPES } from "@convex/lib/account/avatar";
+import { initialsFor } from "@/lib/account/avatar";
 import { Hint } from "@/components/questly/Hint";
 import { Plate } from "@/components/questly/Plate";
 import { Input } from "@/components/ui";

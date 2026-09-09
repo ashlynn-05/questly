@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
 import type { Id } from "../../convex/_generated/dataModel";
-import { DECK_SIZE, FREE_TYPES, MOOD_TYPES } from "../../convex/lib/scoring";
+import { DECK_SIZE, FREE_TYPES, MOOD_TYPES } from "../../convex/lib/deck/scoring";
 import {
   VENUE_CATALOG_CEILING,
   VENUE_PAGE_MAX_ROWS,

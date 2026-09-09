@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { authenticatedMutation, publicQuery } from "./lib/customFunctions";
-import { PURGE_WINDOW_MS, purgeAt } from "./lib/account";
+import { PURGE_WINDOW_MS, purgeAt } from "./lib/account/window";
 import { throwUserError } from "./lib/errors";
 import { dropOwner } from "./lib/push/notify";
-import { detachMember } from "./lib/roster";
+import { detachMember } from "./lib/rooms/roster";
 
 /**
  * Deleting an account, and the fourteen days in which it can be undeleted.

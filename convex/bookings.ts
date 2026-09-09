@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { publicMutation } from "./lib/customFunctions";
-import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
+import { refuseIfBooked, requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
 import { notifyRoom } from "./lib/push/notify";
 import {
@@ -10,7 +10,7 @@ import {
   clearFinalizeVotes,
   voteLapsed,
   votesNeeded,
-} from "./lib/rules";
+} from "./lib/rooms/rules";
 
 function mapsSearchUrl(name: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} Melbourne`)}`;

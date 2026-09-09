@@ -1,5 +1,5 @@
-import { PURGE_WINDOW_DAYS } from "@convex/lib/account";
-import { MAX_AVATAR_MB } from "@convex/lib/avatar";
+import { PURGE_WINDOW_DAYS } from "@convex/lib/account/window";
+import { MAX_AVATAR_MB } from "@convex/lib/account/avatar";
 
 /**
  * The explanations `/settings` used to say out loud, all of the time.

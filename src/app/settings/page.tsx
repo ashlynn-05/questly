@@ -1,20 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { MAX_AVATAR_MB, refuseAvatar } from "@convex/lib/avatar";
-import { authClient } from "@/lib/auth-client";
-import { clearLocalState } from "@/lib/signout";
+import { MAX_AVATAR_MB, refuseAvatar } from "@convex/lib/account/avatar";
+import { authClient } from "@/lib/account/auth-client";
+import { clearLocalState } from "@/lib/account/signout";
 import { userMessage } from "@/lib/errors";
 import { Plate } from "@/components/questly/Plate";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { Hint } from "@/components/questly/Hint";
 import { Back } from "@/components/questly/icons";
+import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
 import { Section } from "./_components/Section";
 import { SettingsAnswersSection } from "./_components/SettingsAnswersSection";
 import { SettingsProfileSection } from "./_components/SettingsProfileSection";
@@ -80,14 +81,7 @@ export default function SettingsPage() {
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  /**
-   * An account already on its way out belongs on `/restore`, which is the one
-   * screen written for that state. Sending it here instead of duplicating the
-   * offer keeps the deadline, the wording and the button in one place.
-   */
-  useEffect(() => {
-    if (deletion) router.replace("/restore");
-  }, [deletion, router]);
+  useRedirectIfDeleting(deletion);
 
   // The field starts as whatever the profile says and is the user's from then
   // on. Derived during render rather than synced in an effect: `null` means

@@ -2,11 +2,11 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { publicMutation } from "./lib/customFunctions";
 import { stopValidator } from "./validators";
-import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
+import { refuseIfBooked, requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
 import { notifyRoom } from "./lib/push/notify";
-import { settleProposal } from "./lib/proposals";
-import { sanitizeClientStop } from "./lib/stops";
+import { settleProposal } from "./lib/plans/proposals";
+import { sanitizeClientStop } from "./lib/plans/stops";
 
 /**
  * How a group of two or more changes its plan.

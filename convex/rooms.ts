@@ -5,13 +5,13 @@ import { moodValidator, proposalKindValidator, stopValidator } from "./validator
 import {
   MAX_ROOM_MEMBERS,
   findMember, findRoomByCode, memberCount, needed, newRoomCode, newSessionKey, refuseIfBooked, requireLiveUserId, requireMember, roomByCode,
-} from "./lib/access";
+} from "./lib/rooms/access";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { throwUserError } from "./lib/errors";
 import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
 import { notifyRoom } from "./lib/push/notify";
-import { detachMember } from "./lib/roster";
+import { detachMember } from "./lib/rooms/roster";
 import {
   DEFAULT_FINALIZE_RULE,
   DEFAULT_LOCK_RULE,
@@ -24,8 +24,8 @@ import {
   swipeSecondsValidator,
   voteDeadlineAt,
   votesNeeded,
-} from "./lib/rules";
-import { isOverBudget } from "./lib/stops";
+} from "./lib/rooms/rules";
+import { isOverBudget } from "./lib/plans/stops";
 
 const memberViewValidator = v.object({
   _id: v.id("members"),

@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { authClient } from "@/lib/auth-client";
-import { badgeLabel, initialsFor } from "@/lib/avatar";
-import { clearLocalState } from "@/lib/signout";
+import { authClient } from "@/lib/account/auth-client";
+import { badgeLabel, initialsFor } from "@/lib/account/avatar";
+import { clearLocalState } from "@/lib/account/signout";
 import { Exit, PersonOut, Sliders } from "./icons";
 import { MenuRoundel } from "./MenuRoundel";
 

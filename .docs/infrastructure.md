@@ -29,7 +29,7 @@ Discord is registered only when its deployment credentials exist. Convex gets
 the JWT provider from [`convex/auth.config.ts`](../convex/auth.config.ts).
 
 The current ownership key is `identity.subject`, resolved in
-[`convex/lib/access.ts`](../convex/lib/access.ts) and stored as `profiles.userId`
+[`convex/lib/rooms/access.ts`](../convex/lib/rooms/access.ts) and stored as `profiles.userId`
 and `rooms.hostUserId`. Preserve that mapping when changing auth: replacing it
 with another identity field without a migration can strand existing ownership
 rows. A signed-in identity and a room capability are separate concerns. Guests
@@ -75,7 +75,7 @@ calls use the existing fallback paths where the feature has one.
 
 Deck building remains a synchronous action: its room lease and token-checked
 writes prevent a stale build from replacing a newer deck. Only plan generation
-uses [`convex/lib/planQueue.ts`](../convex/lib/planQueue.ts): one named
+uses [`convex/lib/plans/queue.ts`](../convex/lib/plans/queue.ts): one named
 `planGeneration` Workpool, `maxParallelism: 8`, and retries disabled both by
 default and at enqueue.
 

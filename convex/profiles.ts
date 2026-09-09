@@ -9,8 +9,8 @@ import {
   authenticatedMutation,
   publicQuery,
 } from "./lib/customFunctions";
-import { CARD_IDS, GOAL_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/quiz";
-import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/avatar";
+import { CARD_IDS, GOAL_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/account/quiz";
+import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/account/avatar";
 
 // The 1536-float vector never goes to the browser -- this validator is what
 // makes that a type error, not just a habit, if a future edit forgets to strip it.

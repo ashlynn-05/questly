@@ -11,7 +11,7 @@ import {
 } from "motion/react";
 import { useHaptics } from "@haptics/react";
 import { MapTile } from "@/components/questly/frame";
-import { swipeIntent } from "@/lib/swipe";
+import { swipeIntent } from "@/lib/room/swipe";
 import type { RoomView } from "../page";
 
 /**

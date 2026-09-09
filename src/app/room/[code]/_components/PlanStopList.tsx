@@ -1,8 +1,8 @@
 import type { RefObject } from "react";
-import type { Stop } from "@convex/lib/stops";
+import type { Stop } from "@convex/lib/plans/stops";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
-import { lockLine, proposalCard, proposalLine } from "@/lib/houseRules";
+import { lockLine, proposalCard, proposalLine } from "@/lib/room/houseRules";
 import type { RoomView } from "../page";
 
 export type SheetTab = "ask" | "search";

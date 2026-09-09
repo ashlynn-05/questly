@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { clearSessionKeys, readSessionKey, storeSessionKey } from "../../../src/lib/session";
-import { EMPTY_DRAFT, resetDraftForTests, restoredDraft, writeDraft } from "../../../src/lib/funnel";
-import { clearLocalState } from "../../../src/lib/signout";
+import { clearSessionKeys, readSessionKey, storeSessionKey } from "../../../src/lib/room/session";
+import { EMPTY_DRAFT, resetDraftForTests, restoredDraft, writeDraft } from "../../../src/lib/start/funnel";
+import { clearLocalState } from "../../../src/lib/account/signout";
 
 /**
  * These test the two storage functions directly, not the hook: vitest here runs

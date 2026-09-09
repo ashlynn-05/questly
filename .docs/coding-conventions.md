@@ -16,8 +16,28 @@ and the [task workflow](./task-workflow.md).
   primitives. A component belongs there only when more than one route owns the
   same behavior or visual contract. Keep pure browser/domain helpers in
   `src/lib`; keep Convex-only helpers in `convex/lib`.
+- **Every React hook lives in `src/hooks`, one hook per file named after it.**
+  A hook is never defined in the component or route that happens to use it
+  first: two screens asking the same question is how a multi-step browser
+  negotiation ends up written twice with one copy subtly wrong. Compose rather
+  than grow -- `usePush` is the shape to copy, split into `usePushBrowser`
+  (device facts, no server) and `usePushSeat` (server identity, no DOM) so a
+  screen that wants only one half does not mount the other.
+- **`convex/lib` and `src/lib` are grouped by feature, one folder per feature.**
+  `convex/lib/{account,deck,plans,push,rooms}` and
+  `src/lib/{account,pwa,room,start}`. A helper goes in the folder of the
+  feature it serves, and the folder is the unit somebody reads to understand
+  that feature.
+- **The root of each `lib` is for cross-cutting plumbing only**, not for a
+  feature that has not earned a folder: `convex/lib` keeps `customFunctions.ts`,
+  `errors.ts`, `openai.ts` and `rateLimits.ts` there; `src/lib` keeps
+  `errors.ts`, `help.ts`, `menu.ts` and `theme.ts`. If a new root file is about
+  one feature, it is in the wrong place.
 - Tests mirror production paths under root `tests/`: backend tests are in
-  `tests/convex`, client/helper tests in `tests/src`, with shared setup in
+  `tests/convex`, client/helper tests in `tests/src`, and both mirror the
+  feature folders above. `import.meta.glob` module maps in a Convex test are
+  relative paths, not import specifiers, so moving a test file a level deeper
+  means fixing its glob by hand. Shared setup is in
   `tests/setup.ts` and `tests/globalsetup.ts`. Preserve the offline network
   guard. Convex tests use the repository's `convex-test` module map and the
   edge-runtime Vitest configuration.
@@ -50,7 +70,7 @@ room operations still resolve the `sessionKey` capability with
 caller.
 
 The persisted ownership contract currently uses Better Auth `identity.subject`
-through [`convex/lib/access.ts`](../convex/lib/access.ts). Do not switch a single
+through [`convex/lib/rooms/access.ts`](../convex/lib/rooms/access.ts). Do not switch a single
 call site to `tokenIdentifier` or accept a client `userId`; an identity-key
 change needs an explicit compatibility migration. Deleted-account checks are
 intentionally endpoint-specific: hosting and account actions use live-account

@@ -6,7 +6,7 @@ import { ConvexError } from "convex/values";
 import { expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
-import { MAX_ROOM_MEMBERS } from "../../convex/lib/access";
+import { MAX_ROOM_MEMBERS } from "../../convex/lib/rooms/access";
 import type { Id } from "../../convex/_generated/dataModel";
 
 const modules = import.meta.glob("../../convex/**/*.ts");

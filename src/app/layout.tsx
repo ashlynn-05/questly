@@ -3,7 +3,7 @@ import { Archivo } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./_components/ConvexClientProvider";
 import { ServiceWorker } from "./_components/ServiceWorker";
-import { getToken } from "@/lib/auth-server";
+import { getToken } from "@/lib/account/auth-server";
 import { themeScript } from "@/lib/theme";
 
 // One superfamily, two axes. The width axis is what makes this a signage face
