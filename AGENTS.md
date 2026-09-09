@@ -1,3 +1,7 @@
+# Questly project handbook
+
+Read [.docs/index.md](.docs/index.md) and [.docs/task-workflow.md](.docs/task-workflow.md) before every task, including small fixes and documentation changes. Read the relevant setup, infrastructure, and coding-convention guides before editing. Apply the delegation-brief-style recon → approved plan → implementation → independent review/repair workflow; scale report length to task size, not away the stages. Existing user authorization carries forward: record it at each applicable gate instead of asking again for routine authorized work. Honor explicit report-and-wait instructions and unresolved authority boundaries. Keep the handbook current when commands, conventions, or infrastructure change.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
