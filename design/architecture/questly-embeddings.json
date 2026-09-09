@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Questly Taste Embedding Flow",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1068,
+      500
+    ]
+  },
+  "stages": [
+    {
+      "label": "Input"
+    },
+    {
+      "label": "Text"
+    },
+    {
+      "label": "Embed"
+    },
+    {
+      "label": "Vectors"
+    },
+    {
+      "label": "Deck"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "quiz",
+      "type": "frontend",
+      "label": "Onboarding Quiz",
+      "sublabel": "cards and goals",
+      "stage": 0,
+      "row": 0,
+      "width": 144
+    },
+    {
+      "id": "candidates",
+      "type": "backend",
+      "label": "Deck Candidates",
+      "sublabel": "Places or cache",
+      "stage": 0,
+      "row": 2,
+      "width": 144
+    },
+    {
+      "id": "sentence",
+      "type": "backend",
+      "label": "Taste Sentence",
+      "sublabel": "yes answers only",
+      "stage": 1,
+      "row": 0,
+      "width": 144
+    },
+    {
+      "id": "shortlist",
+      "type": "backend",
+      "label": "Shortlist",
+      "sublabel": "top 15, taste at 0",
+      "stage": 1,
+      "row": 2,
+      "width": 144
+    },
+    {
+      "id": "openai",
+      "type": "external",
+      "label": "OpenAI Embeddings",
+      "sublabel": "text-embedding-3-small",
+      "tag": "internal only",
+      "stage": 2,
+      "row": 1,
+      "width": 144
+    },
+    {
+      "id": "tastevector",
+      "type": "database",
+      "label": "Taste Vector",
+      "sublabel": "profiles.tasteVector",
+      "tag": "never sent to client",
+      "stage": 3,
+      "row": 0,
+      "width": 144
+    },
+    {
+      "id": "questvectors",
+      "type": "backend",
+      "label": "Quest Vectors",
+      "sublabel": "not stored",
+      "stage": 3,
+      "row": 2,
+      "width": 144
+    },
+    {
+      "id": "deck",
+      "type": "database",
+      "label": "Ranked Deck",
+      "sublabel": "quests, best first",
+      "stage": 4,
+      "row": 1,
+      "width": 144
+    }
+  ],
+  "flows": [
+    {
+      "id": "quiz-to-sentence",
+      "from": "quiz",
+      "to": "sentence",
+      "label": "yes + goals",
+      "classification": "validated",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sentence-to-openai",
+      "from": "sentence",
+      "to": "openai",
+      "label": "one sentence",
+      "classification": "embedText",
+      "variant": "emphasis"
+    },
+    {
+      "id": "openai-to-vector",
+      "from": "openai",
+      "to": "tastevector",
+      "label": "1536 floats",
+      "classification": "stored once",
+      "variant": "emphasis"
+    },
+    {
+      "id": "vector-to-deck",
+      "from": "tastevector",
+      "to": "deck",
+      "label": "blended member mean",
+      "classification": "signed-in only",
+      "variant": "emphasis"
+    },
+    {
+      "id": "candidates-to-shortlist",
+      "from": "candidates",
+      "to": "shortlist",
+      "label": "base score",
+      "classification": "sorted"
+    },
+    {
+      "id": "shortlist-to-openai",
+      "from": "shortlist",
+      "to": "openai",
+      "label": "15 titles and blurbs",
+      "classification": "embedMany, one call"
+    },
+    {
+      "id": "openai-to-questvectors",
+      "from": "openai",
+      "to": "questvectors",
+      "label": "15 vectors",
+      "classification": "request order restored"
+    },
+    {
+      "id": "questvectors-to-deck",
+      "from": "questvectors",
+      "to": "deck",
+      "label": "cosine at weight 1.1",
+      "classification": "re-sorted",
+      "labelDx": -40
+    },
+    {
+      "id": "untasted-fallback",
+      "from": "shortlist",
+      "to": "deck",
+      "label": "untasted order kept",
+      "classification": "no vector or provider down",
+      "variant": "dashed",
+      "route": "bottom-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Write path",
+      "items": [
+        "Only the yes answers go in",
+        "A negation sits near the thing",
+        "Never sent to the browser"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Read path",
+      "items": [
+        "Sorted once with taste at 0",
+        "Only the top 15 get embedded",
+        "Odd-width vectors are skipped"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Fallbacks",
+      "items": [
+        "No vector skips the embed call",
+        "Provider error keeps the order",
+        "cosine returns 0 if absent"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Guards",
+      "items": [
+        "Both embed actions are internal",
+        "Quota 30/min and 200/day",
+        "Quota error fails closed"
+      ]
+    }
+  ]
+}
