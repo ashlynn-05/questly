@@ -1,0 +1,271 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Questly Deck to Plan",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "sources",
+      "label": "Candidate sources"
+    },
+    {
+      "id": "build",
+      "label": "Deck build to plan"
+    },
+    {
+      "id": "degraded",
+      "label": "Fallbacks",
+      "variant": "exception"
+    },
+    {
+      "id": "signals",
+      "label": "Ranking signals"
+    }
+  ],
+  "phases": [
+    {
+      "id": "gather",
+      "label": "Gather",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "rank",
+      "label": "Rank",
+      "fromCol": 1,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "commit",
+      "label": "Agree + write",
+      "fromCol": 3,
+      "toCol": 4
+    }
+  ],
+  "mainPath": [
+    "pool",
+    "shortlist",
+    "rerank",
+    "match",
+    "plangen"
+  ],
+  "nodes": [
+    {
+      "id": "partners",
+      "lane": "sources",
+      "col": 1,
+      "type": "database",
+      "label": "Partner Venues",
+      "sublabel": "active, this mood",
+      "tag": "always injected",
+      "width": 138
+    },
+    {
+      "id": "places",
+      "lane": "sources",
+      "col": 0,
+      "type": "external",
+      "label": "Google Places",
+      "sublabel": "nearby, mood types",
+      "tag": "20 max",
+      "width": 138
+    },
+    {
+      "id": "pool",
+      "lane": "build",
+      "col": 0,
+      "type": "backend",
+      "label": "Candidate Pool",
+      "sublabel": "partners, then Places",
+      "width": 138,
+      "tag": "host only, one lease"
+    },
+    {
+      "id": "shortlist",
+      "lane": "build",
+      "col": 1,
+      "type": "backend",
+      "label": "Base Score",
+      "sublabel": "taste held at zero",
+      "tag": "top 15",
+      "width": 138
+    },
+    {
+      "id": "rerank",
+      "lane": "build",
+      "col": 2,
+      "type": "backend",
+      "label": "Taste Re-rank",
+      "sublabel": "nine cards, best first",
+      "tag": "the deck",
+      "width": 138
+    },
+    {
+      "id": "score",
+      "lane": "signals",
+      "col": 1,
+      "type": "backend",
+      "label": "Six Score Terms",
+      "sublabel": "budget, mood, distance",
+      "width": 138
+    },
+    {
+      "id": "embed",
+      "lane": "signals",
+      "col": 3,
+      "type": "external",
+      "label": "OpenAI Embed",
+      "sublabel": "15 titles, one call",
+      "width": 138
+    },
+    {
+      "id": "match",
+      "lane": "build",
+      "col": 3,
+      "type": "backend",
+      "label": "Match Resolves",
+      "sublabel": "unanimous, or top card",
+      "width": 138
+    },
+    {
+      "id": "plangen",
+      "lane": "build",
+      "col": 4,
+      "type": "backend",
+      "label": "Plan Generator",
+      "sublabel": "gpt-4o-mini, leased",
+      "width": 138
+    },
+    {
+      "id": "untasted",
+      "lane": "degraded",
+      "col": 2,
+      "type": "backend",
+      "label": "No Taste Vector",
+      "sublabel": "guests, or OpenAI down",
+      "width": 138
+    },
+    {
+      "id": "canned",
+      "lane": "degraded",
+      "col": 4,
+      "type": "backend",
+      "label": "Canned Night",
+      "sublabel": "written before the model",
+      "width": 138
+    }
+  ],
+  "edges": [
+    {
+      "id": "inject-partners",
+      "from": "partners",
+      "to": "pool",
+      "label": "injected either way",
+      "role": "branch"
+    },
+    {
+      "id": "search-nearby",
+      "from": "places",
+      "to": "pool",
+      "label": "server key only",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "cut",
+      "from": "pool",
+      "to": "shortlist",
+      "label": "a $0 room drops paid places",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "weigh",
+      "from": "score",
+      "to": "shortlist",
+      "label": "one score per candidate",
+      "role": "branch"
+    },
+    {
+      "id": "embed-15",
+      "from": "shortlist",
+      "to": "rerank",
+      "label": "fifteen survive",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cosine",
+      "from": "embed",
+      "to": "rerank",
+      "label": "cosine against room taste",
+      "role": "branch"
+    },
+    {
+      "id": "swipe",
+      "from": "rerank",
+      "to": "match",
+      "label": "the room swipes",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "enqueue",
+      "from": "match",
+      "to": "plangen",
+      "label": "one queued job",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "skip-taste",
+      "from": "rerank",
+      "to": "untasted",
+      "label": "no vector to blend",
+      "role": "error"
+    },
+    {
+      "id": "keep-order",
+      "from": "untasted",
+      "to": "match",
+      "label": "base order kept",
+      "role": "return"
+    },
+    {
+      "id": "reject-plan",
+      "from": "plangen",
+      "to": "canned",
+      "label": "over budget, or no model",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "The six terms",
+      "items": [
+        "budget 1.6, partner 1.4, mood 1.2",
+        "taste 1.1, distance 1.0, discount 0.8"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Two passes",
+      "items": [
+        "Cheap signals cut it to fifteen",
+        "Only those fifteen are embedded"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Honesty rules",
+      "items": [
+        "Unknown price scores zero",
+        "A $0 room filters, never restamps"
+      ]
+    }
+  ]
+}
