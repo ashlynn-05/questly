@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import { UNNAMED_STOP } from "../../../../convex/lib/plans/stops";
 import {
   MAPS_AREA,
+  stopMapsUrl,
   stopQuery,
   stopsDirectionsUrl,
   stopsEmbedUrl,
@@ -66,6 +67,28 @@ test("the unnamed-stop fallback is never handed to Google", () => {
   // red rather than silently putting a wrong pin on the plan screen.
   expect(stopQuery(stop(UNNAMED_STOP))).toBeNull();
   expect(stopQuery(stop("   "))).toBeNull();
+});
+
+test("one stop links to a search for that stop in the city", () => {
+  const url = new URL(stopMapsUrl(stop("Royal Botanic Gardens")) ?? "");
+  expect(url.origin + url.pathname).toBe("https://www.google.com/maps/search/");
+  expect(url.searchParams.get("query")).toBe(`Royal Botanic Gardens, ${MAPS_AREA}`);
+  expect(url.searchParams.has("query_place_id")).toBe(false);
+});
+
+test("a stop with a place id pins it exactly, and still carries the name", () => {
+  // The search action spells the id differently from the directions form, and
+  // it requires `query` alongside -- Google falls back to the name only if the
+  // id no longer resolves, so dropping the name would make a stale id a dead
+  // link instead of an approximate one.
+  const url = new URL(stopMapsUrl(stop("Community Garden", "ChIJ456")) ?? "");
+  expect(url.searchParams.get("query_place_id")).toBe("ChIJ456");
+  expect(url.searchParams.get("query")).toBe(`Community Garden, ${MAPS_AREA}`);
+});
+
+test("a stop the model never named gets no link of its own", () => {
+  expect(stopMapsUrl(stop(UNNAMED_STOP))).toBeNull();
+  expect(stopMapsUrl(stop("  "))).toBeNull();
 });
 
 test("a route needs at least two findable stops", () => {

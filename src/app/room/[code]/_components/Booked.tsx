@@ -4,7 +4,7 @@ import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/room/booking";
-import { stopsDirectionsUrl } from "@/lib/room/maps";
+import { stopMapsUrl, stopsDirectionsUrl } from "@/lib/room/maps";
 import type { RoomView } from "../page";
 import { MapsLink } from "./MapsLink";
 
@@ -117,23 +117,46 @@ export function Booked({
           <div className="relative mt-4">
             <Rail />
             <ol className="m-0 flex list-none flex-col gap-6 p-0">
-              {view.plan.stops.map((stop) => (
-                <li key={stop.id} className="relative pl-14">
-                  <RailNode top={6} state="locked" />
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="board num text-[10px] text-accent">{time(stop.startAt)}</p>
-                      <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
-                      {stop.note ? (
-                        <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
-                      ) : null}
+              {view.plan.stops.map((stop) => {
+                const where = stopMapsUrl(stop);
+                return (
+                  <li key={stop.id} className="relative pl-14">
+                    <RailNode top={6} state="locked" />
+                    <div className="flex items-baseline justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="board num text-[10px] text-accent">{time(stop.startAt)}</p>
+                        <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
+                        {stop.note ? (
+                          <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
+                        ) : null}
+                      </div>
+                      <p className="num shrink-0 text-[15px] text-text">
+                        {money(stop.costPerHeadCents)}
+                      </p>
                     </div>
-                    <p className="num shrink-0 text-[15px] text-text">
-                      {money(stop.costPerHeadCents)}
-                    </p>
-                  </div>
-                </li>
-              ))}
+
+                    {/* The route link above the fold answers "what is the shape
+                        of the night". This answers "where is THAT one" -- the
+                        question somebody asks about the 9:30 stop while standing
+                        up to leave the 7:45 one, and the route view is the wrong
+                        place to go looking for it.
+
+                        `w-fit`, so the 44px target is the link and not the whole
+                        row: a full-width control per stop would read as the
+                        primary action on a screen whose primary action is the
+                        orange button below. Absent when the stop has no name
+                        Google could find -- see `stopMapsUrl`. */}
+                    {where ? (
+                      <MapsLink
+                        href={where}
+                        className="board mt-2 w-fit border border-hairline text-[10px] text-dim"
+                      >
+                        Where is it
+                      </MapsLink>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ol>
           </div>
         </div>

@@ -94,6 +94,28 @@ export function stopQuery(stop: MappableStop): string | null {
 }
 
 /**
+ * Where ONE stop is, or null when there is no honest way to say.
+ *
+ * The route link answers "what is the shape of the night"; this answers "where
+ * is that one, actually", which is a different question and the one somebody
+ * asks while standing up to leave. Same null rule as `stopQuery` -- a stop the
+ * model never named gets no link rather than a wrong pin.
+ *
+ * `query_place_id` rather than the `place_id:` prefix the directions form takes:
+ * the search action spells it differently, and it REQUIRES `query` alongside,
+ * which Google falls back to only if the id no longer resolves. So the name goes
+ * in either way and the id, when there is one, makes it exact.
+ */
+export function stopMapsUrl(stop: MappableStop): string | null {
+  const name = stop.name.trim();
+  if (!name || name === UNNAMED_STOP) return null;
+
+  const params = new URLSearchParams({ api: "1", query: `${name}, ${MAPS_AREA}` });
+  if (stop.placeId) params.set("query_place_id", stop.placeId);
+  return `https://www.google.com/maps/search/?${params.toString()}`;
+}
+
+/**
  * The stops that can be put on a map, in order, capped to what a route can hold.
  *
  * Fewer than two is not a route -- a journey needs somewhere to start and
