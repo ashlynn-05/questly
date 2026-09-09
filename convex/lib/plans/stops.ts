@@ -24,6 +24,22 @@ export type Stop = {
 /** Minutes allowed between stops. Generous on purpose -- nobody is sprinting. */
 export const TRAVEL_BUFFER_MIN = 15;
 
+/**
+ * What a stop is called when the model returned no usable name.
+ *
+ * Here rather than beside the parser that writes it, because the browser reads
+ * it too: `src/lib/room/maps.ts` drops these before asking Google for a route,
+ * since "A stop" geocodes to noise and a confidently wrong pin on the plan
+ * screen is worse than a stop the map does not draw. This module is the small
+ * one to import for that -- `prompt.ts` would drag the whole prompt and parser
+ * into the client bundle for one string.
+ *
+ * A shared constant rather than the same literal in two files, so renaming it
+ * turns `tests/src/lib/room/maps.test.ts` red instead of silently breaking the
+ * map.
+ */
+export const UNNAMED_STOP = "A stop";
+
 /** Rewrites every startAt from the first stop forward. Pure. */
 export function recomputeItinerary(stops: Stop[], startAt: number): Stop[] {
   let cursor = startAt;
