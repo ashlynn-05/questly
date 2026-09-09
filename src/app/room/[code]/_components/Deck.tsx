@@ -15,7 +15,7 @@ import { useNow } from "@/hooks/useNow";
 import { photoSrc } from "@/lib/room/photo";
 import { venueMapsUrl } from "@/lib/room/maps";
 import { userMessage } from "@/lib/errors";
-import { MapsLink } from "./MapsLink";
+import { OutLink } from "./OutLink";
 import { SwipeCard } from "./SwipeCard";
 import type { RoomView } from "../page";
 
@@ -382,13 +382,13 @@ export function Deck({
           Quiet, not orange: "I'm in" is the decision this screen is asking for,
           and a second filled control beside it would be arguing with the first.
           Keyed on the quest so it never lags a card behind. */}
-      <MapsLink
+      <OutLink
         key={`map-${quest._id}`}
         href={venueMapsUrl(quest)}
         className="board border border-hairline text-[11px] text-text"
       >
         See where it is
-      </MapsLink>
+      </OutLink>
 
       <p className="text-[12px] leading-snug text-dim">
         {priceKnown

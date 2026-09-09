@@ -5,7 +5,7 @@ import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
 import { lockLine, proposalCard, proposalLine } from "@/lib/room/houseRules";
 import { stopsDirectionsUrl, stopsEmbedUrl } from "@/lib/room/maps";
 import type { RoomView } from "../page";
-import { MapsLink } from "./MapsLink";
+import { OutLink } from "./OutLink";
 
 export type SheetTab = "ask" | "search";
 type Plan = NonNullable<RoomView["plan"]>;
@@ -383,12 +383,12 @@ export function PlanStopList({
           anchor quest alone, which is why the booked screen used to offer the
           night and show a single place. */}
       {routeUrl ? (
-        <MapsLink
+        <OutLink
           href={routeUrl}
           className="board border border-hairline text-[11px] text-text"
         >
           Open every stop in Maps
-        </MapsLink>
+        </OutLink>
       ) : null}
 
       <div className="flex items-baseline justify-between border-t border-hairline pt-4">

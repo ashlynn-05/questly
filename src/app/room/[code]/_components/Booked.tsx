@@ -5,9 +5,10 @@ import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/room/booking";
 import { stopMapsUrl, stopsDirectionsUrl } from "@/lib/room/maps";
+import { calendarUrl } from "@/lib/room/calendar";
 import { moneyLabel, planShareText, timeLabel } from "@/lib/room/share";
 import type { RoomView } from "../page";
-import { MapsLink } from "./MapsLink";
+import { OutLink } from "./OutLink";
 
 /**
  * The settled night.
@@ -46,6 +47,25 @@ export function Booked({
   // rather than picking one -- see src/lib/booking.ts for the ruling and why
   // recomputing the total instead was the wrong answer.
   const headcount = bookedHeadcount(booking, view.members.length);
+
+  // Same inputs as the chat message, so the two cannot describe different
+  // nights. Null when there is no plan yet, which is a real state: this screen
+  // renders as soon as the booking does.
+  //
+  // `location` DURING RENDER, which is only safe because of `page.tsx:149`:
+  // that early return holds until `useSessionKey`'s mount effect sets `ready`,
+  // so this component cannot render on the server or on the hydrating pass.
+  // The two handlers below have always relied on the same guarantee, from
+  // inside an event where it is obvious; here it is not, so it is written
+  // down. A component without that guard needs the origin in an effect.
+  const calendarHref = view.plan
+    ? calendarUrl({
+        intro: view.plan.shareMessage,
+        stops: view.plan.stops,
+        perHeadCents: headcount.perHeadCents,
+        roomUrl: `${location.origin}/room/${view.room.code}`,
+      })
+    : null;
 
   async function copyTheMessage(message: string) {
     try {
@@ -191,12 +211,12 @@ export function Booked({
                         orange button below. Absent when the stop has no name
                         Google could find -- see `stopMapsUrl`. */}
                     {where ? (
-                      <MapsLink
+                      <OutLink
                         href={where}
                         className="board mt-2 w-fit border border-hairline text-[10px] text-dim"
                       >
                         Where is it
-                      </MapsLink>
+                      </OutLink>
                     ) : null}
                   </li>
                 );
@@ -218,12 +238,12 @@ export function Booked({
             fact; this is a better link COMPUTED at render time, not a correction
             applied to history. It also still answers when a plan has no route to
             draw, which is the case `stopsDirectionsUrl` returns null for. */}
-        <MapsLink
+        <OutLink
           href={(view.plan && stopsDirectionsUrl(view.plan.stops)) || booking.deepLink}
           className="board border border-action-edge bg-action text-[11px] text-on-action"
         >
           Open in Maps
-        </MapsLink>
+        </OutLink>
 
         {view.plan ? (
           <Plate
@@ -232,6 +252,24 @@ export function Booked({
             label="Send it to the group chat"
             onClick={() => void sendItToTheChat()}
           />
+        ) : null}
+
+        {/* Quietest of the three, on purpose. The stack descends from the
+            orange route button, and a fourth full-strength control would bury
+            the one this screen is actually for.
+
+            A link rather than a download: the Calendar template URL costs
+            nothing, needs no OAuth scope and no consent screen, and writes the
+            event Google's own API would write. `src/lib/room/calendar.ts` has
+            the comparison. Absent when the plan has no stops to put in a
+            diary. */}
+        {calendarHref ? (
+          <OutLink
+            href={calendarHref}
+            className="board border border-hairline text-[11px] text-text"
+          >
+            Put it in your calendar
+          </OutLink>
         ) : null}
 
         {/* Mounted empty, then filled: a live region inserted into the DOM
