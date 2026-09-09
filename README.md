@@ -12,11 +12,13 @@ The whole backend is one Convex deployment. Next.js renders and proxies auth, bu
 
 Two paths carry most of the work. A match enqueues exactly one plan generation through a workpool, and the generator writes the plan back under a lease so a duplicate job cannot produce a second plan. Room events enqueue a push job through a second workpool, and one Node action signs and delivers them to each browser's push service.
 
+Every room screen runs on a single reactive query. It reads the caller's own swipes rather than the whole room's and takes the rest from a per-member counter, so a recomputation no longer grows with the number of swipes cast. Who is still on the page is a second, separate subscription on the presence component, and it is display-only: it never moves a match threshold. Venue embeddings are stored once per venue and model, so a room that borrows a cached deck spends no OpenAI quota re-deriving them. Schema changes run through the migrations component, which is what backfilled those counters.
+
 The interactive version of the diagram, with per-node sources and guided views, is [design/architecture/questly-architecture.html](design/architecture/questly-architecture.html). There is a companion diagram of the [taste-embedding flow](design/architecture/questly-embeddings.html).
 
 ## Stack
 
-Next.js 16 App Router with React 19 and Tailwind v4 on the front. Convex for data, functions, and scheduling, with the Better Auth, rate limiter, and workpool components mounted alongside it. Google Places for candidates, OpenAI for plan text and taste embeddings, and web-push with VAPID for notifications.
+Next.js 16 App Router with React 19 and Tailwind v4 on the front. Convex for data, functions, and scheduling, with the Better Auth, rate limiter, workpool, migrations, and presence components mounted alongside it. Google Places for candidates, OpenAI for plan text and taste embeddings, and web-push with VAPID for notifications.
 
 ## Getting started
 
