@@ -53,9 +53,22 @@ type Props = {
    * is the same offer twice.
    */
   badge?: boolean;
+  /**
+   * The persistent left column, on the routes that have one.
+   *
+   * A slot rather than a flag, because the nav's live values come from the
+   * route: `useQuery(api.rooms.get)` is called exactly once in this app, in the
+   * room route, and threading a room through a shell that most routes do not
+   * have a room for would be a provider around the whole product for three
+   * strings. The route builds its own `<ShellNav>` and hands it down.
+   *
+   * Absent on `/`, `/sign-in`, `/sign-up`, `/join` and `/direction`: a front
+   * door, two forms and a design reference are not places you navigate FROM.
+   */
+  nav?: ReactNode;
 };
 
-export function Screen({ children, bleed = false, badge = true }: Props) {
+export function Screen({ children, bleed = false, badge = true, nav }: Props) {
   return (
     /* WHY 1048px AND NOT THE WHOLE WINDOW. The brief's reference is What's On
        Melbourne, and the thing to copy from it is the restraint: measured off
@@ -67,10 +80,14 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
        centred in an empty field.
 
        Below `lg` (1024px) nothing changes: 460px is still the column, so the
-       phone layout this product is actually used on is untouched, including the
-       `max-width: 460px` rule in `globals.css` that paints the iOS status bar
-       strip. */
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground lg:max-w-[1048px]">
+       phone layout this product is actually used on is untouched.
+
+       1256px is 236 + 940 + 80 -- the nav's column, the reading measure beside
+       it, and that measure's own side padding. Stated as one number rather than
+       as `nav + main` so a route WITHOUT a nav still centres its 940px in the
+       same place as the routes with one, instead of drifting 118px left every
+       time you leave a room. */
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground lg:max-w-[1256px]">
       {/* The band. `h-[76px]` is the 44px roundel plus 16px of air above and
           below -- a real height rather than padding, so it cannot drift when a
           route puts something taller in the left slot. The wordmark is on every
@@ -80,10 +97,15 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
 
           `lg:h-[104px]` is the same sum with 30px of air instead of 16px. The
           roundel does not grow -- 44px is the target floor, not a phone
-          concession -- so the band earns its desktop presence from the air
-          around it, which is what the reference does too (its nav padding goes
-          from 0.5rem to 1.5rem/1rem and its wordmark from 11rem to 15rem). */}
-      <header className="flex h-[76px] shrink-0 items-center justify-between gap-3 px-5 lg:h-[104px] lg:px-6">
+          concession.
+
+          It stays 76px on a laptop rather than growing, and the hairline under
+          it is why: once a nav column runs down the left, the band's job is to
+          be the lid on it. A 104px lid over a 236px column reads as two
+          unrelated bars, and the rule does the separating that height was doing
+          before. The border is `lg:` only -- on a phone there is nothing below
+          it to be separated from. */}
+      <header className="flex h-[76px] shrink-0 items-center justify-between gap-3 px-5 lg:border-b lg:border-hairline lg:px-6">
         <Link
           href="/"
           // The 44px target floor this product holds everywhere. The label is
@@ -111,12 +133,25 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
           screen grows rather than centring and clipping its own top. There is
           only free space to distribute when the content is genuinely shorter
           than the viewport. */}
-      <div
-        className={`flex flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${
-          bleed ? "" : "px-5 lg:px-6"
-        }`}
-      >
-        {children}
+      {/* The nav and the body, side by side from `lg` and stacked-to-nothing
+          below it (the nav renders nothing on a phone, so this is a one-column
+          flex row there and costs nothing).
+
+          `min-h-0` on the row: without it a tall body would floor the row at
+          its content and the nav's own `flex-1` spacer would have nothing to
+          push against. */}
+      <div className="flex min-h-0 flex-1">
+        {nav}
+        <div
+          className={`flex min-w-0 flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${
+            bleed ? "" : "px-5 lg:px-10"
+          }`}
+        >
+          {/* 940px is the design's own measure, and it is capped here rather
+              than on `main` so the nav keeps its full 236px at every width
+              instead of the two sharing a squeeze. */}
+          <div className="flex w-full flex-col gap-8 lg:mx-auto lg:max-w-[940px]">{children}</div>
+        </div>
       </div>
     </main>
   );
@@ -140,7 +175,7 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
  */
 export function ScreenPending({ label = "Loading…" }: { label?: string }) {
   return (
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground lg:max-w-[1048px]">
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground lg:max-w-[1256px]">
       <p className="board text-[11px] text-accent">{label}</p>
     </main>
   );

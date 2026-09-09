@@ -7,7 +7,8 @@ import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/reac
 import { api } from "@convex/_generated/api";
 import { PushHint } from "@/components/questly/PushHint";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
-import { Concourse } from "@/components/questly/Concourse";
+import { Journey } from "@/components/questly/Journey";
+import { ShellNav } from "@/components/questly/ShellNav";
 import { storeSessionKey } from "@/lib/room/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
@@ -336,7 +337,7 @@ function StartFunnel() {
     // roundel matters most here: the funnel is about to write a taste profile
     // to whichever account this browser is holding, and this is where it says
     // which one that is.
-    <Screen>
+    <Screen nav={<ShellNav route="start" />}>
       {/* The invitation to turn notifications on, for somebody signed in.
           `/start` because the funnel ends by opening a room and there is no
           screen after it, and because `manifest.ts` sets `start_url: "/start"`
@@ -348,25 +349,23 @@ function StartFunnel() {
           it under. */}
       <PushHint />
 
-      {/* The concourse and the step, side by side from `lg`.
+      {/* Where this sitting falls in the whole night, across the top.
 
-          `200px` for the line's column is the label plus the 56px the roundels
-          need to its left -- a fixed track rather than a fraction, because a
-          column of eight two-word signs has no reason to grow with the window
-          and a proportional one would push "Set up" onto two lines at some
-          widths and not others. `minmax(0,1fr)` on the step, so a long venue
-          name or a wide chip row cannot blow the grid out past the shell.
+          It replaces the 200px column the line used to have. The column was
+          right about the journey and wrong about the cost: 200px of every
+          screen, forever, to say five words. A band says the same thing in one
+          row and gives the width back to the funnel, which is the screen people
+          are actually reading.
 
-          `items-start`, or the line would be centred against a tall step and
-          stop agreeing with the header band above it.
+          `goals` shares the quiz's stop -- two questions in one sitting -- and
+          `journeyModel` collapses them again into one stage.
 
-          Below `lg` the grid never applies and `Concourse` renders nothing, so
-          the phone gets the same flex column it always had -- including the
-          `gap-8` the `empty:-mb-8` on the alert below is measured against,
-          which is why the inner column restates that exact gap. */}
-      <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start lg:gap-x-12">
-        <Concourse at={current === "goals" ? "quiz" : current} />
+          Below `lg` this renders nothing, so the phone gets the same flex
+          column it always had, including the `gap-8` the `empty:-mb-8` on the
+          alert below is measured against. */}
+      <Journey at={current === "goals" ? "quiz" : current} />
 
+      <div>
         <div className="flex flex-col gap-8">
         {/* Always mounted, filled when something is refused: a live region
             inserted into the DOM with its text already in it is frequently never

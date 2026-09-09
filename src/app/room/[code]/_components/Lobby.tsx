@@ -196,16 +196,18 @@ export function Lobby({
        house rules are a control panel that was always a second thing stacked
        under it, off the bottom of the fold on a laptop.
 
-       `xl` rather than `lg`: at `lg` the concourse has already taken 200px and
-       the room's own column is around 776px, which is one column's worth. The
-       second column earns its place once the window does.
+       `lg`, not `xl`. This used to wait for `xl` because the concourse column
+       took 200px of every `lg` screen and left the room about 776px, which is
+       one column's worth. The concourse is gone -- the journey is a band above
+       the room now and the nav is the shell's, not this screen's -- so the two
+       halves fit from `lg` and there is no reason left to make them queue.
 
        `items-start`, or the rules panel would be centred against a roster that
        grows a seat at a time.
 
-       The mobile classes lead and are untouched: below `xl` this is the same
+       The mobile classes lead and are untouched: below `lg` this is the same
        `flex flex-col gap-8` section it always was. */
-    <section className="flex flex-col gap-8 px-5 py-10 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:items-start xl:gap-x-12">
+    <section className="flex flex-col gap-8 px-5 py-10 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-x-12">
       {/* The half that is the room filling up. Restates `gap-8` because it is
           now one grid cell rather than four children of the section. */}
       <div className="flex flex-col gap-8">
@@ -294,6 +296,24 @@ export function Lobby({
           either binds anybody. */}
       <div className="flex flex-col gap-2">
         <Plate variant="raised" label="Copy the join link" onClick={() => void copyTheLink()} />
+
+        {/* The link itself, readable and selectable, for the laptop where
+            there is room for it: a clipboard that silently refuses -- an
+            insecure origin, a locked-down browser -- currently only surfaces
+            the URL inside an error sentence. `readOnly` rather than
+            `disabled`, so it can still be focused, selected and copied by
+            hand, which is the entire point of it being here.
+
+            `location` during render is safe for the reason `Booked.tsx`
+            records: `page.tsx` holds this whole subtree behind `ready`, so it
+            never renders on the server or on the hydrating pass. */}
+        <input
+          readOnly
+          value={`${location.origin}/join/${code}`}
+          aria-label="The join link"
+          onFocus={(e) => e.currentTarget.select()}
+          className="hidden min-h-[44px] w-full rounded-[6px] border border-hairline bg-transparent px-4 text-[13px] text-dim lg:block"
+        />
         {/* Mounted empty and filled later, never mounted with its text already
             in it: a live region inserted into the DOM with content is
             frequently not announced at all. */}

@@ -58,6 +58,21 @@ export function Booked({
   // The two handlers below have always relied on the same guarantee, from
   // inside an event where it is obvious; here it is not, so it is written
   // down. A component without that guard needs the origin in an effect.
+  // Built here rather than sent as the model wrote it: `plan.shareMessage` is
+  // one line with no times, no prices and no way to find anywhere, and a group
+  // chat is where this plan is actually agreed to.
+  //
+  // Computed at render, not inside the handler, because the panel below now
+  // SHOWS it -- what is sent and what is on the screen have to be one string,
+  // or the panel becomes a preview of a message that no longer exists. Same
+  // `location` guarantee as `calendarHref` below.
+  const shareText = planShareText({
+    intro: view.plan?.shareMessage ?? "",
+    stops: view.plan?.stops ?? [],
+    perHeadCents: headcount.perHeadCents,
+    roomUrl: `${location.origin}/room/${view.room.code}`,
+  });
+
   const calendarHref = view.plan
     ? calendarUrl({
         intro: view.plan.shareMessage,
@@ -92,16 +107,7 @@ export function Booked({
    * for everybody who reads it in the chat.
    */
   async function sendItToTheChat() {
-    const link = `${location.origin}/room/${view.room.code}`;
-    // Built here rather than sent as the model wrote it: `plan.shareMessage`
-    // is one line with no times, no prices and no way to find anywhere, and a
-    // group chat is where this plan is actually agreed to.
-    const message = planShareText({
-      intro: view.plan?.shareMessage ?? "",
-      stops: view.plan?.stops ?? [],
-      perHeadCents: headcount.perHeadCents,
-      roomUrl: link,
-    });
+    const message = shareText;
 
     // Absent on desktop browsers and outside a secure context, so this is a
     // feature test rather than a platform guess.
@@ -226,7 +232,42 @@ export function Booked({
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-2">
+      {/* What the group chat is about to be sent, before it is sent.
+          `lg`-only: on a phone the share sheet shows the message itself, and
+          the screen has no room to say it twice. On a laptop `navigator.share`
+          is usually absent, the fallback is a silent clipboard write, and
+          "Copied." is the only evidence anybody gets -- so here the words are
+          on the screen to be read, checked, or selected by hand.
+
+          A raised panel and NOT a rail surface: `.rail` and `.node` paint with
+          `--ground` and would draw as stripes on `--ground-raised`. Nothing in
+          here carries either. */}
+      {view.plan ? (
+        <section
+          aria-label="What gets sent"
+          data-share-preview
+          className="hidden rounded-[10px] bg-ground-raised p-5 lg:block"
+        >
+          <p className="board text-[10px] text-dim">What gets sent</p>
+          {/* `break-all` on top of `break-words`: the message carries full Maps
+              URLs, and a directions link with three waypoints is one 200-char
+              token with no break opportunity in it -- it ran out past the
+              panel's right edge without this. */}
+          <p className="mt-3 text-[13px] leading-relaxed break-all whitespace-pre-wrap text-text">
+            {shareText}
+          </p>
+        </section>
+      ) : null}
+
+      {/* One row from `lg`, a stack below it. The stack's own argument was
+          about descending weight, and that survives the row: the route keeps
+          the orange field, the chat control is raised, the calendar is a
+          hairline. It was never the vertical order doing the work.
+
+          `basis-0 grow` rather than `flex-1` on the children, so three
+          controls with three different label lengths still come out the same
+          width. */}
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch lg:gap-3 lg:*:basis-0 lg:*:grow">
         {/* THE ROUTE, not the anchor venue. `booking.deepLink` is built by
             `convex/bookings.ts` from the matched quest alone, so this button
             offered the night and then showed one place -- the group got the
@@ -272,12 +313,15 @@ export function Booked({
           </OutLink>
         ) : null}
 
-        {/* Mounted empty, then filled: a live region inserted into the DOM
-            with its text already in it is frequently never announced. */}
-        <p aria-live="polite" className="text-[12px] leading-snug break-words text-dim">
-          {copied ?? ""}
-        </p>
       </div>
+
+      {/* Mounted empty, then filled: a live region inserted into the DOM with
+          its text already in it is frequently never announced. Outside the
+          control group since that group became a row -- inside it, this would
+          be a fourth column of equal width holding one short sentence. */}
+      <p aria-live="polite" className="-mt-6 text-[12px] leading-snug break-words text-dim">
+        {copied ?? ""}
+      </p>
 
       {/* Never a dead end -- and this is the screen the whole funnel exists to
           reach, so it was the worst one to leave without a way onward. Until

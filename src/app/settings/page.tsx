@@ -13,6 +13,7 @@ import { userMessage } from "@/lib/errors";
 import { Plate } from "@/components/questly/Plate";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
+import { ShellNav } from "@/components/questly/ShellNav";
 import { Hint } from "@/components/questly/Hint";
 import { Back } from "@/components/questly/icons";
 import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
@@ -194,7 +195,7 @@ export default function SettingsPage() {
 
   if (user === null) {
     return (
-      <Screen>
+      <Screen nav={<ShellNav route="settings" />}>
         <h1 className="display text-[38px] text-text">Settings</h1>
         <p className="text-[15px] leading-snug text-dim">
           These are the settings for an account, and this browser is not signed in to one.
@@ -207,133 +208,139 @@ export default function SettingsPage() {
   }
 
   return (
-    <Screen>
-      {/* The way back, at the top where a back control belongs, drawn rather
-          than written. It used to be the words "Back to Questly" at the very
-          bottom of the page -- past six sections, reachable only by scrolling
-          the whole screen you were trying to leave. As a roundel it joins the
-          two already in the band above it: same circle, same 44px target, and
-          the arrow says "back along the line" in the product's own vocabulary
-          instead of spending a line of type on it.
+    /* A 520px measure rather than the shell's 940. Every section on this page
+       is a label and one control, and a switch three feet to the right of the
+       sentence that names it is a switch nobody is sure they read correctly.
+       The nav on the left is what fills the rest of the width. */
+    <Screen nav={<ShellNav route="settings" />}>
+      <div className="flex w-full flex-col gap-8 lg:max-w-[520px]">
+        {/* The way back, at the top where a back control belongs, drawn rather
+            than written. It used to be the words "Back to Questly" at the very
+            bottom of the page -- past six sections, reachable only by scrolling
+            the whole screen you were trying to leave. As a roundel it joins the
+            two already in the band above it: same circle, same 44px target, and
+            the arrow says "back along the line" in the product's own vocabulary
+            instead of spending a line of type on it.
 
-          `items-center` and not `baseline`: the roundel is a shape, and
-          aligning a circle to the baseline of a 38px display face hangs it low
-          against the cap height. */}
-      <div className="flex items-center gap-3">
-        <Link
-          href="/start"
-          aria-label="Back to Questly"
-          className="flex size-[44px] shrink-0 items-center justify-center rounded-full border border-dim text-accent"
-        >
-          <Back className="size-[20px]" />
-        </Link>
-        <h1 className="display text-[38px] text-text">Settings</h1>
-      </div>
+            `items-center` and not `baseline`: the roundel is a shape, and
+            aligning a circle to the baseline of a 38px display face hangs it low
+            against the cap height. */}
+        <div className="flex items-center gap-3">
+          <Link
+            href="/start"
+            aria-label="Back to Questly"
+            className="flex size-[44px] shrink-0 items-center justify-center rounded-full border border-dim text-accent"
+          >
+            <Back className="size-[20px]" />
+          </Link>
+          <h1 className="display text-[38px] text-text">Settings</h1>
+        </div>
 
-      {/* Mounted empty and filled later: a live region inserted into the DOM
-          with its text already inside it is frequently never announced.
-          `empty:-mt-8` takes back the flex gap an empty paragraph would leave. */}
-      <p role="alert" className="text-[13px] leading-snug text-danger empty:-mt-8">
-        {error ?? ""}
-      </p>
+        {/* Mounted empty and filled later: a live region inserted into the DOM
+            with its text already inside it is frequently never announced.
+            `empty:-mt-8` takes back the flex gap an empty paragraph would leave. */}
+        <p role="alert" className="text-[13px] leading-snug text-danger empty:-mt-8">
+          {error ?? ""}
+        </p>
 
-      <SettingsProfileSection
-        user={user}
-        profile={profile}
-        displayName={displayName}
-        busy={busy}
-        saved={saved}
-        uploading={uploading}
-        fileInput={fileInput}
-        setName={setName}
-        setSaved={setSaved}
-        saveName={saveName}
-        uploadAvatar={uploadAvatar}
-        removeAvatar={removeAvatar}
-      />
+        <SettingsProfileSection
+          user={user}
+          profile={profile}
+          displayName={displayName}
+          busy={busy}
+          saved={saved}
+          uploading={uploading}
+          fileInput={fileInput}
+          setName={setName}
+          setSaved={setSaved}
+          saveName={saveName}
+          uploadAvatar={uploadAvatar}
+          removeAvatar={removeAvatar}
+        />
 
-      <SettingsAnswersSection profile={profile} />
+        <SettingsAnswersSection profile={profile} />
 
-      <SettingsPushSection />
+        <SettingsPushSection />
 
-      <Section id="rooms" title="Your rooms" topic="rooms">
-        {rooms === undefined ? (
-          <p className="text-[13px] text-dim">Looking…</p>
-        ) : rooms.length === 0 ? (
-          <p className="text-[13px] leading-snug text-dim">
-            No rooms yet. Start one and it will be here.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {rooms.map((room) => (
-              <Plate
-                key={room.code}
-                variant="raised"
-                href={`/room/${room.code}`}
-                label={`${MOOD_LABEL[room.mood] ?? room.mood}${room.isHost ? " · yours" : ""}`}
-                sub={`${STATUS_LABEL[room.status] ?? room.status} · ${roomWhen(room.whenAt)}${
-                  room.demo ? " · demonstration room" : ""
-                }`}
-                right={room.code}
-              />
-            ))}
+        <Section id="rooms" title="Your rooms" topic="rooms">
+          {rooms === undefined ? (
+            <p className="text-[13px] text-dim">Looking…</p>
+          ) : rooms.length === 0 ? (
+            <p className="text-[13px] leading-snug text-dim">
+              No rooms yet. Start one and it will be here.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {rooms.map((room) => (
+                <Plate
+                  key={room.code}
+                  variant="raised"
+                  href={`/room/${room.code}`}
+                  label={`${MOOD_LABEL[room.mood] ?? room.mood}${room.isHost ? " · yours" : ""}`}
+                  sub={`${STATUS_LABEL[room.status] ?? room.status} · ${roomWhen(room.whenAt)}${
+                    room.demo ? " · demonstration room" : ""
+                  }`}
+                  right={room.code}
+                />
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* `id` as well as the heading's own: the account menu's "Delete
+            account" navigates to /settings#leaving rather than deleting from a
+            dropdown, and this is what it lands on. */}
+        <Section id="leaving" title="Leaving">
+          {/* Each row is control-then-question-mark, so the two things that end a
+              session sit on the same line as the sentence explaining what they
+              cost. They used to be a button followed by a paragraph, which put
+              the warning BELOW the control it was warning about. */}
+          {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+              area rather than indent: without it these two labels start three
+              pixels in from the column every other row in this screen is flush
+              with. The negative margin is on the row so it holds in the armed
+              state too, where the trigger is replaced by two buttons. */}
+          <div className="-ml-3 flex items-center justify-between gap-3">
+            <ConfirmButton
+              label="Sign out"
+              confirmLabel="Yes, sign out"
+              cancelLabel="Stay signed in"
+              onConfirm={async () => {
+                await signOut();
+                return "gone";
+              }}
+            />
+            <Hint topic="signout" />
           </div>
-        )}
-      </Section>
 
-      {/* `id` as well as the heading's own: the account menu's "Delete
-          account" navigates to /settings#leaving rather than deleting from a
-          dropdown, and this is what it lands on. */}
-      <Section id="leaving" title="Leaving">
-        {/* Each row is control-then-question-mark, so the two things that end a
-            session sit on the same line as the sentence explaining what they
-            cost. They used to be a button followed by a paragraph, which put
-            the warning BELOW the control it was warning about. */}
-        {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
-            area rather than indent: without it these two labels start three
-            pixels in from the column every other row in this screen is flush
-            with. The negative margin is on the row so it holds in the armed
-            state too, where the trigger is replaced by two buttons. */}
-        <div className="-ml-3 flex items-center justify-between gap-3">
-          <ConfirmButton
-            label="Sign out"
-            confirmLabel="Yes, sign out"
-            cancelLabel="Stay signed in"
-            onConfirm={async () => {
-              await signOut();
-              return "gone";
-            }}
-          />
-          <Hint topic="signout" />
-        </div>
-
-        {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
-            area rather than indent: without it these two labels start three
-            pixels in from the column every other row in this screen is flush
-            with. The negative margin is on the row so it holds in the armed
-            state too, where the trigger is replaced by two buttons. */}
-        <div className="-ml-3 flex items-center justify-between gap-3">
-          <ConfirmButton
-            label="Delete my account"
-            confirmLabel="Yes, delete it"
-            cancelLabel="Keep my account"
-            onConfirm={async () => {
-              setError(null);
-              try {
-                await deleteAccount({});
-              } catch (e) {
-                setError(userMessage(e, "Could not delete the account. Please try again."));
-                return "trigger";
-              }
-              clearLocalState();
-              await authClient.signOut();
-              router.push("/");
-              return "gone";
-            }}
-          />
-          <Hint topic="deletion" />
-        </div>
-      </Section>
+          {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+              area rather than indent: without it these two labels start three
+              pixels in from the column every other row in this screen is flush
+              with. The negative margin is on the row so it holds in the armed
+              state too, where the trigger is replaced by two buttons. */}
+          <div className="-ml-3 flex items-center justify-between gap-3">
+            <ConfirmButton
+              label="Delete my account"
+              confirmLabel="Yes, delete it"
+              cancelLabel="Keep my account"
+              onConfirm={async () => {
+                setError(null);
+                try {
+                  await deleteAccount({});
+                } catch (e) {
+                  setError(userMessage(e, "Could not delete the account. Please try again."));
+                  return "trigger";
+                }
+                clearLocalState();
+                await authClient.signOut();
+                router.push("/");
+                return "gone";
+              }}
+            />
+            <Hint topic="deletion" />
+          </div>
+        </Section>
+      </div>
     </Screen>
   );
 }

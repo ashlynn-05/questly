@@ -199,6 +199,31 @@ const roomViewValidator = v.union(
       deckSize: v.number(),
       waitingOn: v.array(v.string()),
     }),
+    // How the room has voted on the card the ASKING MEMBER is looking at.
+    //
+    // "The current card" is not a property of the room. The deck is paced per
+    // member -- your position in it is your own swipe count -- so at any instant
+    // four people are on four different cards, and this list is computed against
+    // the caller's position rather than some shared one.
+    //
+    // `dir: null` is therefore load-bearing and not a tidy-up of "no". A member
+    // behind you has not reached this card at all, and drawing that as a no
+    // would show a rejection nobody made. Empty when you are through the deck,
+    // because then there is no card to be voting on.
+    //
+    // This changes what members can see about each other mid-deck: before it,
+    // nobody could see a vote until unanimity fired. That was a deliberate
+    // request, not a leak that crept in.
+    currentCardVotes: v.array(
+      v.object({
+        // The id as well as the name, because `waitingOn` above projects names
+        // alone and `Deck` records that two members called the same thing
+        // collide there. A list that says who voted must not have that bug.
+        memberId: v.id("members"),
+        name: v.string(),
+        dir: v.union(v.literal("yes"), v.literal("no"), v.null()),
+      }),
+    ),
   }),
 );
 
@@ -465,6 +490,10 @@ export const get = publicQuery({
     );
 
     const yourSwipes = swipes.filter((s) => s.memberId === you._id);
+    // The card THIS member is on, which is what `currentCardVotes` is about.
+    // Undefined once they are through the deck, and the projection below turns
+    // that into an empty list rather than guessing at a last card.
+    const currentCard = quests[yourSwipes.length];
 
     // Bounded by `MAX_ROOM_MEMBERS`, and most rooms are guests who cost nothing
     // here. Keyed by member rather than by account so `you` reads out of the
@@ -561,6 +590,19 @@ export const get = publicQuery({
           .filter((m) => swipes.filter((s) => s.memberId === m._id).length < quests.length)
           .map((m) => m.name),
       },
+      // Read off the `swipes` rows already collected above rather than a second
+      // query: the whole room's swipes are in memory by the time we get here,
+      // and a room's deck is bounded by the deck builder, so filtering beats a
+      // round trip through `by_room_quest`.
+      currentCardVotes: currentCard
+        ? members.map((m) => ({
+            memberId: m._id,
+            name: m.name,
+            dir:
+              swipes.find((s) => s.memberId === m._id && s.questId === currentCard._id)?.dir ??
+              null,
+          }))
+        : [],
     };
   },
 });

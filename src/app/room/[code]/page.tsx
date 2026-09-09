@@ -8,9 +8,11 @@ import { api } from "@convex/_generated/api";
 import { PushHint } from "@/components/questly/PushHint";
 import { Plate } from "@/components/questly/Plate";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
-import { Concourse } from "@/components/questly/Concourse";
+import { Journey } from "@/components/questly/Journey";
+import { ShellNav } from "@/components/questly/ShellNav";
 import { errorCode, userMessage } from "@/lib/errors";
 import { roomRedirect, statusTransition } from "@/lib/room/room";
+import { moneyLabel } from "@/lib/room/share";
 import { useSessionKey } from "@/hooks/useSessionKey";
 import { Lobby } from "./_components/Lobby";
 import { Deck } from "./_components/Deck";
@@ -155,13 +157,36 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
 
   const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
 
+  // `building` is the deck arriving, not a place anybody stands, so it shares
+  // the swipe stop rather than inventing a ninth one.
+  const at =
+    view.room.status === "lobby"
+      ? ("room" as const)
+      : view.room.status === "building"
+        ? ("swiping" as const)
+        : view.room.status;
+
   // One route, driven entirely by room.status: the same URL is the lobby, the
   // deck, the plan and the booking, so a shared link never goes stale.
   return (
     // `bleed`: the deck is a full-bleed card surface and each of the four
     // room screens carries its own padding. The band above keeps its padding
     // either way, so the roundels stay on the same line as every other screen.
-    <Screen bleed>
+    <Screen
+      bleed
+      nav={
+        <ShellNav
+          route="room"
+          ctx={{
+            roomCode: code,
+            roomStatus: view.room.status,
+            swiped: view.progress.swipedByYou,
+            deckSize: view.progress.deckSize,
+            planTotal: view.plan ? moneyLabel(view.plan.totalPerHeadCents) : null,
+          }}
+        />
+      }
+    >
       {/* The same invitation as `/start`, offered here because this is the only
           place a GUEST can accept it: they have no account, so their
           subscription is filed against this seat, and the seat is only in
@@ -181,104 +206,90 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
         </p>
       ) : null}
 
-      {/* The concourse and the room, side by side from `lg`. Same track as
-          `/start` -- `200px` for the line, `minmax(0,1fr)` for the room -- so a
-          host who came through the funnel sees the column stay exactly where it
-          was while the stops behind them fill in.
+      {/* The night as a band above the room, not a column beside it. The nav
+          on the left is the persistent column now, so a second one here would
+          spend 200px of every room screen on the same five facts.
 
-          `lg:pl-6` because this `Screen` is `bleed`: the room's four screens
-          each carry their own `px-5`, and the line's column has nothing to
-          inherit padding from. 24px matches the band's own desktop padding, so
-          the wordmark above and the first roundel below sit on one line.
-
-          Below `lg` this div has no grid and `Concourse` renders nothing, so
-          the room is the same full-bleed column of sections it has always
-          been. */}
-      <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start lg:gap-x-12 lg:pl-6">
-        <Concourse
-          at={
-            // `building` is the deck arriving, not a place anybody stands, so
-            // it shares the swipe stop rather than inventing a ninth one.
-            view.room.status === "lobby"
-              ? "room"
-              : view.room.status === "building"
-                ? "swiping"
-                : view.room.status
-          }
-        />
-
-        <div>
-          {view.room.status === "lobby" ? (
-            <Lobby
-              view={view}
-              code={code}
-              sessionKey={sessionKey}
-              headingRef={headingRef}
-              buildError={buildError}
-              setBuildError={setBuildError}
-              setLeaving={setLeaving}
-            />
-          ) : null}
-
-          {view.room.status === "building" ? (
-            <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
-              <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
-                Building the deck
-              </h1>
-              <p className="text-center text-[15px] leading-snug text-dim">
-                Nine places, ranked against your budget and how far you will go.
-              </p>
-
-              {/* Never a dead end. Without a control here, a build that was killed
-                  outright leaves every member -- host included -- on this screen
-                  forever, and a reload re-renders the same dead screen. */}
-              {view.you.isHost ? (
-                <Plate
-                  variant="ghost"
-                  center
-                  className="mt-2 max-w-[320px]"
-                  label={retrying ? "Trying again…" : "Build it again"}
-                  sub="Only if this has been sitting here a couple of minutes."
-                  onClick={() => void retryTheBuild()}
-                />
-              ) : (
-                // No button for a non-host: `deck.build` is host-only, so offering
-                // one here would only ever be refused.
-                <p className="text-center text-[13px] leading-snug text-dim">
-                  If this sits here, {hostName} can start it again.
-                </p>
-              )}
-
-              {/* Mounted with the screen and empty, so the sentence that arrives in
-                  it later is actually announced. */}
-              <p
-                role="alert"
-                className={`max-w-[320px] text-center text-[13px] leading-snug ${
-                  buildError?.code === "NO_CANDIDATES" ? "text-dim" : "text-danger"
-                }`}
-              >
-                {buildError?.text ?? ""}
-              </p>
-            </section>
-          ) : null}
-
-          {view.room.status === "swiping" ? (
-            <Deck
-              view={view}
-              code={code}
-              sessionKey={sessionKey}
-              headingRef={headingRef}
-              setLeaving={setLeaving}
-            />
-          ) : null}
-
-          {view.room.status === "matched" ? (
-            <Plan view={view} code={code} sessionKey={sessionKey} headingRef={headingRef} />
-          ) : null}
-
-          {view.room.status === "booked" ? <Booked view={view} headingRef={headingRef} /> : null}
-        </div>
+          `px-5` because this `Screen` is `bleed`: the room's four screens each
+          carry their own padding and this band has nothing to inherit from.
+          It sits on `Screen`'s own ground, which is what `.node` needs -- see
+          the note in `Journey`. `hidden` on the WRAPPER and not only on
+          `Journey` itself: an empty flex item still takes the column's 32px
+          gap, which measured as 32px of new whitespace on every room screen on
+          a phone. Below `lg` the room is byte-for-byte the column it was. */}
+      <div className="hidden px-5 lg:block lg:px-0">
+        <Journey at={at} />
       </div>
+
+      {view.room.status === "lobby" ? (
+        <Lobby
+          view={view}
+          code={code}
+          sessionKey={sessionKey}
+          headingRef={headingRef}
+          buildError={buildError}
+          setBuildError={setBuildError}
+          setLeaving={setLeaving}
+        />
+      ) : null}
+
+      {view.room.status === "building" ? (
+        <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
+          <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
+            Building the deck
+          </h1>
+          <p className="text-center text-[15px] leading-snug text-dim">
+            Nine places, ranked against your budget and how far you will go.
+          </p>
+
+          {/* Never a dead end. Without a control here, a build that was killed
+              outright leaves every member -- host included -- on this screen
+              forever, and a reload re-renders the same dead screen. */}
+          {view.you.isHost ? (
+            <Plate
+              variant="ghost"
+              center
+              className="mt-2 max-w-[320px]"
+              label={retrying ? "Trying again…" : "Build it again"}
+              sub="Only if this has been sitting here a couple of minutes."
+              onClick={() => void retryTheBuild()}
+            />
+          ) : (
+            // No button for a non-host: `deck.build` is host-only, so offering
+            // one here would only ever be refused.
+            <p className="text-center text-[13px] leading-snug text-dim">
+              If this sits here, {hostName} can start it again.
+            </p>
+          )}
+
+          {/* Mounted with the screen and empty, so the sentence that arrives in
+              it later is actually announced. */}
+          <p
+            role="alert"
+            className={`max-w-[320px] text-center text-[13px] leading-snug ${
+              buildError?.code === "NO_CANDIDATES" ? "text-dim" : "text-danger"
+            }`}
+          >
+            {buildError?.text ?? ""}
+          </p>
+        </section>
+      ) : null}
+
+      {view.room.status === "swiping" ? (
+        <Deck
+          view={view}
+          code={code}
+          sessionKey={sessionKey}
+          headingRef={headingRef}
+          setLeaving={setLeaving}
+        />
+      ) : null}
+
+      {view.room.status === "matched" ? (
+        <Plan view={view} code={code} sessionKey={sessionKey} headingRef={headingRef} />
+      ) : null}
+
+      {view.room.status === "booked" ? <Booked view={view} headingRef={headingRef} /> : null}
     </Screen>
   );
 }
