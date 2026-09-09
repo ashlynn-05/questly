@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
+import { PushHint } from "@/components/questly/PushHint";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { storeSessionKey } from "@/lib/session";
 import { errorCode, userMessage } from "@/lib/errors";
@@ -344,6 +345,17 @@ function StartFunnel() {
     // to whichever account this browser is holding, and this is where it says
     // which one that is.
     <Screen>
+      {/* The invitation to turn notifications on, for somebody signed in.
+          `/start` because the funnel ends by opening a room and there is no
+          screen after it, and because `manifest.ts` sets `start_url: "/start"`
+          -- an installed app launches here every time, which is the one
+          placement that works on iOS, where push exists only once the app is on
+          the home screen. A closed `<dialog>` occupies no space, so its
+          position in this flow is not its position on screen. Guests get the
+          same invitation from inside their room, where they have a seat to file
+          it under. */}
+      <PushHint />
+
       {/* Always mounted, filled when something is refused: a live region
           inserted into the DOM with its text already in it is frequently never
           announced. `empty:-mb-8` takes back the flex gap an empty paragraph

@@ -58,6 +58,14 @@ export const HELP = {
       "Retaking the quiz starts from the answers you gave last time, so you only change what has changed.",
     ],
   },
+  push: {
+    title: "Notifications",
+    body: [
+      "The moments worth knowing about happen on somebody else's phone: the room fills up, everyone lands on the same place, the plan gets written, the night is booked.",
+      "A notification names the room number and nothing else — never a venue, a person or a price. It is drawn on a locked screen, in front of whoever is holding the phone.",
+      "This is per device, and turning it off here turns it off on this one. You are never notified about something you did yourself.",
+    ],
+  },
   rooms: {
     title: "Your rooms",
     body: [

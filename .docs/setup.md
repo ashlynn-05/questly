@@ -50,6 +50,9 @@ Set these in the **selected development deployment's** environment, using its da
 | `OPENAI_API_KEY` | Needed for live chat generation and embeddings |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional pair enabling Google OAuth |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | Optional pair enabling Discord OAuth |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Optional pair enabling web push notifications |
+
+Generate the VAPID pair with `npx web-push generate-vapid-keys`. Both halves are deployment secrets and are never committed; the public half reaches the browser only through `api.push.publicKey`, which is why it is not a `NEXT_PUBLIC_` build variable. With either absent, push self-disables end to end: `api.push.publicKey` answers null, the settings screen says notifications are not switched on for this deployment, and `convex/pushSend.ts` returns before it loads `web-push` or opens a socket. Subscriptions can still be stored, so setting the keys later starts delivery without a code change.
 
 Email/password and username authentication are configured independently of the optional OAuth providers. Provider absence/outage has endpoint-specific fallback behavior; missing keys do not prove live integration works. Keep provider calls out of automated tests. Do not spend against a real provider account without an agreed test budget.
 

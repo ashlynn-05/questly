@@ -3,6 +3,7 @@ import { internalMutation } from "./_generated/server";
 import { authenticatedMutation, publicQuery } from "./lib/customFunctions";
 import { PURGE_WINDOW_MS, purgeAt } from "./lib/account";
 import { throwUserError } from "./lib/errors";
+import { dropOwner } from "./lib/push/notify";
 import { detachMember } from "./lib/roster";
 
 /**
@@ -171,6 +172,20 @@ export const deleteAccount = authenticatedMutation({
       await detachMember(ctx, seat);
     }
 
+    // Every browser this account was being notified on.
+    //
+    // A HARD delete, unlike the profile tombstone below it, and the difference
+    // is deliberate: the tombstone is restorable for fourteen days because the
+    // taste vector behind it took a quiz to build, and a push subscription
+    // takes one tap. Somebody who has just deleted their account must stop
+    // hearing from us at the tap, not a fortnight later if they never come
+    // back. `restoreAccount` says so in its own words.
+    //
+    // Separate from the loop above, because `detachMember` drops what is filed
+    // under a SEAT and these are filed under the ACCOUNT -- including devices
+    // subscribed from the settings screen, which never belonged to any room.
+    await dropOwner(ctx, userId);
+
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -190,8 +205,8 @@ export const deleteAccount = authenticatedMutation({
  *
  * Clearing the tombstone is the whole of it. The taste vector, the sentence,
  * the answers and the goals were never touched, so the account comes back as it
- * was -- minus the seats, which are gone for good and which the delete screen
- * said would be.
+ * was -- minus the seats and the push subscriptions, which are gone for good and
+ * which the delete screen said would be.
  */
 export const restoreAccount = authenticatedMutation({
   args: {},

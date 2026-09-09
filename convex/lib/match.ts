@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { notifyRoom } from "./push/notify";
 import { enqueuePlanGeneration } from "./planQueue";
 
 /**
@@ -45,10 +46,23 @@ function topScored(quests: Doc<"quests">[]): Doc<"quests"> {
  * guard lives HERE rather than in the callers, so a caller cannot forget it.
  *
  * Returns the winning quest id, or null if the room did not resolve.
+ *
+ * `actor` is whoever's action reached this, and it exists ONLY so the match
+ * notification skips their phone -- they are looking at the screen that just
+ * declared it. It is a member row rather than a user id because every caller
+ * already holds the row their `sessionKey` resolved to, so the exclusion is
+ * derived from the capability that authorised the action. `null` means the
+ * roster moved rather than somebody swiping (`rooms.leave`,
+ * `rooms.removeMember`), and then everybody left is told.
+ *
+ * It changes nothing about WHETHER a room resolves. The rule below is still
+ * the only copy of itself; this is an argument threaded past it, not a second
+ * opinion about unanimity.
  */
 export async function resolveMatch(
   ctx: MutationCtx,
   roomId: Id<"rooms">,
+  actor: Doc<"members"> | null = null,
 ): Promise<Id<"quests"> | null> {
   const room = await ctx.db.get(roomId);
   if (!room) return null;
@@ -130,5 +144,8 @@ export async function resolveMatch(
   // The plan is built out of band: the match must land on every phone now, not
   // after an LLM round trip.
   await enqueuePlanGeneration(ctx, roomId, winner);
+  // The payoff moment, and the one this whole feature is most for: everyone
+  // who is not looking at the screen that just resolved.
+  await notifyRoom(ctx, roomId, "matched", actor);
   return winner;
 }

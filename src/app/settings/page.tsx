@@ -18,6 +18,7 @@ import { Back } from "@/components/questly/icons";
 import { Section } from "./_components/Section";
 import { SettingsAnswersSection } from "./_components/SettingsAnswersSection";
 import { SettingsProfileSection } from "./_components/SettingsProfileSection";
+import { SettingsPushSection } from "./_components/SettingsPushSection";
 
 /**
  * The account screen the product did not have.
@@ -258,6 +259,8 @@ export default function SettingsPage() {
       />
 
       <SettingsAnswersSection profile={profile} />
+
+      <SettingsPushSection />
 
       <Section id="rooms" title="Your rooms" topic="rooms">
         {rooms === undefined ? (

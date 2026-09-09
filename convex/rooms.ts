@@ -10,6 +10,7 @@ import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { throwUserError } from "./lib/errors";
 import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
+import { notifyRoom } from "./lib/push/notify";
 import { detachMember } from "./lib/roster";
 import {
   DEFAULT_FINALIZE_RULE,
@@ -331,7 +332,7 @@ export const join = publicMutation({
     const claimsHostSeat = room.demo === true && roster.length === 0;
 
     const newKey = newSessionKey();
-    await ctx.db.insert("members", {
+    const memberId = await ctx.db.insert("members", {
       roomId: room._id,
       name: trimmed,
       userId: userId ?? undefined,
@@ -339,6 +340,14 @@ export const join = publicMutation({
       sessionKey: newKey,
       joinedAt: Date.now(),
     });
+
+    // Only a genuinely NEW seat, which is why this sits here and not at the top
+    // of the handler: the re-entry path above returns before ever reaching it.
+    // A refresh, a double-tap or the host typing their own code is not somebody
+    // joining, and telling a room it has "another person in it" every time
+    // anyone reloads would make the whole feature something people turn off.
+    const joiner = await ctx.db.get(memberId);
+    await notifyRoom(ctx, room._id, "joined", joiner);
 
     return { code, sessionKey: newKey };
   },

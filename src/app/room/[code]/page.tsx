@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
+import { PushHint } from "@/components/questly/PushHint";
 import { Plate } from "@/components/questly/Plate";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { errorCode, userMessage } from "@/lib/errors";
@@ -160,6 +161,13 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
     // room screens carries its own padding. The band above keeps its padding
     // either way, so the roundels stay on the same line as every other screen.
     <Screen bleed>
+      {/* The same invitation as `/start`, offered here because this is the only
+          place a GUEST can accept it: they have no account, so their
+          subscription is filed against this seat, and the seat is only in
+          scope inside the room. A signed-in member who already said yes on
+          `/start` sees nothing -- `usePush` refuses to ask twice. */}
+      <PushHint seat={{ code, sessionKey }} />
+
       {/* Under the band, not above it: the band is chrome and this is a fact
           about the room. The label the funnel puts on a seeded room must not
           vanish at the door -- inside the room is exactly where someone starts

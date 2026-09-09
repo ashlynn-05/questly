@@ -17,6 +17,11 @@ const limits = {
   roomSearch: { kind: "token bucket", rate: 40, period: MINUTE, capacity: 40 },
   roomSuggest: { kind: "token bucket", rate: 40, period: MINUTE, capacity: 40 },
   generation: { kind: "token bucket", rate: 3, period: 10 * MINUTE, capacity: 3 },
+  // The settings screen's "send a test". Keyed per account. Generous enough
+  // that somebody checking whether their phone is set up correctly never meets
+  // it, tight enough that the one public endpoint whose whole purpose is to
+  // cause outbound traffic cannot be held down.
+  pushTest: { kind: "token bucket", rate: 5, period: MINUTE, capacity: 5 },
   googleMinute: { kind: "token bucket", rate: 120, period: MINUTE, capacity: 120 },
   googleDay: { kind: "fixed window", rate: 1000, period: DAY, capacity: 1000, start: 0 },
   openaiMinute: { kind: "token bucket", rate: 30, period: MINUTE, capacity: 30 },

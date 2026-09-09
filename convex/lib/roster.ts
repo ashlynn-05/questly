@@ -1,6 +1,7 @@
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { resolveMatch } from "./match";
+import { dropOwner, seatOwnerKey } from "./push/notify";
 import { resolveOpenProposals } from "./proposals";
 import { clearFinalizeVotes } from "./rules";
 
@@ -52,6 +53,16 @@ export async function detachMember(ctx: MutationCtx, member: Doc<"members">): Pr
   for (const vote of votes) {
     await ctx.db.delete(vote._id);
   }
+
+  // Anything this browser subscribed to as a GUEST, which is filed under the
+  // seat because a guest has no other identity. The seat is going, so it goes
+  // with it -- an endpoint left pointing at a member row that no longer exists
+  // is a subscription nothing will ever send to and nothing will ever clean up.
+  //
+  // `seatOwnerKey` and not `ownerKey`: a signed-in member's subscriptions are
+  // filed under their ACCOUNT and must survive this. Leaving one room is not
+  // turning notifications off everywhere.
+  await dropOwner(ctx, seatOwnerKey(member._id));
 
   await ctx.db.delete(member._id);
 

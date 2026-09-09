@@ -2,6 +2,7 @@ import { defineSchema } from "convex/server";
 import { bookingTables } from "./tables/bookings";
 import { planTables } from "./tables/plans";
 import { profileTables } from "./tables/profiles";
+import { pushTables } from "./tables/push";
 import { questTables } from "./tables/quests";
 import { roomTables } from "./tables/rooms";
 import { venueTables } from "./tables/venues";
@@ -14,4 +15,5 @@ export default defineSchema({
   ...questTables,
   ...planTables,
   ...bookingTables,
+  ...pushTables,
 });

@@ -7,6 +7,7 @@ import { slotValidator, stopValidator } from "./validators";
 import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { isProviderReservationError, throwUserError } from "./lib/errors";
 import { applyStopLock } from "./lib/lock";
+import { notifyRoom } from "./lib/push/notify";
 import { settleProposal } from "./lib/proposals";
 import { DEFAULT_LOCK_RULE } from "./lib/rules";
 import { applyStopSwap } from "./lib/swap";
@@ -207,6 +208,15 @@ export const writePlan = internalMutation({
     // The claim is released, so a later failure could be retried; the token
     // stays as the record of which build won. See the schema comment.
     await ctx.db.patch(args.roomId, { planStartedAt: undefined });
+
+    // The one event with no actor, so nobody is excluded: the plan finishing is
+    // not anybody's doing. It is also the one worth waking a phone for that the
+    // group cannot predict -- the match was instant, this arrives whenever the
+    // model is done.
+    //
+    // After both early returns above, so a plan that was DROPPED -- for a booked
+    // room, or by a build whose lease was taken -- never announces itself.
+    await notifyRoom(ctx, args.roomId, "planReady", null);
     return planId;
   },
 });

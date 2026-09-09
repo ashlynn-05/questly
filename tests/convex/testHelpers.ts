@@ -13,4 +13,5 @@ export function registerComponents(t: TestConvex<typeof schema>): void {
   betterAuth.register(generic, "betterAuth");
   rateLimiter.register(generic, "rateLimiter");
   workpool.register(generic, "planGeneration");
+  workpool.register(generic, "pushDelivery");
 }

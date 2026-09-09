@@ -12,8 +12,9 @@
  * ignores handlers it can see are no-ops, so a bare pass-through would not
  * count: https://developer.chrome.com/blog/update-install-criteria
  *
- * Push and notificationclick belong to the push work (#5) and are not here
- * yet. This file is what that work extends.
+ * It also receives push notifications and opens the room one was about. Those
+ * two handlers are at the bottom and share nothing with the offline cache
+ * above -- a service worker is simply the only place a browser will run either.
  *
  * Plain JS in public/ rather than TypeScript through the bundler: it has to be
  * served from the origin root to claim the whole scope, and it is small enough
@@ -75,6 +76,92 @@ self.addEventListener("fetch", (event) => {
           })
         );
       }
+    })(),
+  );
+});
+
+
+/**
+ * A notification arrived.
+ *
+ * IT ALWAYS SHOWS ONE, whatever the payload turns out to be. This is not
+ * defensive coding, it is the platform rule: the subscription was created with
+ * `userVisibleOnly: true`, Chrome shows its own "this site was updated in the
+ * background" notice if a push produces nothing visible, and iOS REVOKES a
+ * subscription that receives a silent push. A malformed payload therefore has
+ * to end in a real notification, so the fallback below is a valid outcome and
+ * not an error path.
+ *
+ * `event.waitUntil` because `showNotification` is a promise and the worker is
+ * killed the moment the handler returns without one.
+ */
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    // A payload we cannot read is still a push we must answer. Falls through
+    // to the defaults below.
+  }
+
+  const title = payload.title || "Questly";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: payload.body || "Something happened in your room.",
+      icon: "/icon-192.png",
+      // No `badge`. Android wants a monochrome silhouette, generating one would
+      // add `rsvg-convert` to `scripts/generate-icons.sh` as a build
+      // dependency, and Android's default glyph is not worth that.
+      //
+      // `tag` collapses rather than stacks: a second notification with the same
+      // tag REPLACES the first in the tray. One room's five moments are five
+      // different tags, so none of them hides another, but a duplicate of any
+      // one of them -- a retry, two devices racing -- replaces itself instead
+      // of queueing a second buzz for the same news.
+      tag: payload.url || title,
+      // The url travels on the notification because `notificationclick` fires
+      // in a worker that may have been started from cold for this event alone,
+      // with no memory of the push that created it.
+      data: { url: payload.url || "/" },
+    }),
+  );
+});
+
+/**
+ * The notification was tapped: open what it was about.
+ *
+ * FOCUS BEFORE OPEN. `openWindow` unconditionally would leave someone with the
+ * room in two tabs -- and on Android, a second copy of the installed app -- so
+ * an existing client wins whenever there is one. `navigate()` on it moves that
+ * window to the right room in the case where the app is open on a different
+ * screen.
+ *
+ * `close()` first, because a notification the tap did not dismiss stays in the
+ * tray looking unread.
+ *
+ * The url is always same-origin: it is built by `notificationFor` in the
+ * backend and is always a `/room/<code>` path or `/settings`. It is resolved
+ * against the worker's own scope here so that stays true regardless.
+ */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || "/", self.location.origin);
+
+  event.waitUntil(
+    (async () => {
+      // `includeUncontrolled` because a tab opened before this worker took
+      // control is still a window the person is looking at.
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of clients) {
+        if (new URL(client.url).origin !== url.origin) continue;
+        await client.focus();
+        if (client.url !== url.href && "navigate" in client) await client.navigate(url.href);
+        return;
+      }
+      await self.clients.openWindow(url.href);
     })(),
   );
 });
