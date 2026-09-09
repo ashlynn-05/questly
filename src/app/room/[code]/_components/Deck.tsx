@@ -13,7 +13,9 @@ import { Plate } from "@/components/questly/Plate";
 import { useCountdown } from "@/hooks/useCountdown";
 import { useNow } from "@/hooks/useNow";
 import { photoSrc } from "@/lib/room/photo";
+import { venueMapsUrl } from "@/lib/room/maps";
 import { userMessage } from "@/lib/errors";
+import { OutLink } from "./OutLink";
 import { SwipeCard } from "./SwipeCard";
 import type { RoomView } from "../page";
 
@@ -384,6 +386,23 @@ export function Deck({
           />
         </AnimatePresence>
       </div>
+
+      {/* BELOW the card, not inside it. `SwipeCard` is a `motion.article` with
+          `drag="x"`, and an anchor within the drag surface competes for the same
+          pointer stream the gesture depends on -- the same conflict the haptics
+          comment in that file records for its invisible checkbox. Out here the
+          link is just a link and the card is still a card.
+
+          Quiet, not orange: "I'm in" is the decision this screen is asking for,
+          and a second filled control beside it would be arguing with the first.
+          Keyed on the quest so it never lags a card behind. */}
+      <OutLink
+        key={`map-${quest._id}`}
+        href={venueMapsUrl(quest)}
+        className="board border border-hairline text-[11px] text-text"
+      >
+        See where it is
+      </OutLink>
 
       <p className="text-[12px] leading-snug text-dim">
         {priceKnown

@@ -6,7 +6,13 @@
  * function of its input, so it can be unit-tested without a backend.
  */
 
-import { recomputeItinerary, totalPerHeadCents, type Slot, type Stop } from "./stops";
+import {
+  UNNAMED_STOP,
+  recomputeItinerary,
+  totalPerHeadCents,
+  type Slot,
+  type Stop,
+} from "./stops";
 
 export type PlanInput = {
   venueName: string;
@@ -102,7 +108,7 @@ export function parsePlanResponse(
     const stops: Stop[] = raw.stops.slice(0, 4).map((s) => ({
       id: nextId(),
       slot: SLOTS.includes(s.slot as Slot) ? (s.slot as Slot) : "main",
-      name: typeof s.name === "string" && s.name.trim() ? s.name.trim() : "A stop",
+      name: typeof s.name === "string" && s.name.trim() ? s.name.trim() : UNNAMED_STOP,
       startAt: input.startAt,
       durationMin: typeof s.durationMin === "number" && s.durationMin > 0 ? s.durationMin : 45,
       costPerHeadCents:

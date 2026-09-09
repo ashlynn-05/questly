@@ -33,10 +33,13 @@ This is a **live backend watcher**: it pushes source/schema changes to its selec
 | `CONVEX_DEPLOYMENT` | CLI deployment selector, normally written by Convex setup |
 | `NEXT_PUBLIC_CONVEX_URL` | Convex client URL for the selected backend |
 | `NEXT_PUBLIC_CONVEX_SITE_URL` | Its HTTP actions URL; cloud deployments use the matching `.convex.site` URL |
+| `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY` | Optional. Draws the plan screen's route map via the Maps Embed API |
 
 Use the URLs supplied by the selected deployment; do not substitute a production URL to make development work. Values prefixed `NEXT_PUBLIC_` are exposed to the browser. Restart Next after changing them and rebuild for a production-mode run.
 
-The current template also contains `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY`, and `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID`. The current source does not read these variables; they are not prerequisites for the implemented server-side Places/photo flow. Backend `SITE_URL` below is a separate, active setting.
+`NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY` is read by `src/app/room/[code]/_components/PlanStopList.tsx` and is genuinely optional: without it the plan screen renders the itinerary and the multi-stop Maps link and simply omits the embedded map. It needs the **Maps Embed API** enabled and an HTTP referrer restriction. Do not reuse `GOOGLE_MAPS_SERVER_KEY` for it — that key is deliberately unrestricted, and a `NEXT_PUBLIC_` variable ships in the browser bundle. The Maps Embed API is billed under SKU `9C10-8313-F21F`, which is unlimited at no charge; the Maps JS SDK is not, which is why `@vis.gl/react-google-maps` is unused.
+
+The template also contains `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID`. The current source does not read those two; they are not prerequisites for anything implemented. Backend `SITE_URL` below is a separate, active setting.
 
 ### Convex deployment environment
 

@@ -4,12 +4,11 @@ import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/room/booking";
+import { stopMapsUrl, stopsDirectionsUrl } from "@/lib/room/maps";
+import { calendarUrl } from "@/lib/room/calendar";
+import { moneyLabel, planShareText, timeLabel } from "@/lib/room/share";
 import type { RoomView } from "../page";
-
-const time = (at: number) =>
-  new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
-
-const money = (cents: number) => (cents === 0 ? "Free" : `$${Math.round(cents / 100)}`);
+import { OutLink } from "./OutLink";
 
 /**
  * The settled night.
@@ -49,6 +48,25 @@ export function Booked({
   // recomputing the total instead was the wrong answer.
   const headcount = bookedHeadcount(booking, view.members.length);
 
+  // Same inputs as the chat message, so the two cannot describe different
+  // nights. Null when there is no plan yet, which is a real state: this screen
+  // renders as soon as the booking does.
+  //
+  // `location` DURING RENDER, which is only safe because of `page.tsx:149`:
+  // that early return holds until `useSessionKey`'s mount effect sets `ready`,
+  // so this component cannot render on the server or on the hydrating pass.
+  // The two handlers below have always relied on the same guarantee, from
+  // inside an event where it is obvious; here it is not, so it is written
+  // down. A component without that guard needs the origin in an effect.
+  const calendarHref = view.plan
+    ? calendarUrl({
+        intro: view.plan.shareMessage,
+        stops: view.plan.stops,
+        perHeadCents: headcount.perHeadCents,
+        roomUrl: `${location.origin}/room/${view.room.code}`,
+      })
+    : null;
+
   async function copyTheMessage(message: string) {
     try {
       await navigator.clipboard.writeText(message);
@@ -58,6 +76,54 @@ export function Booked({
       // point, so it goes on screen to be copied by hand.
       setCopied(message);
     }
+  }
+
+  /**
+   * Hand the night to whatever the device sends things with.
+   *
+   * The clipboard was always the second-best answer to "send it to the group
+   * chat": it puts the words somewhere and leaves the person to find the chat
+   * themselves. `navigator.share` opens the sheet the phone already has, and
+   * the group chat is one tap inside it.
+   *
+   * `planShareText` writes what is actually sent, and it is the same string on
+   * both paths: the itinerary, a map link per stop, one link for the whole
+   * route, and the room at the end. A summary with no way back is a dead end
+   * for everybody who reads it in the chat.
+   */
+  async function sendItToTheChat() {
+    const link = `${location.origin}/room/${view.room.code}`;
+    // Built here rather than sent as the model wrote it: `plan.shareMessage`
+    // is one line with no times, no prices and no way to find anywhere, and a
+    // group chat is where this plan is actually agreed to.
+    const message = planShareText({
+      intro: view.plan?.shareMessage ?? "",
+      stops: view.plan?.stops ?? [],
+      perHeadCents: headcount.perHeadCents,
+      roomUrl: link,
+    });
+
+    // Absent on desktop browsers and outside a secure context, so this is a
+    // feature test rather than a platform guess.
+    if (navigator.share) {
+      try {
+        // TEXT ONLY, no `url` alongside it. Several share targets append a
+        // `url` to whatever `text` says, and the room link is already the
+        // message's last line -- passing both puts it in the chat twice.
+        await navigator.share({ text: message });
+        setCopied("Sent.");
+        return;
+      } catch (e) {
+        // Dismissing the sheet rejects with AbortError. That is a decision,
+        // not a failure: saying "could not send" to somebody who chose not to
+        // is how a status line teaches people to stop reading it.
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        // Anything else -- no handler installed, a sheet that would not open
+        // -- falls through to the clipboard rather than dead-ending.
+      }
+    }
+
+    await copyTheMessage(message);
   }
 
   return (
@@ -85,7 +151,7 @@ export function Booked({
           {/* The figure is the plan's own per-head total, and every cost in that
               plan is an estimate. It is not a price a venue quoted. */}
           <dt className="board text-[10px] text-dim">Est. per head</dt>
-          <dd className="num m-0 text-[22px] text-text">{money(headcount.perHeadCents)}</dd>
+          <dd className="num m-0 text-[22px] text-text">{moneyLabel(headcount.perHeadCents)}</dd>
           {/* Only when the roster has moved. The estimate is what the group
               agreed to and does not get re-divided behind their backs, so the
               screen has to say what it was divided by -- otherwise this reads
@@ -115,47 +181,95 @@ export function Booked({
           <div className="relative mt-4">
             <Rail />
             <ol className="m-0 flex list-none flex-col gap-6 p-0">
-              {view.plan.stops.map((stop) => (
-                <li key={stop.id} className="relative pl-14">
-                  <RailNode top={6} state="locked" />
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="board num text-[10px] text-accent">{time(stop.startAt)}</p>
-                      <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
-                      {stop.note ? (
-                        <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
-                      ) : null}
+              {view.plan.stops.map((stop) => {
+                const where = stopMapsUrl(stop);
+                return (
+                  <li key={stop.id} className="relative pl-14">
+                    <RailNode top={6} state="locked" />
+                    <div className="flex items-baseline justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="board num text-[10px] text-accent">{timeLabel(stop.startAt)}</p>
+                        <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
+                        {stop.note ? (
+                          <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
+                        ) : null}
+                      </div>
+                      <p className="num shrink-0 text-[15px] text-text">
+                        {moneyLabel(stop.costPerHeadCents)}
+                      </p>
                     </div>
-                    <p className="num shrink-0 text-[15px] text-text">
-                      {money(stop.costPerHeadCents)}
-                    </p>
-                  </div>
-                </li>
-              ))}
+
+                    {/* The route link above the fold answers "what is the shape
+                        of the night". This answers "where is THAT one" -- the
+                        question somebody asks about the 9:30 stop while standing
+                        up to leave the 7:45 one, and the route view is the wrong
+                        place to go looking for it.
+
+                        `w-fit`, so the 44px target is the link and not the whole
+                        row: a full-width control per stop would read as the
+                        primary action on a screen whose primary action is the
+                        orange button below. Absent when the stop has no name
+                        Google could find -- see `stopMapsUrl`. */}
+                    {where ? (
+                      <OutLink
+                        href={where}
+                        className="board mt-2 w-fit border border-hairline text-[10px] text-dim"
+                      >
+                        Where is it
+                      </OutLink>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ol>
           </div>
         </div>
       ) : null}
 
       <div className="flex flex-col gap-2">
-        {/* A plain anchor, not a Plate: this leaves the app for Google Maps, and
-            it opens in its own tab so the room is still there afterwards. */}
-        <a
-          href={booking.deepLink}
-          target="_blank"
-          rel="noreferrer"
-          className="board flex min-h-[44px] items-center justify-center rounded-[6px] border border-action-edge bg-action px-4 text-[11px] text-on-action"
+        {/* THE ROUTE, not the anchor venue. `booking.deepLink` is built by
+            `convex/bookings.ts` from the matched quest alone, so this button
+            offered the night and then showed one place -- the group got the
+            first stop and had to find the other two themselves.
+
+            The stored `deepLink` is untouched and stays the fallback. It is a
+            frozen record of what the room agreed to, and `src/lib/room/
+            booking.ts` is a long argument about not rewriting those after the
+            fact; this is a better link COMPUTED at render time, not a correction
+            applied to history. It also still answers when a plan has no route to
+            draw, which is the case `stopsDirectionsUrl` returns null for. */}
+        <OutLink
+          href={(view.plan && stopsDirectionsUrl(view.plan.stops)) || booking.deepLink}
+          className="board border border-action-edge bg-action text-[11px] text-on-action"
         >
-          Open in Maps<span className="sr-only"> (opens in a new tab)</span>
-        </a>
+          Open in Maps
+        </OutLink>
 
         {view.plan ? (
           <Plate
             variant="raised"
             center
             label="Send it to the group chat"
-            onClick={() => void copyTheMessage(view.plan?.shareMessage ?? "")}
+            onClick={() => void sendItToTheChat()}
           />
+        ) : null}
+
+        {/* Quietest of the three, on purpose. The stack descends from the
+            orange route button, and a fourth full-strength control would bury
+            the one this screen is actually for.
+
+            A link rather than a download: the Calendar template URL costs
+            nothing, needs no OAuth scope and no consent screen, and writes the
+            event Google's own API would write. `src/lib/room/calendar.ts` has
+            the comparison. Absent when the plan has no stops to put in a
+            diary. */}
+        {calendarHref ? (
+          <OutLink
+            href={calendarHref}
+            className="board border border-hairline text-[11px] text-text"
+          >
+            Put it in your calendar
+          </OutLink>
         ) : null}
 
         {/* Mounted empty, then filled: a live region inserted into the DOM
