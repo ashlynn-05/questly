@@ -11,6 +11,7 @@ import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { errorCode, userMessage } from "@/lib/errors";
 import { roomRedirect, statusTransition } from "@/lib/room/room";
 import { useSessionKey } from "@/hooks/useSessionKey";
+import { useAwaySeats } from "@/lib/room/presence";
 import { Lobby } from "./_components/Lobby";
 import { Deck } from "./_components/Deck";
 import { Plan } from "./_components/Plan";
@@ -137,6 +138,12 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
    * pressing would be worse than doing nothing. The first status this page sees
    * is the page arriving, not a transition, so it moves nothing.
    */
+  // One heartbeat and one presence subscription per tab, mounted here rather
+  // than in the four screens below: the room's status changes under people
+  // mid-session, and a hook that unmounted with the lobby would drop everyone's
+  // face the moment the deck started.
+  const away = useAwaySeats(code, sessionKey);
+
   const headingRef = useRef<HTMLHeadingElement>(null);
   const announced = useRef<string | null>(null);
   const status = view?.room.status ?? null;
@@ -183,6 +190,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
       {view.room.status === "lobby" ? (
         <Lobby
           view={view}
+          away={away}
           code={code}
           sessionKey={sessionKey}
           headingRef={headingRef}
@@ -237,6 +245,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
       {view.room.status === "swiping" ? (
         <Deck
           view={view}
+          away={away}
           code={code}
           sessionKey={sessionKey}
           headingRef={headingRef}

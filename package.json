@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.12.5",
+    "@convex-dev/migrations": "^0.3.6",
+    "@convex-dev/presence": "^0.4.0",
     "@convex-dev/rate-limiter": "0.3.2",
     "@convex-dev/workpool": "0.4.11",
     "@haptics/react": "^2.1.1",

@@ -40,8 +40,10 @@ import type * as lib_rooms_access from "../lib/rooms/access.js";
 import type * as lib_rooms_match from "../lib/rooms/match.js";
 import type * as lib_rooms_roster from "../lib/rooms/roster.js";
 import type * as lib_rooms_rules from "../lib/rooms/rules.js";
+import type * as migrations from "../migrations.js";
 import type * as places from "../places.js";
 import type * as plans from "../plans.js";
+import type * as presence from "../presence.js";
 import type * as profiles from "../profiles.js";
 import type * as proposals from "../proposals.js";
 import type * as push from "../push.js";
@@ -98,8 +100,10 @@ declare const fullApi: ApiFromModules<{
   "lib/rooms/match": typeof lib_rooms_match;
   "lib/rooms/roster": typeof lib_rooms_roster;
   "lib/rooms/rules": typeof lib_rooms_rules;
+  migrations: typeof migrations;
   places: typeof places;
   plans: typeof plans;
+  presence: typeof presence;
   profiles: typeof profiles;
   proposals: typeof proposals;
   push: typeof push;
@@ -146,6 +150,8 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
+  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
+  presence: import("@convex-dev/presence/_generated/component.js").ComponentApi<"presence">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   planGeneration: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"planGeneration">;
   pushDelivery: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"pushDelivery">;

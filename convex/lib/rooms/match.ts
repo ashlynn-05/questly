@@ -107,6 +107,36 @@ export async function resolveMatch(
     .withIndex("by_room_member", (q) => q.eq("roomId", roomId))
     .collect();
 
+  // `members.swipeCount` is written HERE and nowhere else.
+  //
+  // This is the one place in the backend that holds the whole roster and every
+  // swipe row in the same transaction, after the caller's own write -- which is
+  // exactly what the count needs, so it costs no additional reads at all. Every
+  // mutation that touches a swipe row reaches this function (`swipes.cast`
+  // after its insert or patch, `detachMember` after its deletes), because the
+  // never-deadlock rule already makes that mandatory. There is no path that
+  // writes a swipe and skips it.
+  //
+  // Recomputed rather than adjusted by a delta, deliberately. A delta would be
+  // a second copy of "how many cards has this person answered", living next to
+  // the insert, and the copies drift the first time somebody adds a path that
+  // writes a row -- an undo, a fixture, a repair. Recomputing means such a path
+  // is repaired by the next mutation in the room rather than corrupting a
+  // number the deck screen navigates by.
+  //
+  // The inequality guard is not a micro-optimisation. `swipes.cast` writes
+  // NOTHING when a client re-sends an identical swipe, precisely so a retrying
+  // phone cannot churn the row every other phone subscribes to. An
+  // unconditional patch here would hand that churn straight back, and worse:
+  // the `members` range is in all twelve subscribers' read sets. In steady
+  // state this writes exactly one row per new swipe.
+  for (const member of members) {
+    const count = swipes.filter((s) => s.memberId === member._id).length;
+    if (member.swipeCount !== count) {
+      await ctx.db.patch(member._id, { swipeCount: count });
+    }
+  }
+
   // Unanimity is judged against the CURRENT roster: someone who left stops
   // being required (their swipes go with them), and someone who joins must
   // still clear the cards the room has already passed.
@@ -125,9 +155,20 @@ export async function resolveMatch(
     // Deck exhausted with no agreement -- declare the top-scored card rather
     // than deadlock. This is the safety net that makes a live demo safe.
     //
-    // "Done" is computed exactly as rooms.get computes `waitingOn`, so the
-    // room can never show nobody left to wait on while still refusing to
-    // resolve. An empty roster cannot reach here: `members.length === 0` would
+    // "Done" and `rooms.get`'s `waitingOn` can never disagree. That used to be
+    // true because the two were the same expression written twice; it is now
+    // true by construction, which is stronger. `rooms.get` displays
+    // `swipeCount`, and the loop above wrote `swipeCount` from the very rows
+    // this line judges, in this transaction. So the room cannot show nobody
+    // left to wait on while still refusing to resolve.
+    //
+    // This deliberately counts the ROWS rather than reading the number it just
+    // wrote. Asking a derived value what it was derived from is circular, and
+    // this branch is not cosmetic like `waitingOn` is: it writes `matched`,
+    // enqueues the plan build and pushes every phone in the room. An
+    // irreversible transition is decided on ground truth, never on a cache.
+    //
+    // An empty roster cannot reach here: `members.length === 0` would
     // make this vacuously true, so it is excluded explicitly -- a room with
     // nobody in it has not agreed on anything.
     const everyoneDone =

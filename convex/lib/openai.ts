@@ -16,6 +16,15 @@ const CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** Small, fast and cheap. Every caller here wants structure, not prose. */
 const CHAT_MODEL = "gpt-4o-mini";
+
+/**
+ * The embedding model, here rather than in `ai/embeddings.ts` because that
+ * file is `"use node"` and a query cannot import it. `venueEmbeddings` stores
+ * this name alongside every vector, so changing it is a clean cache miss
+ * rather than a deck ranked on a mixture of widths -- `cosine` returns 0 on a
+ * width mismatch, which would silently demote every already-cached venue.
+ */
+export const EMBEDDING_MODEL = "text-embedding-3-small"; // 1536 dims
 const CHAT_MAX_COMPLETION_TOKENS = 512;
 
 /**
