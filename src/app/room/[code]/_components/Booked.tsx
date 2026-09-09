@@ -62,6 +62,41 @@ export function Booked({
     }
   }
 
+  /**
+   * Hand the night to whatever the device sends things with.
+   *
+   * The clipboard was always the second-best answer to "send it to the group
+   * chat": it puts the words somewhere and leaves the person to find the chat
+   * themselves. `navigator.share` opens the sheet the phone already has, and
+   * the group chat is one tap inside it.
+   *
+   * The link goes with the message either way. A summary with no way back to
+   * the room is a dead end for everybody who reads it in the chat -- this
+   * screen is where the reference, the stops and the map live.
+   */
+  async function sendItToTheChat(message: string) {
+    const link = `${location.origin}/room/${view.room.code}`;
+
+    // Absent on desktop browsers and outside a secure context, so this is a
+    // feature test rather than a platform guess.
+    if (navigator.share) {
+      try {
+        await navigator.share({ text: message, url: link });
+        setCopied("Sent.");
+        return;
+      } catch (e) {
+        // Dismissing the sheet rejects with AbortError. That is a decision,
+        // not a failure: saying "could not send" to somebody who chose not to
+        // is how a status line teaches people to stop reading it.
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        // Anything else -- no handler installed, a sheet that would not open
+        // -- falls through to the clipboard rather than dead-ending.
+      }
+    }
+
+    await copyTheMessage(`${message} ${link}`);
+  }
+
   return (
     <section className="flex flex-col gap-8 px-5 py-10">
       <div>
@@ -186,7 +221,7 @@ export function Booked({
             variant="raised"
             center
             label="Send it to the group chat"
-            onClick={() => void copyTheMessage(view.plan?.shareMessage ?? "")}
+            onClick={() => void sendItToTheChat(view.plan?.shareMessage ?? "")}
           />
         ) : null}
 
