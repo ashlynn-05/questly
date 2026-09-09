@@ -199,50 +199,28 @@
    difference is the whole point: a background propagates to the canvas only
    while the root element has none of its own, so before this rule those strips
    painted `--ground-deep` -- two dark bands above and below every screen, none
-   of which paints its ground in that colour. `body` keeps `--ground-deep`
-   below, because on a wide window that IS the letterbox around the max-width
-   column every page centres itself in. One page, `/direction`, does paint its
-   own ground `--ground-deep`; it gets iris strips now, and it is the internal
-   design reference. */
+   of which paints its ground in that colour.
+
+   `body` matches it. There is no letterbox: the ground runs edge to edge at
+   every width, and the max-width column centred in it is a measure for the
+   TEXT, not a slab floating on a darker field. A page that paints two colours
+   to say one thing reads as a frame around the product; the reference site this
+   layout follows caps its container and lets its own ground bleed, and so does
+   this. One page, `/direction`, still paints its own `--ground-deep` ground,
+   and it is the internal design reference rather than a product screen. */
 html {
   background: var(--ground);
   transition: background-color 260ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 body {
-  background: var(--ground-deep);
+  background: var(--ground);
   transition: background-color 260ms cubic-bezier(0.16, 1, 0.3, 1),
               color 260ms cubic-bezier(0.16, 1, 0.3, 1);
   color: var(--text);
   font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-}
-
-/* The strip behind the iOS status bar, which is the BODY's background and not
-   the canvas.
-
-   An installed app on iOS is inset below the clock, and WebKit fills the
-   reserved strip with the body's background colour -- while the strip at the
-   other end, behind the home indicator, comes from the canvas like everywhere
-   else. That asymmetry is the whole bug: the home screen app had `--ground` under
-   the home indicator and `--ground-deep` under the clock, so it wore a dark navy
-   band across the top of every screen and nothing anywhere else.
-
-   Fixed by giving a phone the ground it is actually showing. `--ground-deep` on
-   `body` exists to be the letterbox around the 460px column, and below that
-   width there is no letterbox to paint: the column is the whole screen, so the
-   only pixels this changes are the ones behind the clock. Wide windows keep
-   their letterbox untouched.
-
-   Not `black-translucent`, which is the other way to close the gap: it hands the
-   app the strip without saying how tall it is, and every screen here would then
-   need `env(safe-area-inset-top)` padding to keep its first line out from under
-   the time. One media query against that is not a trade. */
-@media (max-width: 460px) {
-  body {
-    background: var(--ground);
-  }
 }
 
 /* --- Browser surfaces -------------------------------------------------------
