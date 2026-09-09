@@ -1,0 +1,514 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Questly System Architecture",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1350,
+      580
+    ],
+    "repository": {
+      "url": "https://github.com/ashlynn-05/questly",
+      "provider": "github",
+      "revision": "6407cb1bb880cd2e98401a5bda36c9df57cb8e06"
+    },
+    "views": [
+      {
+        "id": "plan-path",
+        "label": "Match to plan",
+        "focus": [
+          "browser",
+          "nextapp",
+          "convexfns",
+          "planpool",
+          "plangen",
+          "convexdb"
+        ],
+        "note": "A swipe resolves a match, which queues exactly one plan generation."
+      },
+      {
+        "id": "push-path",
+        "label": "Notify the room",
+        "focus": [
+          "convexfns",
+          "pushpool",
+          "pushsend",
+          "pushservice"
+        ],
+        "note": "Five room moments fan out to every member's devices except the actor's."
+      },
+      {
+        "id": "identity",
+        "label": "Identity and quota",
+        "focus": [
+          "nextapp",
+          "betterauth",
+          "convexfns",
+          "ratelimiter"
+        ],
+        "note": "Better Auth runs inside Convex; the Next process holds no auth secret."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "Group member",
+      "sublabel": "PWA · guest or member",
+      "pos": [
+        40,
+        70
+      ],
+      "size": [
+        155,
+        68
+      ]
+    },
+    {
+      "id": "nextapp",
+      "type": "frontend",
+      "label": "Next.js App Router",
+      "sublabel": "App Router · React 19",
+      "tag": "src/app",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "src/app/room/[code]/page.tsx",
+          "label": "room route"
+        }
+      ]
+    },
+    {
+      "id": "ratelimiter",
+      "type": "security",
+      "label": "Rate Limiter",
+      "sublabel": "per user and room",
+      "pos": [
+        300,
+        70
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/lib/rateLimits.ts"
+        }
+      ]
+    },
+    {
+      "id": "convexfns",
+      "type": "backend",
+      "label": "Convex Functions",
+      "sublabel": "queries · mutations",
+      "pos": [
+        300,
+        200
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/rooms.ts"
+        },
+        {
+          "path": "convex/swipes.ts"
+        },
+        {
+          "path": "convex/proposals.ts"
+        }
+      ]
+    },
+    {
+      "id": "betterauth",
+      "type": "security",
+      "label": "Better Auth",
+      "sublabel": "runs inside Convex",
+      "tag": "identity.subject",
+      "pos": [
+        300,
+        330
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/auth.ts"
+        },
+        {
+          "path": "convex/lib/rooms/access.ts"
+        }
+      ]
+    },
+    {
+      "id": "pushpool",
+      "type": "messagebus",
+      "label": "Push Workpool",
+      "sublabel": "one job per event",
+      "sources": [
+        {
+          "path": "convex/lib/push/queue.ts"
+        }
+      ],
+      "pos": [
+        620,
+        460
+      ],
+      "size": [
+        155,
+        68
+      ]
+    },
+    {
+      "id": "planpool",
+      "type": "messagebus",
+      "label": "Plan Workpool",
+      "sublabel": "parallelism 8",
+      "pos": [
+        620,
+        200
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/lib/plans/queue.ts"
+        }
+      ]
+    },
+    {
+      "id": "convexdb",
+      "type": "database",
+      "label": "Convex Database",
+      "sublabel": "rooms · quests · plans",
+      "pos": [
+        620,
+        330
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/schema.ts"
+        },
+        {
+          "path": "convex/tables/push.ts"
+        }
+      ]
+    },
+    {
+      "id": "pushsend",
+      "type": "backend",
+      "label": "Push Sender",
+      "sublabel": "web-push · VAPID",
+      "tag": "Node runtime",
+      "sources": [
+        {
+          "path": "convex/pushSend.ts",
+          "line": 146,
+          "label": "deliver"
+        }
+      ],
+      "pos": [
+        900,
+        460
+      ],
+      "size": [
+        155,
+        68
+      ]
+    },
+    {
+      "id": "plangen",
+      "type": "backend",
+      "label": "Plan Generator",
+      "sublabel": "gpt-4o-mini",
+      "tag": "generation lease",
+      "pos": [
+        900,
+        200
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/plans.ts",
+          "line": 222,
+          "label": "generate"
+        }
+      ]
+    },
+    {
+      "id": "deck",
+      "type": "backend",
+      "label": "Deck Builder",
+      "sublabel": "ranks quests",
+      "tag": "room lease",
+      "pos": [
+        620,
+        70
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/deck.ts",
+          "line": 238,
+          "label": "build action"
+        }
+      ]
+    },
+    {
+      "id": "pushservice",
+      "type": "external",
+      "label": "Web Push Services",
+      "sublabel": "endpoint per device",
+      "pos": [
+        1160,
+        460
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "openai",
+      "type": "external",
+      "label": "OpenAI API",
+      "sublabel": "chat + embeddings",
+      "pos": [
+        1160,
+        200
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "places",
+      "type": "external",
+      "label": "Google Places API",
+      "sublabel": "nearby · text · photo",
+      "pos": [
+        1160,
+        70
+      ],
+      "size": [
+        150,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Convex deployment",
+      "wraps": [
+        "ratelimiter",
+        "convexfns",
+        "betterauth",
+        "pushpool",
+        "planpool",
+        "convexdb",
+        "pushsend",
+        "plangen",
+        "deck"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Identity + room capability",
+      "wraps": [
+        "betterauth",
+        "convexfns"
+      ],
+      "pad": 14
+    }
+  ],
+  "connections": [
+    {
+      "id": "member-loads-app",
+      "from": "browser",
+      "to": "nextapp",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "labelAt": [
+        120,
+        178
+      ]
+    },
+    {
+      "id": "app-to-convex",
+      "from": "nextapp",
+      "to": "convexfns",
+      "label": "queries + mutations",
+      "variant": "emphasis"
+    },
+    {
+      "id": "match-enqueues",
+      "from": "convexfns",
+      "to": "planpool",
+      "label": "on match",
+      "variant": "emphasis",
+      "labelDx": 32
+    },
+    {
+      "id": "pool-runs-generator",
+      "from": "planpool",
+      "to": "plangen",
+      "label": "one lease winner",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plan-written",
+      "from": "plangen",
+      "to": "convexdb",
+      "label": "upsert plan",
+      "variant": "emphasis"
+    },
+    {
+      "id": "auth-proxy",
+      "from": "nextapp",
+      "to": "betterauth",
+      "label": "proxy /api/auth",
+      "variant": "security"
+    },
+    {
+      "id": "identity-check",
+      "from": "betterauth",
+      "to": "convexfns",
+      "label": "JWT identity",
+      "variant": "security"
+    },
+    {
+      "id": "reserve-quota",
+      "from": "convexfns",
+      "to": "ratelimiter",
+      "label": "reserve quota",
+      "variant": "security",
+      "labelDx": -52,
+      "labelDy": -14
+    },
+    {
+      "id": "build-deck",
+      "from": "convexfns",
+      "to": "deck",
+      "label": "build deck"
+    },
+    {
+      "id": "room-state",
+      "from": "convexfns",
+      "to": "convexdb",
+      "label": "room state"
+    },
+    {
+      "id": "places-lookup",
+      "from": "deck",
+      "to": "places",
+      "label": "server key only",
+      "variant": "dashed"
+    },
+    {
+      "id": "plan-prompt",
+      "from": "plangen",
+      "to": "openai",
+      "label": "server key only",
+      "variant": "dashed"
+    },
+    {
+      "id": "notify-room",
+      "from": "convexfns",
+      "to": "pushpool",
+      "label": "five room events",
+      "via": [
+        [
+          500,
+          234
+        ],
+        [
+          500,
+          494
+        ]
+      ],
+      "labelAt": [
+        522,
+        415
+      ]
+    },
+    {
+      "id": "pool-runs-sender",
+      "from": "pushpool",
+      "to": "pushsend",
+      "label": "one job per event"
+    },
+    {
+      "id": "push-out",
+      "from": "pushsend",
+      "to": "pushservice",
+      "label": "VAPID signed",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Client and PWA",
+      "items": [
+        "Next.js 16 App Router, React 19, Tailwind v4",
+        "Service worker serves /offline and takes pushes",
+        "Guests join by four-digit code, no account"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Push module",
+      "items": [
+        "joined, matched, planReady, proposalOpened, booked",
+        "One row per browser, keyed by account or seat",
+        "A 404 or 410 deletes that subscription"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Queues",
+      "items": [
+        "Two pools, parallelism 8, retries off",
+        "Plan duplicates die at execution under a lease",
+        "Push retries are decided per endpoint"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Trust boundaries",
+      "items": [
+        "Next holds no auth secret",
+        "Guests carry a sessionKey, not an identity",
+        "Provider and VAPID keys stay in the deployment"
+      ]
+    }
+  ]
+}
