@@ -3,9 +3,10 @@ import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
 import { username } from "better-auth/plugins/username";
 import type { BetterAuthOptions } from "better-auth";
+import { v } from "convex/values";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { query } from "./_generated/server";
+import { publicQuery } from "./lib/customFunctions";
 import authConfig from "./auth.config";
 
 const siteUrl = process.env.SITE_URL!;
@@ -52,16 +53,36 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
     plugins: [username(), convex({ authConfig })],
   });
 
+const authUserValidator = v.object({
+  _id: v.string(),
+  _creationTime: v.number(),
+  name: v.string(),
+  email: v.string(),
+  emailVerified: v.boolean(),
+  image: v.optional(v.union(v.null(), v.string())),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  twoFactorEnabled: v.optional(v.union(v.null(), v.boolean())),
+  isAnonymous: v.optional(v.union(v.null(), v.boolean())),
+  username: v.optional(v.union(v.null(), v.string())),
+  displayUsername: v.optional(v.union(v.null(), v.string())),
+  phoneNumber: v.optional(v.union(v.null(), v.string())),
+  phoneNumberVerified: v.optional(v.union(v.null(), v.boolean())),
+  userId: v.optional(v.union(v.null(), v.string())),
+});
+
 /** Current signed-in user, or null when signed out. */
-export const getCurrentUser = query({
+export const getCurrentUser = publicQuery({
   args: {},
+  returns: v.union(v.null(), authUserValidator),
   handler: async (ctx) => {
     return (await authComponent.safeGetAuthUser(ctx)) ?? null;
   },
 });
 
 /** Which social providers are actually configured, so the UI can hide dead buttons. */
-export const enabledSocialProviders = query({
+export const enabledSocialProviders = publicQuery({
   args: {},
+  returns: v.array(v.string()),
   handler: async () => Object.keys(socialProviders() ?? {}),
 });

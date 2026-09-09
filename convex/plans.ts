@@ -1,18 +1,23 @@
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
-import { action, internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import schema, { slotValidator, stopValidator } from "./schema";
+import schema from "./schema";
+import { slotValidator, stopValidator } from "./validators";
 import { memberCount, refuseIfBooked, requireMember, roomByCode } from "./lib/access";
-import { throwUserError } from "./lib/errors";
+import { isProviderReservationError, throwUserError } from "./lib/errors";
 import { applyStopLock } from "./lib/lock";
 import { settleProposal } from "./lib/proposals";
 import { DEFAULT_LOCK_RULE } from "./lib/rules";
 import { applyStopSwap } from "./lib/swap";
 import { jsonCompletion } from "./lib/openai";
-import { FREE_TYPES, MOOD_TYPES, priceLevelToCents } from "./lib/scoring";
-import { isOverBudget, sanitizeClientStop, totalPerHeadCents, type Slot, type Stop } from "./lib/stops";
-import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./lib/planPrompt";
+import { FREE_TYPES, MOOD_TYPES } from "./lib/scoring";
+import { sanitizeClientStop, totalPerHeadCents, type Stop } from "./lib/stops";
+import { generatePlan } from "./lib/plans/generation";
+import { optionsValidator, toOptions } from "./lib/plans/search";
+import { enqueuePlanGeneration } from "./lib/planQueue";
+import { publicAction, publicMutation } from "./lib/customFunctions";
+
 
 export const planContext = internalQuery({
   args: { roomId: v.id("rooms"), questId: v.id("quests") },
@@ -44,6 +49,13 @@ export const planContext = internalQuery({
     // roster somehow reads empty, so the prompt never asks for 0 people.
     return { room, quest, headcount: members.length || room.headcount };
   },
+});
+
+export const hasPlan = internalQuery({
+  args: { roomId: v.id("rooms") },
+  returns: v.boolean(),
+  handler: async (ctx, { roomId }) =>
+    (await ctx.db.query("plans").withIndex("by_room", (q) => q.eq("roomId", roomId)).first()) !== null,
 });
 
 /**
@@ -210,96 +222,9 @@ export const writePlan = internalMutation({
 export const generate = internalAction({
   args: { roomId: v.id("rooms"), questId: v.id("quests") },
   returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    // The lease first, before any work is done or any money is spent. Both ways
-    // in -- `resolveMatch` scheduling the first build, and `plans.retry`
-    // scheduling a replacement -- come through here, so this one call is what
-    // stops two builds running over each other however they were started.
-    const token = await ctx.runMutation(internal.plans.markGenerating, { roomId: args.roomId });
-    if (token === null) {
-      // A live build already holds the room. Not an error: the group is about
-      // to get a plan from whoever holds it.
-      console.warn(
-        `plans.generate: room ${args.roomId} is already having its plan written; standing down.`,
-      );
-      return null;
-    }
-
-    try {
-      const { room, quest, headcount } = await ctx.runQuery(internal.plans.planContext, args);
-
-      const input: PlanInput = {
-        venueName: quest.title,
-        headcount,
-        budgetPerHeadCents: room.budgetPerHeadCents,
-        // HONESTY -- the anchor stop is priced at what the matched card says the
-        // venue costs, never at a share of what the group said they could spend.
-        // `null` is a venue Google gave no price signal for, and it stays null
-        // all the way to the stop rather than becoming a number nobody quoted.
-        anchorPriceCents: quest.priceCents ?? null,
-        startAt: room.whenAt,
-        mood: room.mood,
-      };
-
-      // Start from the usable night, then improve on it if the model cooperates.
-      let result = fallbackPlan(input);
-
-      try {
-        const raw = await jsonCompletion(buildPlanPrompt(input));
-        // `jsonCompletion` already parsed the body; re-serialising keeps every
-        // untrusted model answer going through the one coercing, never-throwing
-        // entry point rather than a second hand-rolled one here.
-        const parsed = parsePlanResponse(JSON.stringify(raw), input);
-
-        if (isOverBudget(parsed.stops, room.budgetPerHeadCents)) {
-          // A $30 room being handed a $80 night -- or a free room being handed a
-          // paid one -- is worse than the plainer plan we already have.
-          console.warn("plans.generate: model plan was over budget; keeping the canned night.");
-        } else {
-          result = parsed;
-        }
-      } catch (error) {
-        // Never leave a matched room without a plan because a third party was
-        // slow -- but never fall back silently either, or the outage is invisible.
-        console.warn("plans.generate: no model plan, using the canned night.", error);
-      }
-
-      await ctx.runMutation(internal.plans.writePlan, {
-        roomId: args.roomId,
-        questId: args.questId,
-        token,
-        stops: result.stops,
-        shareMessage: result.shareMessage,
-      });
-    } catch (error) {
-      // The room or the quest is gone, or the write itself failed. Hand the
-      // claim back rather than making the group wait out STALE_PLAN_MS before
-      // the host's retry button will do anything.
-      await ctx.runMutation(internal.plans.abandonPlan, { roomId: args.roomId, token });
-      throw error;
-    }
-    return null;
-  },
+  handler: async (ctx, args): Promise<null> => generatePlan(ctx, args),
 });
-
-/**
- * The host asks for the plan to be written again.
- *
- * This exists because a killed action cannot run its own error handler. If the
- * platform stops `generate` mid-flight -- a deploy, a wall-clock limit, a crash
- * -- the room sits on `matched` with no plan row, `rooms.get` returns
- * `plan: null`, and nothing else in the backend ever schedules another build:
- * `resolveMatch` deliberately refuses to re-decide a matched room. Without this
- * the night is over.
- *
- * Authorisation is modelled on `deck.build`: the `sessionKey` capability proves
- * membership of this one room, and the host check is the same one that guards
- * starting the deck. No `userId` or `memberId` is accepted. Host-only because
- * this spends OpenAI quota and because a whole room tapping "try again" at once
- * should not become a queue of builds -- though `markGenerating` would refuse
- * them anyway.
- */
-export const retry = mutation({
+export const retry = publicMutation({
   args: { code: v.string(), sessionKey: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -343,7 +268,7 @@ export const retry = mutation({
     // Scheduled, not run inline: this is a mutation and the build makes a
     // network call. `generate` takes the lease itself, so the two entry points
     // into a plan build stay identical.
-    await ctx.scheduler.runAfter(0, internal.plans.generate, { roomId: room._id, questId });
+    await enqueuePlanGeneration(ctx, room._id, questId);
     return null;
   },
 });
@@ -362,7 +287,7 @@ export const retry = mutation({
  * The swap itself is `applyStopSwap`, the same call the accepted-proposal path
  * makes, so the solo edit and the group edit cannot drift.
  */
-export const replaceStop = mutation({
+export const replaceStop = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),
@@ -456,7 +381,7 @@ export const replaceStop = mutation({
  * this file is responsible for is that the privilege is enforced on the server,
  * from the member row, and that is what the check below does.
  */
-export const setLocked = mutation({
+export const setLocked = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),
@@ -583,62 +508,8 @@ export const setLocked = mutation({
   },
 });
 
-const optionsValidator = v.object({ options: v.array(stopValidator) });
-
-/**
- * Turns Places results into swap candidates for one slot.
- *
- * HONESTY -- the price shown is always the real estimate for the venue, even in
- * a $0 room. `deck.ts` may stamp a free room's candidates at $0 because it
- * restricts the SEARCH to FREE_TYPES first, so the $0 is true there. Here the
- * query is free text: a $0 group that types the name of a fine diner would be
- * shown it at $0 and find out at the table.
- *
- * Nothing REFUSES an over-budget swap -- `applyStopSwap` checks the stop id and
- * the lock, and that is deliberate, because the group is allowed to decide to
- * overspend. What they are not allowed to be is uninformed: `rooms.get`
- * projects `plan.overBudget` from `isOverBudget` against the room's budget, so
- * the one subscription the client reads carries the fact, and the group
- * declines knowingly instead of finding out at the table.
- */
-function toOptions(
-  results: Array<{
-    id: string; name: string; address: string;
-    summary: string | null; priceLevel: string | null;
-  }>,
-  slot: Slot,
-  prefix: string,
-): Stop[] {
-  return results.slice(0, 6).map((place, i) => {
-    const banded = priceLevelToCents(place.priceLevel);
-    return {
-      id: `${prefix}_${i}`,
-      slot,
-      placeId: place.id,
-      name: place.name,
-      // startAt is rewritten by applyStopSwap, so a placeholder is correct here.
-      startAt: 0,
-      durationMin: 60,
-      // A stop must carry a number -- the itinerary totals them -- but an
-      // unpriced venue has no number to carry. It contributes 0, which
-      // understates the night, and the note says so in the one place the person
-      // choosing it will read. That is the lesser of the two errors available:
-      // the alternative is inventing a band, which is what put $35 on a public
-      // park, and an invented number would be indistinguishable from a real one
-      // in `plan.totalPerHeadCents` and in the booking total.
-      costPerHeadCents: banded ?? 0,
-      note:
-        banded === null
-          ? `Price unknown -- ${place.summary ?? place.address}`
-          : (place.summary ?? place.address),
-      source: "manual" as const,
-      locked: false,
-    };
-  });
-}
-
 /** "Pick it yourself" -- a typed search, biased to the room's area. */
-export const searchStop = action({
+export const searchStop = publicAction({
   args: {
     code: v.string(),
     sessionKey: v.string(),
@@ -655,6 +526,12 @@ export const searchStop = action({
     });
     if (!view) throwUserError("NOT_A_MEMBER", "You are not a member of this room.");
     if (!args.query.trim()) return { options: [] };
+
+    await ctx.runMutation(internal.rateLimits.reserveRequest, {
+      roomId: view.room._id,
+      memberId: view.you._id,
+      family: "search",
+    });
 
     // internal.places.searchText, not api: the text search is an internalAction
     // precisely so it is not an unauthenticated proxy onto our billed Google key.
@@ -676,7 +553,7 @@ export const searchStop = action({
  * Falls back to a plain nearby search when the model is unavailable, so the
  * button always does something. An empty sheet reads as a broken feature.
  */
-export const suggestStop = action({
+export const suggestStop = publicAction({
   args: { code: v.string(), sessionKey: v.string(), stopId: v.string() },
   returns: optionsValidator,
   handler: async (ctx, args): Promise<{ options: Stop[] }> => {
@@ -689,6 +566,12 @@ export const suggestStop = action({
 
     const target = view.plan.stops.find((s) => s.id === args.stopId);
     if (!target) throwUserError("STOP_NOT_FOUND", "That stop is not in this plan.");
+
+    await ctx.runMutation(internal.rateLimits.reserveRequest, {
+      roomId: view.room._id,
+      memberId: view.you._id,
+      family: "suggest",
+    });
 
     const free = view.room.budgetPerHeadCents === 0;
     const keeping = view.plan.stops
@@ -711,7 +594,10 @@ export const suggestStop = action({
 
       // The one shared OpenAI entry point, so this feature cannot drift from
       // plans.generate the day the model name changes.
-      const raw = (await jsonCompletion(prompt)) as {
+      const raw = (await jsonCompletion(
+        prompt,
+        () => ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "openai" }),
+      )) as {
         options?: Array<Record<string, unknown>>;
       };
 
@@ -738,6 +624,7 @@ export const suggestStop = action({
       if (options.length) return { options };
       console.warn(`plans.suggestStop: room ${view.room.code}: the model returned no options.`);
     } catch (error) {
+      if (isProviderReservationError(error)) throw error;
       // Fall through to the search below rather than surfacing an empty sheet
       // -- but never silently: a demo quietly running on the fallback has to be
       // visible in the logs.

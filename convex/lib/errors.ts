@@ -48,7 +48,53 @@ export type ErrorCode =
   | "ACCOUNT_DELETED"
   | "AVATAR_MISSING"
   | "AVATAR_TYPE"
-  | "AVATAR_SIZE";
+  | "AVATAR_SIZE"
+  | "RATE_LIMITED"
+  | "PROVIDER_QUOTA_UNAVAILABLE"
+  | "DISCOVERY_LIMIT"
+  | "VENUE_CATALOG_TOO_LARGE";
+
+export function isRateLimitedError(
+  error: unknown,
+): error is ConvexError<{ code: "RATE_LIMITED"; message: string; retryAfter: number }> {
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  if (typeof data !== "object" || data === null) return false;
+  const record = data as Record<string, unknown>;
+  return (
+    record.code === "RATE_LIMITED" &&
+    typeof record.message === "string" &&
+    typeof record.retryAfter === "number"
+  );
+}
+
+export function isProviderReservationError(error: unknown): boolean {
+  if (isRateLimitedError(error)) return true;
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  if (typeof data !== "object" || data === null) return false;
+  return (data as Record<string, unknown>).code === "PROVIDER_QUOTA_UNAVAILABLE";
+}
+
+export function providerQuotaUnavailableError(): ConvexError<{
+  code: "PROVIDER_QUOTA_UNAVAILABLE";
+  message: string;
+}> {
+  return new ConvexError({
+    code: "PROVIDER_QUOTA_UNAVAILABLE",
+    message: "Provider quota is temporarily unavailable. Please try again later.",
+  });
+}
+
+/** Preserve quota denials while classifying a failed internal action boundary. */
+export async function runProviderReservation(reserve: () => Promise<unknown>): Promise<void> {
+  try {
+    await reserve();
+  } catch (error) {
+    if (isProviderReservationError(error)) throw error;
+    throw providerQuotaUnavailableError();
+  }
+}
 
 export function throwUserError(code: ErrorCode, message: string): never {
   throw new ConvexError({ code, message });

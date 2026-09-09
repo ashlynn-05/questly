@@ -2,7 +2,9 @@
 
 import { v } from "convex/values";
 import OpenAI from "openai";
+import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
+import { runProviderReservation } from "../lib/errors";
 
 const EMBEDDING_MODEL = "text-embedding-3-small"; // 1536 dims
 
@@ -22,7 +24,12 @@ const EMBEDDING_TIMEOUT_MS = 10_000;
  * This is the only implementation -- the single-text path below calls it -- so
  * the model name, the key check and the error message can never drift.
  */
-const embedBatch = async (inputs: string[]): Promise<number[][]> => {
+type ReserveProvider = () => Promise<unknown>;
+
+const embedBatch = async (
+  inputs: string[],
+  reserveProvider: ReserveProvider,
+): Promise<number[][]> => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     // A plain `Error`, deliberately: both callers catch it and carry on --
@@ -31,16 +38,42 @@ const embedBatch = async (inputs: string[]): Promise<number[][]> => {
     // reaches a user for `throwUserError` to talk to.
     throw new Error("OPENAI_API_KEY is not set. Run: npx convex env set OPENAI_API_KEY <key>");
   }
-  const openai = new OpenAI({ apiKey, timeout: EMBEDDING_TIMEOUT_MS, maxRetries: 1 });
-  const response = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: inputs });
-  // Callers pair vectors with inputs positionally, so restore the request order
-  // rather than trusting the response to already be in it.
-  return [...response.data]
-    .sort((a, b) => a.index - b.index)
-    .map((datum) => datum.embedding);
+  let reservationFailed = false;
+  let reservationError: unknown;
+  const openai = new OpenAI({
+    apiKey: async () => {
+      try {
+        await runProviderReservation(reserveProvider);
+      } catch (error) {
+        reservationFailed = true;
+        reservationError = error;
+        throw error;
+      }
+      return apiKey;
+    },
+    timeout: EMBEDDING_TIMEOUT_MS,
+    maxRetries: 1,
+  });
+  try {
+    const response = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: inputs });
+    // Callers pair vectors with inputs positionally, so restore the request order
+    // rather than trusting the response to already be in it.
+    return [...response.data]
+      .sort((a, b) => a.index - b.index)
+      .map((datum) => datum.embedding);
+  } catch (error) {
+    // The SDK wraps async apiKey setter failures in an OpenAIError. Preserve the
+    // original Convex quota error so callers can fail closed instead of falling
+    // back to another paid path.
+    if (reservationFailed) throw reservationError;
+    throw error;
+  }
 };
 
-const embed = async (input: string): Promise<number[]> => (await embedBatch([input]))[0];
+const embed = async (
+  input: string,
+  reserveProvider: ReserveProvider,
+): Promise<number[]> => (await embedBatch([input], reserveProvider))[0];
 
 /**
  * Batched embeddings for the deck builder's shortlist. Internal: it spends
@@ -49,15 +82,22 @@ const embed = async (input: string): Promise<number[]> => (await embedBatch([inp
 export const embedMany = internalAction({
   args: { texts: v.array(v.string()) },
   returns: v.array(v.array(v.float64())),
-  handler: async (_ctx, { texts }): Promise<number[][]> =>
-    texts.length === 0 ? [] : await embedBatch(texts),
+  handler: async (ctx, { texts }): Promise<number[][]> =>
+    texts.length === 0
+      ? []
+      : await embedBatch(texts, () =>
+          ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "openai" }),
+        ),
 });
 
 /** The shared embedder. Lives here because this file already owns the client. */
 export const embedText = internalAction({
   args: { text: v.string() },
   returns: v.array(v.float64()),
-  handler: async (_ctx, { text }): Promise<number[]> => embed(text),
+  handler: async (ctx, { text }): Promise<number[]> =>
+    embed(text, () =>
+      ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "openai" }),
+    ),
 });
 
 // `addSnippet` and `semanticSearch` used to live here, alongside the `snippets`

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { stopValidator } from "./schema";
+import { publicMutation } from "./lib/customFunctions";
+import { stopValidator } from "./validators";
 import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { settleProposal } from "./lib/proposals";
@@ -20,7 +20,7 @@ import { sanitizeClientStop } from "./lib/stops";
  * has exactly one write path and it is this one.
  */
 
-export const open = mutation({
+export const open = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),
@@ -120,7 +120,7 @@ export const open = mutation({
   },
 });
 
-export const vote = mutation({
+export const vote = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),

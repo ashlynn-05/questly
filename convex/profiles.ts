@@ -1,9 +1,14 @@
 import { v } from "convex/values";
-import { action, internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
-import schema, { answerValidator, moodValidator } from "./schema";
-import { requireUserId, safeUserId } from "./lib/access";
-import { throwUserError } from "./lib/errors";
+import schema from "./schema";
+import { answerValidator, moodValidator } from "./validators";
+import { isProviderReservationError, throwUserError } from "./lib/errors";
+import {
+  authenticatedAction,
+  authenticatedMutation,
+  publicQuery,
+} from "./lib/customFunctions";
 import { CARD_IDS, GOAL_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/quiz";
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/avatar";
 
@@ -59,11 +64,11 @@ const MAX_MY_ROOMS = 24;
 /** A display name is one line of a person's own choosing, not an identity claim. */
 const MAX_DISPLAY_NAME = 40;
 
-export const me = query({
+export const me = publicQuery({
   args: {},
   returns: v.union(v.null(), publicProfileValidator),
   handler: async (ctx) => {
-    const userId = await safeUserId(ctx);
+    const userId = ctx.userId;
     if (!userId) return null;
 
     const profile = await ctx.db
@@ -137,7 +142,7 @@ export const write = internalMutation({
   },
 });
 
-export const saveQuiz = action({
+export const saveQuiz = authenticatedAction({
   args: {
     answers: v.record(v.string(), answerValidator),
     goals: v.array(v.string()),
@@ -148,7 +153,7 @@ export const saveQuiz = action({
     // trivially spoofable, and a roomful of members all claiming the same name
     // is exactly the confusion this field exists to prevent. It is derived
     // here, from the authenticated identity, or not at all.
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
     const identity = await ctx.auth.getUserIdentity();
     const displayName = identity?.name?.trim() || identity?.email?.trim() || "Explorer";
 
@@ -188,6 +193,7 @@ export const saveQuiz = action({
     try {
       embedding = await ctx.runAction(internal.ai.embeddings.embedText, { text: sentence });
     } catch (error) {
+      if (isProviderReservationError(error)) throw error;
       console.warn(
         "profiles.saveQuiz: no taste vector for this profile; saving the quiz without one.",
         error,
@@ -228,11 +234,11 @@ export const saveQuiz = action({
  * sources of truth for one string, kept in sync by hand, is the drift this
  * avoids rather than invites.
  */
-export const renameMe = mutation({
+export const renameMe = authenticatedMutation({
   args: { displayName: v.string() },
   returns: v.null(),
   handler: async (ctx, { displayName }): Promise<null> => {
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
 
     const name = displayName.trim();
     if (!name) throwUserError("NAME_REQUIRED", "A name is required.");
@@ -273,11 +279,10 @@ export const renameMe = mutation({
  * it, which is the right way round -- the alternative is a row pointing at a
  * file that never arrived.
  */
-export const generateAvatarUploadUrl = mutation({
+export const generateAvatarUploadUrl = authenticatedMutation({
   args: {},
   returns: v.string(),
   handler: async (ctx): Promise<string> => {
-    await requireUserId(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -310,11 +315,11 @@ export const generateAvatarUploadUrl = mutation({
  * following it with this. Sweeping those needs a scheduled job over `_storage`
  * and is a follow-up, not something to fake here.
  */
-export const setAvatar = mutation({
+export const setAvatar = authenticatedMutation({
   args: { storageId: v.id("_storage") },
   returns: v.null(),
   handler: async (ctx, { storageId }): Promise<null> => {
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
 
     const profile = await ctx.db
       .query("profiles")
@@ -348,11 +353,11 @@ export const setAvatar = mutation({
 });
 
 /** Back to initials, and the bytes go with it. */
-export const clearAvatar = mutation({
+export const clearAvatar = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
 
     const profile = await ctx.db
       .query("profiles")
@@ -382,11 +387,11 @@ export const clearAvatar = mutation({
  * let in. Both are `.take()`-bounded rather than collected -- these tables grow
  * with every room and every guest the product has ever had.
  */
-export const myRooms = query({
+export const myRooms = publicQuery({
   args: {},
   returns: v.array(myRoomValidator),
   handler: async (ctx) => {
-    const userId = await safeUserId(ctx);
+    const userId = ctx.userId;
     if (!userId) return [];
 
     const hosted = await ctx.db

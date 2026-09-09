@@ -1,7 +1,14 @@
 import { v } from "convex/values";
-import { action, httpAction, internalAction } from "./_generated/server";
-import { requireUserId } from "./lib/access";
-import { throwUserError } from "./lib/errors";
+import { internal } from "./_generated/api";
+import { httpAction, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
+import {
+  isProviderReservationError,
+  isRateLimitedError,
+  runProviderReservation,
+  throwUserError,
+} from "./lib/errors";
+import { authenticatedAction } from "./lib/customFunctions";
 
 const PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby";
 
@@ -63,6 +70,7 @@ const FIELD_MASK = [
 ].join(",");
 
 const PHOTO_MAX_PX = 800;
+const PHOTO_LEASE_MS = PLACES_TIMEOUT_MS + 2_000;
 
 /**
  * Google's own photo references, and nothing else. The route below interpolates
@@ -172,6 +180,7 @@ function mapPlace(place: RawPlace): PlaceResult {
  * the internal caller does not have to satisfy the public one's auth model.
  */
 async function nearby(args: {
+  ctx: ActionCtx;
   lat: number;
   lng: number;
   radiusKm: number;
@@ -189,6 +198,9 @@ async function nearby(args: {
   }
 
   const radiusMeters = Math.min(Math.max(args.radiusKm, 0.001) * 1000, MAX_RADIUS_METERS);
+  await runProviderReservation(() =>
+    args.ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "google" }),
+  );
 
   let response: Response;
   try {
@@ -250,14 +262,12 @@ const nearbyReturns = v.object({
  *
  * Public, but signed-in only -- it spends our Google quota.
  */
-export const searchNearby = action({
+export const searchNearby = authenticatedAction({
   args: nearbyArgs,
   returns: nearbyReturns,
   handler: async (ctx, args): Promise<{ radiusMeters: number; results: PlaceResult[] }> => {
-    // This action proxies our billed Google key. Without a signed-in caller,
-    // anyone holding the deployment URL could drain the quota.
-    await requireUserId(ctx);
-    return await nearby(args);
+    await ctx.runMutation(internal.rateLimits.reserveUserRequest, { family: "search" });
+    return await nearby({ ...args, ctx });
   },
 });
 
@@ -270,8 +280,8 @@ export const searchNearby = action({
 export const searchNearbyInternal = internalAction({
   args: nearbyArgs,
   returns: nearbyReturns,
-  handler: async (_ctx, args): Promise<{ radiusMeters: number; results: PlaceResult[] }> =>
-    await nearby(args),
+  handler: async (ctx, args): Promise<{ radiusMeters: number; results: PlaceResult[] }> =>
+    await nearby({ ...args, ctx }),
 });
 
 const TEXT_ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
@@ -284,9 +294,13 @@ const TEXT_ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
 export const searchText = internalAction({
   args: { query: v.string(), lat: v.number(), lng: v.number(), radiusKm: v.number() },
   returns: v.object({ results: v.array(placeResultValidator) }),
-  handler: async (_ctx, args): Promise<{ results: PlaceResult[] }> => {
+  handler: async (ctx, args): Promise<{ results: PlaceResult[] }> => {
     const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
     if (!apiKey) throwPlacesUnavailable("GOOGLE_MAPS_SERVER_KEY is not set.");
+
+    await runProviderReservation(() =>
+      ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "google" }),
+    );
 
     let response: Response;
     try {
@@ -355,43 +369,200 @@ function isGooglePhotoUri(uri: string): boolean {
   }
 }
 
-export const photo = httpAction(async (_ctx, request) => {
+class PhotoResponseError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const pendingPhotoResolutions = new Map<string, Promise<string>>();
+
+async function photoLeaseKey(name: string, maxWidthPx: number): Promise<string> {
+  const bytes = new TextEncoder().encode(`${name}\0${maxWidthPx}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** The reference must have come from a quest already shown by this app. */
+export const knownPhoto = internalQuery({
+  args: { name: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { name }): Promise<boolean> =>
+    (await ctx.db.query("quests").withIndex("by_photoName", (q) => q.eq("photoName", name)).first()) !==
+    null,
+});
+
+export const acquirePhotoLease = internalMutation({
+  args: { key: v.string(), token: v.string(), now: v.number(), expiresAt: v.number() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const current = await ctx.db
+      .query("photoLeases")
+      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .first();
+    if (current && current.expiresAt > args.now) return false;
+    if (current) {
+      await ctx.db.patch(current._id, { token: args.token, expiresAt: args.expiresAt });
+    } else {
+      await ctx.db.insert("photoLeases", {
+        key: args.key,
+        token: args.token,
+        expiresAt: args.expiresAt,
+      });
+    }
+    return true;
+  },
+});
+
+export const releasePhotoLease = internalMutation({
+  args: { key: v.string(), token: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { key, token }): Promise<null> => {
+    const current = await ctx.db
+      .query("photoLeases")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    if (current?.token === token) await ctx.db.delete(current._id);
+    return null;
+  },
+});
+
+async function resolvePhoto(
+  ctx: ActionCtx,
+  name: string,
+  maxWidthPx: number,
+  key: string,
+): Promise<string> {
+  const token = crypto.randomUUID();
+  const now = Date.now();
+  let acquired: boolean;
+  try {
+    acquired = await ctx.runMutation(internal.places.acquirePhotoLease, {
+      key,
+      token,
+      now,
+      expiresAt: now + PHOTO_LEASE_MS,
+    });
+  } catch (error) {
+    console.warn("places.photo: lease store unavailable.", error);
+    throw new PhotoResponseError(503, "Photos are temporarily unavailable.");
+  }
+  if (!acquired) throw new PhotoResponseError(429, "Photo is busy. Try again shortly.");
+
+  let failure: unknown;
+  try {
+    const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
+    if (!apiKey) throw new PhotoResponseError(503, "Photos are not configured.");
+
+    await runProviderReservation(() =>
+      ctx.runMutation(internal.rateLimits.reserveProvider, { provider: "google" }),
+    );
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${maxWidthPx}&skipHttpRedirect=true`,
+        { headers: { "X-Goog-Api-Key": apiKey }, signal: AbortSignal.timeout(PLACES_TIMEOUT_MS) },
+      );
+    } catch {
+      throw new PhotoResponseError(502, "Photo unavailable.");
+    }
+    if (!response.ok) {
+      if (response.status === 400 || response.status === 404) {
+        throw new PhotoResponseError(404, "Photo unavailable.");
+      }
+      throw new PhotoResponseError(502, "Photo unavailable.");
+    }
+
+    let photoUri: unknown;
+    try {
+      photoUri = (await response.json() as { photoUri?: unknown }).photoUri;
+    } catch {
+      throw new PhotoResponseError(502, "Photo unavailable.");
+    }
+    if (typeof photoUri !== "string" || !isGooglePhotoUri(photoUri)) {
+      throw new PhotoResponseError(502, "Photo unavailable.");
+    }
+    return photoUri;
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    try {
+      await ctx.runMutation(internal.places.releasePhotoLease, { key, token });
+    } catch (error) {
+      if (failure === undefined) {
+        throw new PhotoResponseError(503, "Photos are temporarily unavailable.");
+      }
+      console.warn("places.photo: failed to release lease after a photo error.", error);
+    }
+  }
+}
+
+function retryAfterSeconds(error: unknown): string {
+  if (!isRateLimitedError(error)) return "1";
+  return String(Math.max(1, Math.ceil(error.data.retryAfter / 1000)));
+}
+
+export const photo = httpAction(async (ctx, request) => {
   const url = new URL(request.url);
   const name = url.searchParams.get("name") ?? "";
   if (!PHOTO_NAME.test(name)) {
     return new Response("Not a Places photo reference.", { status: 400 });
   }
 
-  const apiKey = process.env.GOOGLE_MAPS_SERVER_KEY;
-  // 503, not 500: the deployment is missing configuration, and a card without
-  // a photo is a card, not an error the viewer can do anything about.
-  if (!apiKey) return new Response("Photos are not configured.", { status: 503 });
+  const rawWidth = url.searchParams.get("maxWidthPx");
+  let maxWidthPx = PHOTO_MAX_PX;
+  if (rawWidth !== null) {
+    const requested = Number(rawWidth);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      return new Response("Invalid photo width.", { status: 400 });
+    }
+    maxWidthPx = Math.max(1, Math.min(Math.round(requested), PHOTO_MAX_PX));
+  }
 
-  const requested = Number(url.searchParams.get("maxWidthPx"));
-  const maxWidthPx =
-    Number.isFinite(requested) && requested > 0 ? Math.min(Math.round(requested), PHOTO_MAX_PX) : PHOTO_MAX_PX;
-
-  // Bounded like every other outbound call: this one is served straight into an
-  // <img> tag, so a hung upstream is a card that never finishes loading.
-  let response: Response;
+  let known: boolean;
   try {
-    response = await fetch(
-      `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${maxWidthPx}&skipHttpRedirect=true`,
-      { headers: { "X-Goog-Api-Key": apiKey }, signal: AbortSignal.timeout(PLACES_TIMEOUT_MS) },
-    );
-  } catch {
-    return new Response("Photo unavailable.", { status: 502 });
+    known = await ctx.runQuery(internal.places.knownPhoto, { name });
+  } catch (error) {
+    console.warn("places.photo: source index unavailable.", error);
+    return new Response("Photos are temporarily unavailable.", { status: 503 });
   }
-  if (!response.ok) return new Response("Photo unavailable.", { status: 502 });
+  if (!known) return new Response("Photo unavailable.", { status: 404 });
 
-  const { photoUri } = (await response.json()) as { photoUri?: string };
-  if (!photoUri || !isGooglePhotoUri(photoUri)) {
-    return new Response("Photo unavailable.", { status: 502 });
+  const key = await photoLeaseKey(name, maxWidthPx);
+  let resolution = pendingPhotoResolutions.get(key);
+  if (!resolution) {
+    resolution = resolvePhoto(ctx, name, maxWidthPx, key);
+    pendingPhotoResolutions.set(key, resolution);
   }
 
-  // photoUri is Google's own signed, expiring URL. It carries no key of ours.
-  return new Response(null, {
-    status: 302,
-    headers: { Location: photoUri, "Cache-Control": "public, max-age=3600" },
-  });
+  try {
+    const photoUri = await resolution;
+    return new Response(null, {
+      status: 302,
+      headers: { Location: photoUri, "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof PhotoResponseError) {
+      const headers: Record<string, string> = {};
+      if (error.status === 429) headers["Retry-After"] = retryAfterSeconds(error);
+      return new Response(error.message, { status: error.status, headers });
+    }
+    if (isRateLimitedError(error)) {
+      return new Response("Photo rate limited. Try again shortly.", {
+        status: 429,
+        headers: { "Retry-After": retryAfterSeconds(error) },
+      });
+    }
+    if (isProviderReservationError(error)) {
+      return new Response("Photos are temporarily unavailable.", { status: 503 });
+    }
+    return new Response("Photo unavailable.", { status: 502 });
+  } finally {
+    if (pendingPhotoResolutions.get(key) === resolution) pendingPhotoResolutions.delete(key);
+  }
 });
