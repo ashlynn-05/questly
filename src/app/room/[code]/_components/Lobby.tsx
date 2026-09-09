@@ -176,68 +176,89 @@ export function Lobby({
   }
 
   return (
-    <section className="flex flex-col gap-8 px-5 py-10">
-      <div>
-        <h1 ref={headingRef} tabIndex={-1} className="flex flex-col gap-2">
-          <span className="board text-[11px] text-accent">Room</span>
-          <span className="num text-[64px] leading-none text-text">{code}</span>
-        </h1>
-        <p className="mt-3 text-[13px] text-dim">Read this out, or send the link.</p>
+    /* Two columns from `xl`, and only because this screen genuinely has two
+       halves: who is here, and what the host is about to set for them. The
+       roster is a list on the route line and stays one; the join link and the
+       house rules are a control panel that was always a second thing stacked
+       under it, off the bottom of the fold on a laptop.
+
+       `xl` rather than `lg`: at `lg` the concourse has already taken 200px and
+       the room's own column is around 776px, which is one column's worth. The
+       second column earns its place once the window does.
+
+       `items-start`, or the rules panel would be centred against a roster that
+       grows a seat at a time.
+
+       The mobile classes lead and are untouched: below `xl` this is the same
+       `flex flex-col gap-8` section it always was. */
+    <section className="flex flex-col gap-8 px-5 py-10 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:items-start xl:gap-x-12">
+      {/* The half that is the room filling up. Restates `gap-8` because it is
+          now one grid cell rather than four children of the section. */}
+      <div className="flex flex-col gap-8">
+        <div>
+          <h1 ref={headingRef} tabIndex={-1} className="flex flex-col gap-2">
+            <span className="board text-[11px] text-accent">Room</span>
+            <span className="num text-[64px] leading-none text-text">{code}</span>
+          </h1>
+          <p className="mt-3 text-[13px] text-dim">Read this out, or send the link.</p>
+        </div>
+
+        {/* The rail sits on the container; every row carries its own node and its
+            own left padding, so a row is free to grow (a confirmation, a longer
+            name) without the roundels drifting off the line. */}
+        <div className="relative">
+          <Rail dashed />
+          <ul className="m-0 flex list-none flex-col p-0">
+            {Array.from({ length: seats }, (_, i) => {
+              const member = view.members[i];
+              return (
+                <li key={member?._id ?? `seat-${i}`} className="relative py-1 pl-14">
+                  {/* 16px puts the roundel's centre (top + 9.5, for a 13px disc
+                      inside a 3px ring) on the centre of the 44px row below its
+                      4px of top padding. */}
+                  <RailNode top={16} state={member ? "locked" : "open"} />
+                  <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
+                    {member ? (
+                      <span className="text-[16px] text-text">
+                        {member.name}
+                        {member.isHost ? (
+                          <span className="board ml-2 text-[10px] text-accent">Host</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-[16px] text-dim">Waiting…</span>
+                    )}
+
+                    {/* R55: taking someone out of a group plan is socially loaded,
+                        so the control says whose seat it is and what pressing it
+                        does. Never a bare icon, and never an ambiguous cross.
+                        Two steps, because there is no undo -- they would have to
+                        be sent the link again. */}
+                    {view.you.isHost && member && !member.isHost ? (
+                      <ConfirmButton
+                        className="ml-auto"
+                        label={`Remove ${member.name}`}
+                        confirmLabel={`Yes, remove ${member.name}`}
+                        cancelLabel="Keep them"
+                        onConfirm={() => remove(member._id)}
+                      />
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        {/* The roster changes under people while they are looking elsewhere on
+            the screen, so the count is announced rather than only drawn. */}
+        <p aria-live="polite" className="sr-only">
+          {view.members.length} of {seats} in the room.
+        </p>
       </div>
 
-      {/* The rail sits on the container; every row carries its own node and its
-          own left padding, so a row is free to grow (a confirmation, a longer
-          name) without the roundels drifting off the line. */}
-      <div className="relative">
-        <Rail dashed />
-        <ul className="m-0 flex list-none flex-col p-0">
-          {Array.from({ length: seats }, (_, i) => {
-            const member = view.members[i];
-            return (
-              <li key={member?._id ?? `seat-${i}`} className="relative py-1 pl-14">
-                {/* 16px puts the roundel's centre (top + 9.5, for a 13px disc
-                    inside a 3px ring) on the centre of the 44px row below its
-                    4px of top padding. */}
-                <RailNode top={16} state={member ? "locked" : "open"} />
-                <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
-                  {member ? (
-                    <span className="text-[16px] text-text">
-                      {member.name}
-                      {member.isHost ? (
-                        <span className="board ml-2 text-[10px] text-accent">Host</span>
-                      ) : null}
-                    </span>
-                  ) : (
-                    <span className="text-[16px] text-dim">Waiting…</span>
-                  )}
-
-                  {/* R55: taking someone out of a group plan is socially loaded,
-                      so the control says whose seat it is and what pressing it
-                      does. Never a bare icon, and never an ambiguous cross.
-                      Two steps, because there is no undo -- they would have to
-                      be sent the link again. */}
-                  {view.you.isHost && member && !member.isHost ? (
-                    <ConfirmButton
-                      className="ml-auto"
-                      label={`Remove ${member.name}`}
-                      confirmLabel={`Yes, remove ${member.name}`}
-                      cancelLabel="Keep them"
-                      onConfirm={() => remove(member._id)}
-                    />
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
-      {/* The roster changes under people while they are looking elsewhere on
-          the screen, so the count is announced rather than only drawn. */}
-      <p aria-live="polite" className="sr-only">
-        {view.members.length} of {seats} in the room.
-      </p>
-
+      {/* The other half: the link out, and the two rules the host sets before
+          either binds anybody. */}
       <div className="flex flex-col gap-2">
         <Plate variant="raised" label="Copy the join link" onClick={() => void copyTheLink()} />
         {/* Mounted empty and filled later, never mounted with its text already

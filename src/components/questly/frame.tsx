@@ -34,14 +34,26 @@ export function Phone({
  * Wayfinding tile. Venue photography comes from Google Places and is neither
  * art-directed nor guaranteed to exist, so the loading and no-photo state is
  * drawn in the product's own language rather than left as a grey rectangle.
+ *
+ * `label` exists because the second caller is not a venue card. The landing
+ * page's desktop hero uses this as its artwork, where "the area around this
+ * venue" names a venue that screen has not chosen yet -- and a wrong label is
+ * worse than a generic one, because it is the whole of what a screen reader
+ * gets. The default is the venue-card wording every existing caller relies on.
  */
-export function MapTile({ className = "" }: { className?: string }) {
+export function MapTile({
+  className = "",
+  label = "Map of the area around this venue",
+}: {
+  className?: string;
+  label?: string;
+}) {
   return (
     <svg
       viewBox="0 0 320 190"
       className={className}
       role="img"
-      aria-label="Map of the area around this venue"
+      aria-label={label}
       preserveAspectRatio="xMidYMid slice"
     >
       <rect width="320" height="190" fill="var(--ground-raised)" />

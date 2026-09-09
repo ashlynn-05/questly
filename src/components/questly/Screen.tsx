@@ -57,20 +57,40 @@ type Props = {
 
 export function Screen({ children, bleed = false, badge = true }: Props) {
   return (
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground">
+    /* WHY 1048px AND NOT THE WHOLE WINDOW. The brief's reference is What's On
+       Melbourne, and the thing to copy from it is the restraint: measured off
+       its own stylesheet, `.page-container` caps at 1000px and then 1048px with
+       24px of side padding, and its nav band grows rather than the content
+       running to the window edge. A transit network's signage does not get
+       wider because the concourse did. So the desktop move here is a wider
+       column and a taller band -- not a full-bleed dashboard, and not a phone
+       centred in an empty field.
+
+       Below `lg` (1024px) nothing changes: 460px is still the column, so the
+       phone layout this product is actually used on is untouched, including the
+       `max-width: 460px` rule in `globals.css` that paints the iOS status bar
+       strip. */
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground lg:max-w-[1048px]">
       {/* The band. `h-[76px]` is the 44px roundel plus 16px of air above and
           below -- a real height rather than padding, so it cannot drift when a
           route puts something taller in the left slot. The wordmark is on every
           route without exception, including `/`: it is the one fixed point, and
           a header that drops it on one screen is the drift this component
-          exists to end. */}
-      <header className="flex h-[76px] shrink-0 items-center justify-between gap-3 px-5">
+          exists to end.
+
+          `lg:h-[104px]` is the same sum with 30px of air instead of 16px. The
+          roundel does not grow -- 44px is the target floor, not a phone
+          concession -- so the band earns its desktop presence from the air
+          around it, which is what the reference does too (its nav padding goes
+          from 0.5rem to 1.5rem/1rem and its wordmark from 11rem to 15rem). */}
+      <header className="flex h-[76px] shrink-0 items-center justify-between gap-3 px-5 lg:h-[104px] lg:px-6">
         <Link
           href="/"
           // The 44px target floor this product holds everywhere. The label is
           // 11px, so the padding and min-height are what make it tappable, not
-          // the word.
-          className="board flex min-h-[44px] items-center px-1 text-[11px] text-accent"
+          // the word. It grows to 13px on the wide band, where 11px in a 104px
+          // band reads as a caption rather than as the network's name.
+          className="board flex min-h-[44px] items-center px-1 text-[11px] text-accent lg:text-[13px]"
         >
           Questly
         </Link>
@@ -91,7 +111,11 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
           screen grows rather than centring and clipping its own top. There is
           only free space to distribute when the content is genuinely shorter
           than the viewport. */}
-      <div className={`flex flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${bleed ? "" : "px-5"}`}>
+      <div
+        className={`flex flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${
+          bleed ? "" : "px-5 lg:px-6"
+        }`}
+      >
         {children}
       </div>
     </main>
@@ -109,10 +133,14 @@ export function Screen({ children, bleed = false, badge = true }: Props) {
  *
  * `label` is per route because the wait means different things: `/room` is
  * finding a room that may not exist, which is worth naming.
+ *
+ * It carries `Screen`'s width verbatim, and has to: these two are the only
+ * places the column is stated, and a pending frame one width and the resolved
+ * screen another is a page that jumps sideways the moment the query lands.
  */
 export function ScreenPending({ label = "Loading…" }: { label?: string }) {
   return (
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground">
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground lg:max-w-[1048px]">
       <p className="board text-[11px] text-accent">{label}</p>
     </main>
   );

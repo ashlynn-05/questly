@@ -389,53 +389,72 @@ export function Plan({
           : null;
 
   return (
-    <section className="flex flex-col gap-7 px-5 py-8">
-      <PlanStopList
-        view={view}
-        plan={plan}
-        headingRef={headingRef}
-        isGroup={isGroup}
-        lockByVote={lockByVote}
-        mayLock={mayLock}
-        sheetFor={sheetFor}
-        tab={tab}
-        options={options}
-        queryText={queryText}
-        reason={reason}
-        loading={loading}
-        sheetClosedBecause={sheetClosedBecause}
-        setSheetFor={setSheetFor}
-        setTab={setTab}
-        setOptions={setOptions}
-        setQueryText={setQueryText}
-        setReason={setReason}
-        openSheet={openSheet}
-        loadOptions={loadOptions}
-        choose={choose}
-        toggleLock={toggleLock}
-        castVote={castVote}
-        focusAskedVote={focusAskedVote}
-      />
-      <PlanBookingPanel
-        view={view}
-        plan={plan}
-        error={error}
-        rule={rule}
-        voting={voting}
-        voteLapsed={voteLapsed}
-        votes={votes}
-        youVoted={youVoted}
-        hostName={hostName}
-        secondsToVote={secondsToVote}
-        booking={booking}
-        confirmBook={confirmBook}
-        setConfirmBook={setConfirmBook}
-        focusFirstButton={focusFirstButton}
-        restoreBookRef={restoreBook}
-        bookRestore={bookRestore}
-        bookIt={bookIt}
-        takeItBack={takeItBack}
-      />
+    /* Two columns from `xl`. This screen has always been two things -- the
+       itinerary you are editing, and the decision to book it -- and they are
+       already two components. On a phone the booking panel is under four stops
+       and a swap sheet; on a laptop the thing you are deciding and the control
+       that decides it belong in view at once.
+
+       `xl` rather than `lg` for the same reason as the lobby: `lg` has already
+       spent 200px on the concourse.
+
+       Both children return fragments, so each takes a wrapper here to be one
+       grid cell. `items-start`, or the booking panel would float against the
+       middle of a four-stop itinerary. Below `xl` the wrappers are inert and
+       the section is the same `flex flex-col gap-7` it was -- the two wrappers
+       restate that gap so the spacing inside each half does not change. */
+    <section className="flex flex-col gap-7 px-5 py-8 xl:grid xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] xl:items-start xl:gap-x-12">
+      <div className="flex flex-col gap-7">
+        <PlanStopList
+          view={view}
+          plan={plan}
+          headingRef={headingRef}
+          isGroup={isGroup}
+          lockByVote={lockByVote}
+          mayLock={mayLock}
+          sheetFor={sheetFor}
+          tab={tab}
+          options={options}
+          queryText={queryText}
+          reason={reason}
+          loading={loading}
+          sheetClosedBecause={sheetClosedBecause}
+          setSheetFor={setSheetFor}
+          setTab={setTab}
+          setOptions={setOptions}
+          setQueryText={setQueryText}
+          setReason={setReason}
+          openSheet={openSheet}
+          loadOptions={loadOptions}
+          choose={choose}
+          toggleLock={toggleLock}
+          castVote={castVote}
+          focusAskedVote={focusAskedVote}
+        />
+      </div>
+
+      <div className="flex flex-col gap-7">
+        <PlanBookingPanel
+          view={view}
+          plan={plan}
+          error={error}
+          rule={rule}
+          voting={voting}
+          voteLapsed={voteLapsed}
+          votes={votes}
+          youVoted={youVoted}
+          hostName={hostName}
+          secondsToVote={secondsToVote}
+          booking={booking}
+          confirmBook={confirmBook}
+          setConfirmBook={setConfirmBook}
+          focusFirstButton={focusFirstButton}
+          restoreBookRef={restoreBook}
+          bookRestore={bookRestore}
+          bookIt={bookIt}
+          takeItBack={takeItBack}
+        />
+      </div>
     </section>
   );
 }

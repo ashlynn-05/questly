@@ -7,6 +7,7 @@ import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/reac
 import { api } from "@convex/_generated/api";
 import { PushHint } from "@/components/questly/PushHint";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
+import { Concourse } from "@/components/questly/Concourse";
 import { storeSessionKey } from "@/lib/room/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
@@ -347,75 +348,97 @@ function StartFunnel() {
           it under. */}
       <PushHint />
 
-      {/* Always mounted, filled when something is refused: a live region
-          inserted into the DOM with its text already in it is frequently never
-          announced. `empty:-mb-8` takes back the flex gap an empty paragraph
-          would otherwise leave at the top of every step -- `display: none`
-          would take it out of the accessibility tree and be no better than not
-          rendering it at all. */}
-      <p role="alert" className="text-[13px] text-danger empty:-mb-8">
-        {error ?? ""}
-        {error && needsSignIn ? (
-          <>
-            {" "}
-            {/* Carries the funnel's own URL, so signing in comes back to the
-                twelve answers already given rather than to the top. */}
-            <Link href="/sign-in?redirect=%2Fstart" className="text-text underline underline-offset-4">
-              Sign in
-            </Link>{" "}
-            to open a room.
-          </>
+      {/* The concourse and the step, side by side from `lg`.
+
+          `200px` for the line's column is the label plus the 56px the roundels
+          need to its left -- a fixed track rather than a fraction, because a
+          column of eight two-word signs has no reason to grow with the window
+          and a proportional one would push "Set up" onto two lines at some
+          widths and not others. `minmax(0,1fr)` on the step, so a long venue
+          name or a wide chip row cannot blow the grid out past the shell.
+
+          `items-start`, or the line would be centred against a tall step and
+          stop agreeing with the header band above it.
+
+          Below `lg` the grid never applies and `Concourse` renders nothing, so
+          the phone gets the same flex column it always had -- including the
+          `gap-8` the `empty:-mb-8` on the alert below is measured against,
+          which is why the inner column restates that exact gap. */}
+      <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start lg:gap-x-12">
+        <Concourse at={current === "goals" ? "quiz" : current} />
+
+        <div className="flex flex-col gap-8">
+        {/* Always mounted, filled when something is refused: a live region
+            inserted into the DOM with its text already in it is frequently never
+            announced. `empty:-mb-8` takes back the flex gap an empty paragraph
+            would otherwise leave at the top of every step -- `display: none`
+            would take it out of the accessibility tree and be no better than not
+            rendering it at all. */}
+        <p role="alert" className="text-[13px] text-danger empty:-mb-8">
+          {error ?? ""}
+          {error && needsSignIn ? (
+            <>
+              {" "}
+              {/* Carries the funnel's own URL, so signing in comes back to the
+                  twelve answers already given rather than to the top. */}
+              <Link href="/sign-in?redirect=%2Fstart" className="text-text underline underline-offset-4">
+                Sign in
+              </Link>{" "}
+              to open a room.
+            </>
+          ) : null}
+        </p>
+
+        {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
+            otherwise strands you: nothing later in the flow returns to them. */}
+        {backTo ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => goTo(backTo)}
+            // `self-start` shrinks this to its content width, and "BACK" at 11px
+            // is nowhere near the 44px target floor this project holds itself
+            // to. The padding is what makes the target, not the label.
+            //
+            // Disabled swaps the token, never the opacity -- the same rule
+            // `Plate.tsx` states, which this control is not exempt from. This
+            // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
+            // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
+            // 2.63:1 light, both under the 4.5:1 this project does not waive for
+            // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
+            // and it is the tone the rest of the funnel already uses for "not
+            // right now".
+            className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:text-dim"
+          >
+            Back
+          </button>
         ) : null}
-      </p>
 
-      {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
-          otherwise strands you: nothing later in the flow returns to them. */}
-      {backTo ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => goTo(backTo)}
-          // `self-start` shrinks this to its content width, and "BACK" at 11px
-          // is nowhere near the 44px target floor this project holds itself
-          // to. The padding is what makes the target, not the label.
-          //
-          // Disabled swaps the token, never the opacity -- the same rule
-          // `Plate.tsx` states, which this control is not exempt from. This
-          // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
-          // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
-          // 2.63:1 light, both under the 4.5:1 this project does not waive for
-          // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
-          // and it is the tone the rest of the funnel already uses for "not
-          // right now".
-          className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:text-dim"
-        >
-          Back
-        </button>
-      ) : null}
-
-      <StepViews
-        current={current}
-        headingRef={headingRef}
-        cardIndex={cardIndex}
-        answers={answers}
-        goals={goals}
-        mood={mood}
-        visibility={visibility}
-        headcount={headcount}
-        budget={budget}
-        whenId={whenId}
-        whenValue={whenValue}
-        radiusKm={radiusKm}
-        busy={busy}
-        lookingForRoom={lookingForRoom}
-        openRooms={openRooms}
-        edit={edit}
-        goTo={goTo}
-        toggleGoal={toggleGoal}
-        finishQuiz={finishQuiz}
-        openTheRoom={openTheRoom}
-        joinOpenRoom={joinOpenRoom}
-      />
+          <StepViews
+            current={current}
+            headingRef={headingRef}
+            cardIndex={cardIndex}
+            answers={answers}
+            goals={goals}
+            mood={mood}
+            visibility={visibility}
+            headcount={headcount}
+            budget={budget}
+            whenId={whenId}
+            whenValue={whenValue}
+            radiusKm={radiusKm}
+            busy={busy}
+            lookingForRoom={lookingForRoom}
+            openRooms={openRooms}
+            edit={edit}
+            goTo={goTo}
+            toggleGoal={toggleGoal}
+            finishQuiz={finishQuiz}
+            openTheRoom={openTheRoom}
+            joinOpenRoom={joinOpenRoom}
+          />
+        </div>
+      </div>
     </Screen>
   );
 }

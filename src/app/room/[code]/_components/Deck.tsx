@@ -230,7 +230,10 @@ export function Deck({
     const stuck = view.members.filter((m) => waiting.includes(m.name));
 
     return (
-      <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8">
+      // Same 560px measure as the deck itself. This screen replaces the card in
+      // place, so a version of it that ran the full width would be a jump
+      // sideways at the exact moment the swiping stops.
+      <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8 lg:mx-auto lg:w-full lg:max-w-[560px]">
         <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
           You are through the deck
         </h1>
@@ -308,7 +311,18 @@ export function Deck({
   const priceKnown = quest.priceCents !== null;
 
   return (
-    <section className="flex flex-col gap-5 px-5 py-8">
+    /* The one screen that does NOT take the shell's width, and the acceptance
+       criterion says so outright: the deck stays one card at a time and does
+       not become a grid. A swipe card at 1048px is not a card -- it is a
+       banner, the photo crops to a letterbox, and the two answer plates end up
+       a hand's width apart at the foot of it.
+
+       560px is the production column DESIGN.md already states for this
+       product's screens, so the card keeps the proportions it was drawn at and
+       the wide band above it is what says you are on a laptop. Centred, because
+       a 560px card pinned to the left of a 1048px field is a card someone
+       forgot to place. */
+    <section className="flex flex-col gap-5 px-5 py-8 lg:mx-auto lg:w-full lg:max-w-[560px]">
       <div className="flex items-baseline justify-between gap-3">
         <p className="board text-[11px] text-accent">
           <span className="num">{index + 1}</span> of <span className="num">{deckSize}</span>
