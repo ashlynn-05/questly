@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { publicMutation } from "./lib/customFunctions";
-import { requireMember, roomByCode } from "./lib/access";
+import { requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
-import { resolveMatch } from "./lib/match";
+import { resolveMatch } from "./lib/rooms/match";
 
 export const cast = publicMutation({
   args: {
@@ -46,7 +46,7 @@ export const cast = publicMutation({
     // the lobby, where the host still has the build button) belongs to
     // `resolveMatch`, so there is only ever one copy of it.
     if (quests.length === 0) {
-      const winner = await resolveMatch(ctx, room._id);
+      const winner = await resolveMatch(ctx, room._id, member);
       return { matched: winner !== null, questId: winner };
     }
 
@@ -86,7 +86,7 @@ export const cast = publicMutation({
     // `lib/match.ts`, because `rooms.leave` and `rooms.removeMember` have to
     // run byte-identical logic when the roster -- the other half of both
     // conditions -- shrinks.
-    const winner = await resolveMatch(ctx, room._id);
+    const winner = await resolveMatch(ctx, room._id, member);
     return { matched: winner !== null, questId: winner };
   },
 });

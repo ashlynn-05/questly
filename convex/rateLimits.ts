@@ -11,7 +11,7 @@ import {
   requestFamilyValidator,
   requestNames,
 } from "./lib/rateLimits";
-import { safeUserId } from "./lib/access";
+import { safeUserId } from "./lib/rooms/access";
 import {
   isRateLimitedError,
   providerQuotaUnavailableError,

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { priceLevelToCents } from "../scoring";
-import type { Slot, Stop } from "../stops";
+import { priceLevelToCents } from "../deck/scoring";
+import type { Slot, Stop } from "./stops";
 import { stopValidator } from "../../validators";
 
 export const optionsValidator = v.object({ options: v.array(stopValidator) });

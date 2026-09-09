@@ -2,14 +2,15 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { publicMutation } from "./lib/customFunctions";
-import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
+import { refuseIfBooked, requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
+import { notifyRoom } from "./lib/push/notify";
 import {
   DEFAULT_FINALIZE_RULE,
   clearFinalizeVotes,
   voteLapsed,
   votesNeeded,
-} from "./lib/rules";
+} from "./lib/rooms/rules";
 
 function mapsSearchUrl(name: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} Melbourne`)}`;
@@ -31,6 +32,7 @@ async function writeBooking(
   quest: Doc<"quests">,
   plan: Doc<"plans">,
   members: Doc<"members">[],
+  actor: Doc<"members">,
 ): Promise<Settled> {
   // The plan is the night the group actually agreed to, so its per-head total
   // is the only number a booking may quote.
@@ -91,6 +93,13 @@ async function writeBooking(
   for (const proposal of openProposals) {
     await ctx.db.patch(proposal._id, { status: "rejected" });
   }
+
+  // Everyone but whoever's tap settled it. Under a vote rule that is the last
+  // person to say yes, and under "anyone" or "host" it is the one person who
+  // decided -- either way it is the member row `confirm` authorised, threaded
+  // in rather than re-derived, so this stays the single place a booking is
+  // written and the caller stays the single place authorisation happens.
+  await notifyRoom(ctx, room._id, "booked", actor);
 
   return { booked: true, ref, deepLink };
 }
@@ -188,7 +197,7 @@ export const confirm = publicMutation({
           "The host settles this room. Ask them to book it when everyone is happy.",
         );
       }
-      return await writeBooking(ctx, room, quest, plan, members);
+      return await writeBooking(ctx, room, quest, plan, members, member);
     }
 
     const seconds = room.finalizeSeconds ?? 0;
@@ -230,7 +239,7 @@ export const confirm = publicMutation({
       return { booked: false, ref: null, deepLink: null };
     }
 
-    return await writeBooking(ctx, room, quest, plan, members);
+    return await writeBooking(ctx, room, quest, plan, members, member);
   },
 });
 

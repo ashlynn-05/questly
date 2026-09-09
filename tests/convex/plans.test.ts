@@ -6,10 +6,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
-import { applyStopSwap } from "../../convex/lib/swap";
-import { TRAVEL_BUFFER_MIN, type Stop } from "../../convex/lib/stops";
-import { buildPlanPrompt, fallbackPlan, parsePlanResponse } from "../../convex/lib/planPrompt";
-import { enqueuePlanGeneration } from "../../convex/lib/planQueue";
+import { applyStopSwap } from "../../convex/lib/plans/swap";
+import { TRAVEL_BUFFER_MIN, type Stop } from "../../convex/lib/plans/stops";
+import { buildPlanPrompt, fallbackPlan, parsePlanResponse } from "../../convex/lib/plans/prompt";
+import { enqueuePlanGeneration } from "../../convex/lib/plans/queue";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 const START = 1_800_000_000_000;

@@ -2,10 +2,11 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { publicMutation } from "./lib/customFunctions";
 import { stopValidator } from "./validators";
-import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
+import { refuseIfBooked, requireMember, roomByCode } from "./lib/rooms/access";
 import { throwUserError } from "./lib/errors";
-import { settleProposal } from "./lib/proposals";
-import { sanitizeClientStop } from "./lib/stops";
+import { notifyRoom } from "./lib/push/notify";
+import { settleProposal } from "./lib/plans/proposals";
+import { sanitizeClientStop } from "./lib/plans/stops";
 
 /**
  * How a group of two or more changes its plan.
@@ -116,6 +117,17 @@ export const open = publicMutation({
     // The threshold is never written here as a literal -- settleProposal is the
     // only place a majority is decided.
     const status = await settleProposal(ctx, proposal);
+
+    // ONLY when the room still has to decide. `settleProposal` can carry a
+    // proposal in this same transaction -- in a room of one, `needed(1)` is 1,
+    // so the proposer's own yes is already a majority -- and "a change needs
+    // your vote" about a vote that is over is a notification asking for
+    // something nobody can give. The returned status is the discriminator both
+    // existing callers already branch on, so this reads it the same way rather
+    // than re-deriving the threshold.
+    if (status === "open") {
+      await notifyRoom(ctx, room._id, "proposalOpened", member);
+    }
     return { proposalId, accepted: status === "accepted" };
   },
 });

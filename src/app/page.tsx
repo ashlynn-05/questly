@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { api } from "@convex/_generated/api";
-import { fetchAuthQuery } from "@/lib/auth-server";
+import { fetchAuthQuery } from "@/lib/account/auth-server";
 import { Screen } from "@/components/questly/Screen";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
 import { InstallHint } from "@/components/questly/InstallHint";

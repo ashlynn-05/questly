@@ -7,8 +7,8 @@ import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Plate } from "@/components/questly/Plate";
 import { Screen } from "@/components/questly/Screen";
-import { isJoinReason, type JoinReason } from "@/lib/room";
-import { useSessionKey } from "@/lib/session";
+import { isJoinReason, type JoinReason } from "@/lib/room/room";
+import { useSessionKey } from "@/hooks/useSessionKey";
 import { errorCode, userMessage } from "@/lib/errors";
 
 /**

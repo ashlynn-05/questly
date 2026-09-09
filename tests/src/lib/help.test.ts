@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PURGE_WINDOW_DAYS } from "@convex/lib/account";
-import { MAX_AVATAR_MB } from "@convex/lib/avatar";
+import { PURGE_WINDOW_DAYS } from "@convex/lib/account/window";
+import { MAX_AVATAR_MB } from "@convex/lib/account/avatar";
 import { HELP, HELP_TOPICS, type HelpTopic } from "../../../src/lib/help";
 
 /**

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { useInFlight } from "@/hooks/useInFlight";
 
 /**
  * A socially loaded action that asks once, and never loses focus on the way.
@@ -22,10 +23,9 @@ import { useCallback, useRef, useState } from "react";
  *   "gone"    -- the caller has already put focus somewhere real (the room's
  *                heading, a new screen), so this component leaves it alone.
  *
- * The in-flight guard is a ref, not `disabled`: disabling the button that
- * currently HAS focus hands focus straight back to <body>, which is the exact
- * defect this exists to avoid. It only needs to stop a second call, not to
- * re-render.
+ * The in-flight guard is `useInFlight`, which is a ref rather than `disabled`
+ * for the reason this component exists: disabling the button that currently HAS
+ * focus hands focus straight back to <body>.
  *
  * `useCallback` with no deps on both ref callbacks is what makes them safe: a
  * ref callback recreated each render is detached and re-attached on every
@@ -46,7 +46,7 @@ export function ConfirmButton({
 }) {
   const [armed, setArmed] = useState(false);
   const restore = useRef(false);
-  const inFlight = useRef(false);
+  const run = useInFlight();
 
   const focusOnMount = useCallback((node: HTMLButtonElement | null) => {
     node?.focus();
@@ -67,13 +67,9 @@ export function ConfirmButton({
   }
 
   async function go() {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    try {
+    await run(async () => {
       if ((await onConfirm()) === "trigger") disarm();
-    } finally {
-      inFlight.current = false;
-    }
+    });
   }
 
   if (armed) {

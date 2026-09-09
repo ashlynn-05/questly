@@ -1,5 +1,5 @@
-import { PURGE_WINDOW_DAYS } from "@convex/lib/account";
-import { MAX_AVATAR_MB } from "@convex/lib/avatar";
+import { PURGE_WINDOW_DAYS } from "@convex/lib/account/window";
+import { MAX_AVATAR_MB } from "@convex/lib/account/avatar";
 
 /**
  * The explanations `/settings` used to say out loud, all of the time.
@@ -56,6 +56,14 @@ export const HELP = {
     body: [
       "These are what every venue you are shown is ranked against, along with what you said the night is for.",
       "Retaking the quiz starts from the answers you gave last time, so you only change what has changed.",
+    ],
+  },
+  push: {
+    title: "Notifications",
+    body: [
+      "The moments worth knowing about happen on somebody else's phone: the room fills up, everyone lands on the same place, the plan gets written, the night is booked.",
+      "A notification names the room number and nothing else — never a venue, a person or a price. It is drawn on a locked screen, in front of whoever is holding the phone.",
+      "This is per device, and turning it off here turns it off on this one. You are never notified about something you did yourself.",
     ],
   },
   rooms: {

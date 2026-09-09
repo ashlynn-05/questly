@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
+import { useFocusOnArrival } from "@/hooks/useFocusOnArrival";
+import { useInFlight } from "@/hooks/useInFlight";
 import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { AnimatePresence } from "motion/react";
@@ -8,8 +10,9 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
-import { useCountdown, useNow } from "@/components/questly/useCountdown";
-import { photoSrc } from "@/lib/photo";
+import { useCountdown } from "@/hooks/useCountdown";
+import { useNow } from "@/hooks/useNow";
+import { photoSrc } from "@/lib/room/photo";
 import { userMessage } from "@/lib/errors";
 import { SwipeCard } from "./SwipeCard";
 import type { RoomView } from "../page";
@@ -50,24 +53,9 @@ export function Deck({
   const cast = useMutation(api.swipes.cast);
   const removeMember = useMutation(api.rooms.removeMember);
   const leaveRoom = useMutation(api.rooms.leave);
-  /**
-   * One swipe at a time, held in a ref rather than in state.
-   *
-   * It used to be `busy` state driving `disabled` on the two buttons below,
-   * and that cost two things on the screen this product is built around.
-   * `Plate` expresses disabled by DROPPING its fill -- the right treatment for
-   * "not available yet" (the join CTA before a name is typed), the wrong one
-   * for "your own request is in flight" -- so every single swipe flipped "I'm
-   * in" from a filled orange plate to a dashed transparent ghost and back.
-   * And disabling the button that currently HAS focus hands focus to <body>,
-   * which is the same defect `ConfirmButton`'s ref guard exists to avoid and
-   * that `Plan.tsx` was fixed for.
-   *
-   * A ref is also a stricter guard than the state was: it is set
-   * synchronously, so it does not depend on a re-render landing between two
-   * calls, and it does not go stale inside the `useCallback` closure.
-   */
-  const inFlight = useRef(false);
+  // One swipe at a time. A ref and not `disabled` on the two plates below: see
+  // `useInFlight`, which was written out of what this screen cost.
+  const run = useInFlight();
   const [error, setError] = useState<string | null>(null);
 
   /**
@@ -134,18 +122,17 @@ export function Deck({
 
   const swipe = useCallback(
     async (dir: "yes" | "no") => {
-      if (!quest || inFlight.current) return;
-      inFlight.current = true;
+      if (!quest) return;
       setError(null);
-      try {
-        await cast({ code, sessionKey, questId: quest._id, dir });
-      } catch (e) {
-        setError(userMessage(e, "That did not register. Try that one again."));
-      } finally {
-        inFlight.current = false;
-      }
+      await run(async () => {
+        try {
+          await cast({ code, sessionKey, questId: quest._id, dir });
+        } catch (e) {
+          setError(userMessage(e, "That did not register. Try that one again."));
+        }
+      });
     },
-    [quest, cast, code, sessionKey],
+    [quest, cast, code, sessionKey, run],
   );
 
   /**
@@ -215,21 +202,10 @@ export function Deck({
     return () => window.removeEventListener("keydown", onKey);
   }, [swipe]);
 
-  /**
-   * Answering the last card unmounts the two buttons and puts up a different
-   * screen, so focus would fall to <body>. This is the one transition inside
-   * the deck that replaces the screen -- a card advance does not, and is left
-   * to the live region below.
-   *
-   * `wasDone` starts at the current value, so arriving on an already-finished
-   * deck (a refresh, a second tab) moves nothing.
-   */
+  // Answering the last card replaces the screen -- a card advance does not, and
+  // is left to the live region below.
   const done = deckSize > 0 && !quest;
-  const wasDone = useRef(done);
-  useEffect(() => {
-    if (done && !wasDone.current) headingRef.current?.focus();
-    wasDone.current = done;
-  }, [done, headingRef]);
+  useFocusOnArrival(done, headingRef);
 
   if (deckSize === 0) {
     return (

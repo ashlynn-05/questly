@@ -1,7 +1,7 @@
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
-import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/quiz";
-import { groupAnswers } from "@/lib/answers";
+import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/account/quiz";
+import { groupAnswers } from "@/lib/account/answers";
 import { Plate } from "@/components/questly/Plate";
 import { Section } from "./Section";
 

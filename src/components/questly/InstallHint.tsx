@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Plate } from "./Plate";
-import { INSTALL_HINT_DISMISSED_KEY, isIosSafari, isStandalone } from "@/lib/pwa";
+import { INSTALL_HINT_DISMISSED_KEY, isIosSafari, isStandalone } from "@/lib/pwa/install";
 
 /**
  * The guide that shows an iOS user where the install button is.

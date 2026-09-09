@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/lib/account/auth-client";
 import { Button, ErrorText, Input } from "@/components/ui";
 import { SocialButtons } from "@/components/SocialButtons";
 import { Screen } from "@/components/questly/Screen";

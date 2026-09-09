@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupAnswers, type AnswerCard } from "../../../src/lib/answers";
+import { groupAnswers, type AnswerCard } from "../../../src/lib/account/answers";
 
 const CARDS: AnswerCard[] = [
   { id: "a", text: "walking somewhere green" },

@@ -10,7 +10,7 @@ import {
   mutation,
   query,
 } from "../_generated/server";
-import { requireUserId, safeUserId } from "./access";
+import { requireUserId, safeUserId } from "./rooms/access";
 
 const optionalQueryIdentity = customCtx(async (ctx: QueryCtx) => ({
   userId: await safeUserId(ctx),

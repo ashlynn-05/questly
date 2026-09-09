@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexBetterAuthProvider, type AuthClient } from "@convex-dev/better-auth/react";
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/lib/account/auth-client";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 

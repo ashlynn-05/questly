@@ -3,7 +3,7 @@
 import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
-import { bookedHeadcount } from "@/lib/booking";
+import { bookedHeadcount } from "@/lib/room/booking";
 import type { RoomView } from "../page";
 
 const time = (at: number) =>

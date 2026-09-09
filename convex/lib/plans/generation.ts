@@ -2,8 +2,8 @@ import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { jsonCompletion } from "../openai";
-import { isOverBudget } from "../stops";
-import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "../planPrompt";
+import { isOverBudget } from "./stops";
+import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./prompt";
 import { isProviderReservationError, isRateLimitedError } from "../errors";
 
 export type GeneratePlanArgs = {

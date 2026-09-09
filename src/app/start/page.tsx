@@ -5,8 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
+import { PushHint } from "@/components/questly/PushHint";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
-import { storeSessionKey } from "@/lib/session";
+import { storeSessionKey } from "@/lib/room/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
   EMPTY_DRAFT,
@@ -17,13 +18,14 @@ import {
   writeDraft,
   type FunnelDraft,
   type Step,
-} from "@/lib/funnel";
+} from "@/lib/start/funnel";
 import {
   PRESET_MINUTES,
   isInThePast,
   minutesToInputValue,
   resolveWhenAt,
-} from "@/lib/when";
+} from "@/lib/start/when";
+import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
 import { StepViews } from "./_components/StepViews";
 
 /** Where a mis-tap goes back to. The quiz itself is answered forwards only. */
@@ -58,20 +60,10 @@ function StartFunnel() {
    */
   const retake = useSearchParams().get("retake") === "1";
 
-  /**
-   * An account on its way out belongs on `/restore`, not at the top of the
-   * funnel.
-   *
-   * `profiles.me` returns null for a tombstoned profile -- deliberately, so no
-   * other screen has to know that state exists -- and the resume below reads
-   * exactly that null as "has not answered the quiz". So somebody who deleted
-   * their account and signed back in would be walked through onboarding again
-   * with their own answers sitting one query away. This is the one place that
-   * has to know better.
-   */
-  useEffect(() => {
-    if (deletion) router.replace("/restore");
-  }, [deletion, router]);
+  // The funnel reads a tombstoned profile's null as "has not answered the quiz",
+  // so this redirect is what stops a deleted account being walked through
+  // onboarding again. See the hook for the whole story.
+  useRedirectIfDeleting(deletion);
 
   /**
    * The whole funnel in one value, and the reason a sign-in round trip no
@@ -344,6 +336,17 @@ function StartFunnel() {
     // to whichever account this browser is holding, and this is where it says
     // which one that is.
     <Screen>
+      {/* The invitation to turn notifications on, for somebody signed in.
+          `/start` because the funnel ends by opening a room and there is no
+          screen after it, and because `manifest.ts` sets `start_url: "/start"`
+          -- an installed app launches here every time, which is the one
+          placement that works on iOS, where push exists only once the app is on
+          the home screen. A closed `<dialog>` occupies no space, so its
+          position in this flow is not its position on screen. Guests get the
+          same invitation from inside their room, where they have a seat to file
+          it under. */}
+      <PushHint />
+
       {/* Always mounted, filled when something is refused: a live region
           inserted into the DOM with its text already in it is frequently never
           announced. `empty:-mb-8` takes back the flex gap an empty paragraph

@@ -17,14 +17,14 @@ import {
   SWIPE_SECONDS_OPTIONS,
   type FinalizeRule,
   type LockRule,
-} from "@convex/lib/rules";
+} from "@convex/lib/rooms/rules";
 import {
   FINALIZE_RULE_LABELS,
   LOCK_RULE_LABELS,
   asOption,
   lockLine,
   rulesLine,
-} from "@/lib/houseRules";
+} from "@/lib/room/houseRules";
 import type { BuildFailure, RoomView } from "../page";
 
 /**

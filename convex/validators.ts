@@ -58,3 +58,20 @@ export const proposalKindValidator = v.union(
   v.literal("lock"),
   v.literal("unlock"),
 );
+
+/**
+ * The five moments worth waking a phone for. See `convex/lib/push/notify.ts` for
+ * what each one says, and `convex/push.ts` for who is allowed to hear it.
+ *
+ * Here rather than beside the copy because three modules share it -- the
+ * scheduling helper, the query that resolves recipients, and the Node action
+ * that sends -- and this file is where a validator crossing that many domains
+ * belongs.
+ */
+export const pushEventValidator = v.union(
+  v.literal("joined"),
+  v.literal("matched"),
+  v.literal("planReady"),
+  v.literal("proposalOpened"),
+  v.literal("booked"),
+);

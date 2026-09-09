@@ -5,7 +5,7 @@ import { ConvexError } from "convex/values";
 import { expect, test } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
-import { PURGE_WINDOW_DAYS, PURGE_WINDOW_MS, daysLeft, purgeAt } from "../../convex/lib/account";
+import { PURGE_WINDOW_DAYS, PURGE_WINDOW_MS, daysLeft, purgeAt } from "../../convex/lib/account/window";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
