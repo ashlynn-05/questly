@@ -117,12 +117,26 @@ async function send(ctx: ActionCtx, delivery: Delivery | null): Promise<null> {
         // Everything else is logged and swallowed. This action is scheduled
         // and nothing awaits it, so a throw would buy a retry nobody asked
         // for and a red log line either way.
-        console.warn(`pushSend: ${String(status ?? "no status")} for one endpoint; leaving it in place.`);
+        console.warn(
+          `pushSend: ${String(status ?? "no status")} for one endpoint; leaving it in place. ${String(
+            (error as { body?: string }).body ?? (error as Error).message ?? "",
+          ).slice(0, 200)}`,
+        );
       }
     }),
   );
 
   if (expired.length > 0) {
+    // Logged, not silent. Dropping a row is the one outcome that changes the
+    // database and shows the person nothing: the button says "Sent", the
+    // notification never arrives, and the subscription they just created is
+    // gone by the time anybody looks. The commonest cause is not a stale phone
+    // at all -- it is a service worker that was unregistered or replaced under
+    // a subscription, which is what `next dev` does to a worker left behind by
+    // an earlier `npm start` on the same port.
+    console.warn(
+      `pushSend: push service reported ${expired.length} of ${delivery.targets.length} endpoint(s) gone; deleting them.`,
+    );
     await ctx.runMutation(internal.push.dropExpired, { endpoints: expired });
   }
   return null;
