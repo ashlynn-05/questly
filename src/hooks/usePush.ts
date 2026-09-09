@@ -79,7 +79,10 @@ export function usePush(seat: Seat = null) {
 
       const registration = await activeWorker();
       if (!registration) {
-        setError("This browser cannot run the background worker notifications need.");
+        // Either the browser has no service workers at all, or none is running
+        // on this origin -- `npm run dev` is the second one, since the worker
+        // is registered in production builds only.
+        setError("The background worker notifications need is not running here.");
         return false;
       }
 

@@ -40,17 +40,31 @@ const UNREAD: PushBrowserState = {
 };
 
 /**
- * The service worker registration, once it is genuinely usable.
+ * The service worker registration, once it is genuinely usable, or null.
  *
  * `navigator.serviceWorker.ready` and not `register()`: `ServiceWorker.tsx`
  * already registers `/sw.js` on every page, and calling `register` a second
  * time here would race it. `ready` resolves with the ACTIVE registration, which
  * is the only thing `pushManager.subscribe` will accept -- an installing worker
  * has no push manager to subscribe with.
+ *
+ * THE RACE IS NOT OPTIONAL. `ready` never rejects and never times out: with no
+ * registration on the origin it simply never settles. Awaited bare, the toggle
+ * in settings granted permission and then sat on "One moment…" forever with no
+ * error, which is what `next dev` looks like -- `ServiceWorker.tsx` registers
+ * in production only -- and equally what a production page looks like after a
+ * registration failure, which that component deliberately swallows. A promise
+ * that never settles is not a state the UI can draw, so it is given a deadline
+ * and the caller is told the ordinary "no worker" answer instead.
  */
+const WORKER_WAIT_MS = 5_000;
+
 export async function activeWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!("serviceWorker" in navigator)) return null;
-  return await navigator.serviceWorker.ready;
+  return await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(resolve, WORKER_WAIT_MS, null)),
+  ]);
 }
 
 function read(): PushBrowserState {
