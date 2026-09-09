@@ -10,6 +10,7 @@ import { ConfirmButton } from "@/components/questly/ConfirmButton";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { errorCode, userMessage } from "@/lib/errors";
+import { initialsFor } from "@/lib/account/avatar";
 import {
   FINALIZE_RULES,
   FINALIZE_SECONDS_OPTIONS,
@@ -26,6 +27,19 @@ import {
   rulesLine,
 } from "@/lib/room/houseRules";
 import type { BuildFailure, RoomView } from "../page";
+
+/**
+ * The seat's roundel: a hollow node, the way `.node[data-state="open"]` draws a
+ * stop nobody has settled yet.
+ *
+ * `--text-dim` on `--ground` is 5.26:1 dark / 6.21:1 light and `--accent` is
+ * 5.68:1 / 9.57:1 -- the pairing `MenuRoundel`'s outlined variant already uses,
+ * reused rather than a new one nobody has measured. 32px, not 44: it names a
+ * person, it is not a control, and a row of 44px discs would out-shout the
+ * names beside them.
+ */
+const SEAT_ROUNDEL =
+  "board flex size-[32px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-dim text-[10px] text-accent";
 
 /**
  * The waiting room. Its whole job is to make the room feel occupied while it
@@ -200,6 +214,25 @@ export function Lobby({
                     4px of top padding. */}
                 <RailNode top={16} state={member ? "locked" : "open"} />
                 <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
+                  {/* Drawn for the empty seats too, so the names line up down
+                      the column rather than stepping in and out by 44px as
+                      people arrive. `aria-hidden` throughout: a picture of
+                      somebody whose name is the next thing on the row is
+                      decoration, and their initials are an abbreviation a
+                      screen reader would read out as letters. */}
+                  <span aria-hidden="true" className={SEAT_ROUNDEL}>
+                    {member?.avatarUrl ? (
+                      /* Convex serves these from its own origin with a signed
+                         URL that changes per read, so `next/image` has nothing
+                         stable to cache on -- the same call `AccountBadge`
+                         makes, and for the same reason. */
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={member.avatarUrl} alt="" className="size-full object-cover" />
+                    ) : member ? (
+                      initialsFor(member.name)
+                    ) : null}
+                  </span>
+
                   {member ? (
                     <span className="text-[16px] text-text">
                       {member.name}

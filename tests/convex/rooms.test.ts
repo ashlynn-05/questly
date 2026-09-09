@@ -1152,3 +1152,67 @@ test("a booked night's rules are frozen with the rest of it", async () => {
     /booked/i,
   );
 });
+
+/**
+ * An account with a picture, the way a finished quiz plus an upload leaves one.
+ *
+ * Inserted rather than driven through `profiles.setAvatar`: convex-test's
+ * `ctx.storage.store` records no content type, so that mutation refuses every
+ * blob this harness can make -- `tests/convex/profiles.test.ts` says so at
+ * length and reaches past the same gate. The projection under test here is the
+ * join and the URL, not the upload rules.
+ */
+async function accountWithPicture(t: TestConvex<typeof schema>, userId: string) {
+  return await t.run(async (ctx) => {
+    const avatarId = await ctx.storage.store(new Blob([new Uint8Array(64)]));
+    return await ctx.db.insert("profiles", {
+      userId,
+      displayName: "Bec",
+      tasteVector: [],
+      tasteSentence: "",
+      moodAffinity: {},
+      avatarId,
+      createdAt: Date.now(),
+    });
+  });
+}
+
+test("the roster carries a member's picture as a URL, and a guest's as null", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  await accountWithPicture(t, "u1");
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  const host = view!.members.find((m) => m.isHost);
+  const guest = view!.members.find((m) => !m.isHost);
+
+  // The row holds a storage id; this resolves the URL per read. A stored URL
+  // would be a signed string going stale with nothing here to notice.
+  expect(host?.avatarUrl).toEqual(expect.any(String));
+  // Null, not absent. A guest has no account to have a picture in, the lobby
+  // draws their initials instead, and a missing key is a thing a caller can
+  // forget to branch on.
+  expect(guest?.avatarUrl).toBeNull();
+  // `you` and the roster read out of one map, so the two cannot disagree about
+  // the same person.
+  expect(view!.you.avatarUrl).toBe(host?.avatarUrl);
+});
+
+test("a deleted account's picture leaves the roster with it", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const profileId = await accountWithPicture(t, "u1");
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // The same ruling `profiles.me` makes: an account inside its deletion window
+  // is signed-out everywhere else in the product, and a face is the last thing
+  // that should outlive it.
+  await t.run(async (ctx) => ctx.db.patch(profileId, { deletedAt: Date.now() }));
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  expect(view!.members[0].avatarUrl).toBeNull();
+});

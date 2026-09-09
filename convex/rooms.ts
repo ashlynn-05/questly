@@ -31,7 +31,35 @@ const memberViewValidator = v.object({
   _id: v.id("members"),
   name: v.string(),
   isHost: v.boolean(),
+  /**
+   * The picture in this person's roundel, or null when there is none to draw.
+   *
+   * Resolved per read and never stored, for the reason the schema gives on
+   * `profiles.avatarId`: a stored URL is a signed string that expires on its
+   * own schedule with nothing here to notice. Null rather than absent, so the
+   * roster branches on a value instead of on a missing key.
+   */
+  avatarUrl: v.union(v.string(), v.null()),
 });
+
+/**
+ * One member's picture, by way of the account behind them.
+ *
+ * A guest row carries no `userId` -- `.index("by_user")` is sparse for exactly
+ * that reason -- so a guest costs no reads at all and shows their initials. A
+ * tombstoned profile is treated as no profile, the same ruling `profiles.me`
+ * makes: an account in its deletion window is signed-out everywhere else, and
+ * a face is the last thing that should outlive it.
+ */
+async function memberAvatarUrl(ctx: QueryCtx, userId: string | undefined) {
+  if (!userId) return null;
+  const profile = await ctx.db
+    .query("profiles")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  if (!profile || profile.deletedAt !== undefined || !profile.avatarId) return null;
+  return await ctx.storage.getUrl(profile.avatarId);
+}
 
 const openRoomValidator = v.object({
   code: v.string(),
@@ -438,6 +466,15 @@ export const get = publicQuery({
 
     const yourSwipes = swipes.filter((s) => s.memberId === you._id);
 
+    // Bounded by `MAX_ROOM_MEMBERS`, and most rooms are guests who cost nothing
+    // here. Keyed by member rather than by account so `you` reads out of the
+    // same map as everybody else and the two cannot disagree.
+    const avatars = new Map(
+      await Promise.all(
+        members.map(async (m) => [m._id, await memberAvatarUrl(ctx, m.userId)] as const),
+      ),
+    );
+
     const finalizeRule = room.finalizeRule ?? DEFAULT_FINALIZE_RULE;
     const finalizeSeconds = room.finalizeSeconds ?? 0;
     const finalizeVotes = await ctx.db
@@ -491,8 +528,13 @@ export const get = publicQuery({
         // the votes on the next tap.
         deadlineAt: voteDeadlineAt(room.finalizeStartedAt, finalizeSeconds),
       },
-      you: { _id: you._id, name: you.name, isHost: you.isHost },
-      members: members.map((m) => ({ _id: m._id, name: m.name, isHost: m.isHost })),
+      you: { _id: you._id, name: you.name, isHost: you.isHost, avatarUrl: avatars.get(you._id) ?? null },
+      members: members.map((m) => ({
+        _id: m._id,
+        name: m.name,
+        isHost: m.isHost,
+        avatarUrl: avatars.get(m._id) ?? null,
+      })),
       quests,
       plan: plan
         ? {
