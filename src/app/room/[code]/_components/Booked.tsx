@@ -5,13 +5,9 @@ import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/room/booking";
 import { stopMapsUrl, stopsDirectionsUrl } from "@/lib/room/maps";
+import { moneyLabel, planShareText, timeLabel } from "@/lib/room/share";
 import type { RoomView } from "../page";
 import { MapsLink } from "./MapsLink";
-
-const time = (at: number) =>
-  new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
-
-const money = (cents: number) => (cents === 0 ? "Free" : `$${Math.round(cents / 100)}`);
 
 /**
  * The settled night.
@@ -70,18 +66,31 @@ export function Booked({
    * themselves. `navigator.share` opens the sheet the phone already has, and
    * the group chat is one tap inside it.
    *
-   * The link goes with the message either way. A summary with no way back to
-   * the room is a dead end for everybody who reads it in the chat -- this
-   * screen is where the reference, the stops and the map live.
+   * `planShareText` writes what is actually sent, and it is the same string on
+   * both paths: the itinerary, a map link per stop, one link for the whole
+   * route, and the room at the end. A summary with no way back is a dead end
+   * for everybody who reads it in the chat.
    */
-  async function sendItToTheChat(message: string) {
+  async function sendItToTheChat() {
     const link = `${location.origin}/room/${view.room.code}`;
+    // Built here rather than sent as the model wrote it: `plan.shareMessage`
+    // is one line with no times, no prices and no way to find anywhere, and a
+    // group chat is where this plan is actually agreed to.
+    const message = planShareText({
+      intro: view.plan?.shareMessage ?? "",
+      stops: view.plan?.stops ?? [],
+      perHeadCents: headcount.perHeadCents,
+      roomUrl: link,
+    });
 
     // Absent on desktop browsers and outside a secure context, so this is a
     // feature test rather than a platform guess.
     if (navigator.share) {
       try {
-        await navigator.share({ text: message, url: link });
+        // TEXT ONLY, no `url` alongside it. Several share targets append a
+        // `url` to whatever `text` says, and the room link is already the
+        // message's last line -- passing both puts it in the chat twice.
+        await navigator.share({ text: message });
         setCopied("Sent.");
         return;
       } catch (e) {
@@ -94,7 +103,7 @@ export function Booked({
       }
     }
 
-    await copyTheMessage(`${message} ${link}`);
+    await copyTheMessage(message);
   }
 
   return (
@@ -122,7 +131,7 @@ export function Booked({
           {/* The figure is the plan's own per-head total, and every cost in that
               plan is an estimate. It is not a price a venue quoted. */}
           <dt className="board text-[10px] text-dim">Est. per head</dt>
-          <dd className="num m-0 text-[22px] text-text">{money(headcount.perHeadCents)}</dd>
+          <dd className="num m-0 text-[22px] text-text">{moneyLabel(headcount.perHeadCents)}</dd>
           {/* Only when the roster has moved. The estimate is what the group
               agreed to and does not get re-divided behind their backs, so the
               screen has to say what it was divided by -- otherwise this reads
@@ -159,14 +168,14 @@ export function Booked({
                     <RailNode top={6} state="locked" />
                     <div className="flex items-baseline justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="board num text-[10px] text-accent">{time(stop.startAt)}</p>
+                        <p className="board num text-[10px] text-accent">{timeLabel(stop.startAt)}</p>
                         <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
                         {stop.note ? (
                           <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
                         ) : null}
                       </div>
                       <p className="num shrink-0 text-[15px] text-text">
-                        {money(stop.costPerHeadCents)}
+                        {moneyLabel(stop.costPerHeadCents)}
                       </p>
                     </div>
 
@@ -221,7 +230,7 @@ export function Booked({
             variant="raised"
             center
             label="Send it to the group chat"
-            onClick={() => void sendItToTheChat(view.plan?.shareMessage ?? "")}
+            onClick={() => void sendItToTheChat()}
           />
         ) : null}
 
