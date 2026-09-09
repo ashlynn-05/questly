@@ -1,5 +1,7 @@
 @AGENTS.md
 
+Project handbook: [.docs/index.md](.docs/index.md). Follow the [task workflow](.docs/task-workflow.md) for every task, including small changes; the imported root rules define authorization and review requirements.
+
 <!-- convex-ai-start -->
 
 This project uses [Convex](https://convex.dev) as its backend.

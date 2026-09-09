@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { publicMutation } from "./lib/customFunctions";
 import { refuseIfBooked, requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import {
@@ -112,7 +112,7 @@ async function writeBooking(
  * returned only to the person who tapped is a tally the other phones would
  * have to be told about some other way.
  */
-export const confirm = mutation({
+export const confirm = publicMutation({
   args: { code: v.string(), sessionKey: v.string() },
   returns: v.object({
     // False means the vote is recorded and the room is still short of its
@@ -241,7 +241,7 @@ export const confirm = mutation({
  * nobody can stop. Refused once the night is booked, for the same reason every
  * other path into a settled plan is: the group is holding a reference to it.
  */
-export const retract = mutation({
+export const retract = publicMutation({
   args: { code: v.string(), sessionKey: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {

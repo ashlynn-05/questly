@@ -5,14 +5,18 @@
  * JSON back -- so they share one implementation rather than three copies of a
  * `fetch` block that would drift apart the first time the model name changes.
  *
- * Deliberately free of Convex imports: it is a plain module under `lib/`, so it
- * can be called from any action and unit-tested against a stubbed `fetch`.
+ * Deliberately free of Convex function context imports: it is a plain module
+ * under `lib/`, so it can be called from any action and unit-tested against a
+ * stubbed `fetch`.
  */
+
+import { runProviderReservation } from "./errors";
 
 const CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** Small, fast and cheap. Every caller here wants structure, not prose. */
 const CHAT_MODEL = "gpt-4o-mini";
+const CHAT_MAX_COMPLETION_TOKENS = 512;
 
 /**
  * How long we wait on OpenAI before giving up.
@@ -42,17 +46,23 @@ const CHAT_TIMEOUT_MS = 15_000;
  * say to one. Should a future caller let it escape, that caller is the place to
  * decide what the person is told.
  */
-export async function jsonCompletion(prompt: string): Promise<unknown> {
+export async function jsonCompletion(
+  prompt: string,
+  reserveProvider: () => Promise<unknown>,
+): Promise<unknown> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set. Run: npx convex env set OPENAI_API_KEY <key>");
   }
+
+  await runProviderReservation(reserveProvider);
 
   const response = await fetch(CHAT_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: CHAT_MODEL,
+      max_completion_tokens: CHAT_MAX_COMPLETION_TOKENS,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     }),

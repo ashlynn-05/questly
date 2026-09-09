@@ -42,3 +42,14 @@ next-env.d.ts
 
 # Keep the documented template in version control
 !.env.example
+
+# AI
+.omc/
+.omx/
+.claude/
+.agents/
+.code-review-graph/
+
+# Tests
+.playwright-cli/
+.playwright/

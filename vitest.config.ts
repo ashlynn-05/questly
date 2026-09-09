@@ -21,8 +21,8 @@ export default defineConfig({
     // files are one guard -- `setupFiles` blocks and reports inside each
     // worker, `globalSetup` catches what fires after the worker's last hook.
     // Read them; they say why per-file discipline was not enough.
-    setupFiles: ["./vitest.setup.ts"],
-    globalSetup: ["./vitest.globalsetup.ts"],
+    setupFiles: ["./tests/setup.ts"],
+    globalSetup: ["./tests/globalsetup.ts"],
     // Every convex-test file builds the whole convex/ module graph via
     // `import.meta.glob("./**/*.ts")` before its first assertion. That has
     // already flaked once under parallel load against the 5s default, and the

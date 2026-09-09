@@ -1,11 +1,15 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import schema, { moodValidator, proposalKindValidator, stopValidator } from "./schema";
+import schema from "./schema";
+import { moodValidator, proposalKindValidator, stopValidator } from "./validators";
 import {
   MAX_ROOM_MEMBERS,
-  findMember, findRoomByCode, needed, newRoomCode, newSessionKey, refuseIfBooked, requireLiveUserId, requireMember, roomByCode, safeUserId,
+  findMember, findRoomByCode, memberCount, needed, newRoomCode, newSessionKey, refuseIfBooked, requireLiveUserId, requireMember, roomByCode,
 } from "./lib/access";
+import type { Doc } from "./_generated/dataModel";
+import type { QueryCtx } from "./_generated/server";
 import { throwUserError } from "./lib/errors";
+import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
 import { detachMember } from "./lib/roster";
 import {
   DEFAULT_FINALIZE_RULE,
@@ -27,6 +31,29 @@ const memberViewValidator = v.object({
   name: v.string(),
   isHost: v.boolean(),
 });
+
+const openRoomValidator = v.object({
+  code: v.string(),
+  mood: moodValidator,
+  headcount: v.number(),
+  memberCount: v.number(),
+  whenAt: v.number(),
+  demo: v.boolean(),
+});
+
+const DISCOVERY_PAGE_SIZE = 20;
+const LEGACY_DISCOVERY_LIMIT = 100;
+
+async function openRoomSummary(ctx: QueryCtx, room: Doc<"rooms">) {
+  return {
+    code: room.code,
+    mood: room.mood,
+    headcount: room.headcount,
+    memberCount: await memberCount(ctx, room._id),
+    whenAt: room.whenAt,
+    demo: room.demo === true,
+  };
+}
 
 /**
  * The exact shape five later tasks read. Declaring it as a `returns` validator
@@ -146,7 +173,7 @@ const roomViewValidator = v.union(
   }),
 );
 
-export const create = mutation({
+export const create = authenticatedMutation({
   args: {
     mood: moodValidator,
     headcount: v.number(),
@@ -213,7 +240,7 @@ export const create = mutation({
   },
 });
 
-export const join = mutation({
+export const join = publicMutation({
   args: {
     code: v.string(),
     name: v.string(),
@@ -227,7 +254,7 @@ export const join = mutation({
     const room = await roomByCode(ctx, code);
 
     // Signed-in users get their id attached; guests do not need one.
-    const userId = await safeUserId(ctx);
+    const userId = ctx.userId;
 
     const roster = await ctx.db
       .query("members")
@@ -326,7 +353,7 @@ export const join = mutation({
  * a thrown query error would take down the React tree, and the honest response
  * to "I do not know you here" is to send them to /join.
  */
-export const get = query({
+export const get = publicQuery({
   args: { code: v.string(), sessionKey: v.string() },
   returns: roomViewValidator,
   handler: async (ctx, { code, sessionKey }) => {
@@ -487,47 +514,61 @@ export const get = query({
   },
 });
 
-export const openRooms = query({
+export const openRooms = publicQuery({
   args: { mood: moodValidator },
-  returns: v.array(
-    v.object({
-      code: v.string(),
-      mood: moodValidator,
-      headcount: v.number(),
-      memberCount: v.number(),
-      whenAt: v.number(),
-      demo: v.boolean(),
-    }),
-  ),
+  returns: v.array(openRoomValidator),
   handler: async (ctx, { mood }) => {
     const rooms = await ctx.db
       .query("rooms")
-      .withIndex("by_visibility_status", (q) => q.eq("visibility", "open").eq("status", "lobby"))
-      .collect();
+      .withIndex("by_visibility_status_mood", (q) =>
+        q.eq("visibility", "open").eq("status", "lobby").eq("mood", mood),
+      )
+      .take(LEGACY_DISCOVERY_LIMIT + 1);
 
-    const withCounts = await Promise.all(
-      rooms
-        .filter((r) => r.mood === mood)
-        .map(async (r) => {
-          const members = await ctx.db
-            .query("members")
-            .withIndex("by_room", (q) => q.eq("roomId", r._id))
-            .collect();
-          return {
-            code: r.code,
-            mood: r.mood,
-            headcount: r.headcount,
-            memberCount: members.length,
-            whenAt: r.whenAt,
-            demo: r.demo === true,
-          };
-        }),
-    );
+    if (rooms.length > LEGACY_DISCOVERY_LIMIT) {
+      throwUserError(
+        "DISCOVERY_LIMIT",
+        `There are more than ${LEGACY_DISCOVERY_LIMIT} open rooms for this mood. Please try again later.`,
+      );
+    }
+
+    const withCounts = await Promise.all(rooms.map((room) => openRoomSummary(ctx, room)));
 
     // A room already at its planned size is a dead end on the one screen that
     // decides whether anyone reaches a room at all -- offering it only to
     // refuse the tap is worse than not offering it.
     return withCounts.filter((r) => r.memberCount < r.headcount);
+  },
+});
+
+/**
+ * The bounded replacement for the lobby's legacy all-at-once read. The index
+ * removes private, started, and wrong-mood rooms before pagination; full rooms
+ * are filtered after each page because their member count is live data.
+ */
+export const openRoomsPage = publicQuery({
+  args: { mood: moodValidator, paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(openRoomValidator),
+  handler: async (ctx, { mood, paginationOpts }) => {
+    if (paginationOpts.numItems > DISCOVERY_PAGE_SIZE) {
+      throwUserError(
+        "DISCOVERY_LIMIT",
+        `Lobby pages support at most ${DISCOVERY_PAGE_SIZE} rooms.`,
+      );
+    }
+
+    const page = await ctx.db
+      .query("rooms")
+      .withIndex("by_visibility_status_mood", (q) =>
+        q.eq("visibility", "open").eq("status", "lobby").eq("mood", mood),
+      )
+      .paginate(paginationOpts);
+    const rooms = await Promise.all(page.page.map((room) => openRoomSummary(ctx, room)));
+
+    return {
+      ...page,
+      page: rooms.filter((room) => room.memberCount < room.headcount),
+    };
   },
 });
 
@@ -548,7 +589,7 @@ export const openRooms = query({
  * lobby's three controls can each move on their own without sending the other
  * two back at whatever value that phone last rendered.
  */
-export const setRules = mutation({
+export const setRules = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),
@@ -637,7 +678,7 @@ export const setRules = mutation({
  * byte-for-byte with `removeMember` below and which re-decides the two things
  * the shrunken roster has just changed: every open proposal, and the match.
  */
-export const leave = mutation({
+export const leave = publicMutation({
   args: { code: v.string(), sessionKey: v.string() },
   returns: v.null(),
   handler: async (ctx, { code, sessionKey }): Promise<null> => {
@@ -668,7 +709,7 @@ export const leave = mutation({
  * their own `sessionKey`, and the row they name must belong to the room that
  * key is for -- otherwise a host of any room could delete a member of any other.
  */
-export const removeMember = mutation({
+export const removeMember = publicMutation({
   args: { code: v.string(), sessionKey: v.string(), memberId: v.id("members") },
   returns: v.null(),
   handler: async (ctx, { code, sessionKey, memberId }): Promise<null> => {

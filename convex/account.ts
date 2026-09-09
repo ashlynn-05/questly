@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
-import { requireUserId, safeUserId } from "./lib/access";
+import { internalMutation } from "./_generated/server";
+import { authenticatedMutation, publicQuery } from "./lib/customFunctions";
 import { PURGE_WINDOW_MS, purgeAt } from "./lib/account";
 import { throwUserError } from "./lib/errors";
 import { detachMember } from "./lib/roster";
@@ -41,11 +41,11 @@ const deletionStatusValidator = v.union(
  * with no tombstone both get null -- neither is on their way out, and the
  * difference between them is not this query's business.
  */
-export const deletionStatus = query({
+export const deletionStatus = publicQuery({
   args: {},
   returns: deletionStatusValidator,
   handler: async (ctx) => {
-    const userId = await safeUserId(ctx);
+    const userId = ctx.userId;
     if (!userId) return null;
 
     const profile = await ctx.db
@@ -97,11 +97,11 @@ const MAX_NAMED_ROOMS = 3;
  * forever is not a delete.
  */
 
-export const deleteAccount = mutation({
+export const deleteAccount = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
 
     // Every seat this account holds, read ONCE and used for both halves of
     // this mutation -- the refusal below and the detach after it.
@@ -193,11 +193,11 @@ export const deleteAccount = mutation({
  * was -- minus the seats, which are gone for good and which the delete screen
  * said would be.
  */
-export const restoreAccount = mutation({
+export const restoreAccount = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    const userId = await requireUserId(ctx);
+    const userId = ctx.userId;
 
     const profile = await ctx.db
       .query("profiles")

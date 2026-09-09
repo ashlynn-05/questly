@@ -1,6 +1,6 @@
-import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { enqueuePlanGeneration } from "./planQueue";
 
 /**
  * The exhaustion fallback's winner: the genuinely top-scored card.
@@ -129,6 +129,6 @@ export async function resolveMatch(
   await ctx.db.patch(roomId, { status: "matched", matchedQuestId: winner });
   // The plan is built out of band: the match must land on every phone now, not
   // after an LLM round trip.
-  await ctx.scheduler.runAfter(0, internal.plans.generate, { roomId, questId: winner });
+  await enqueuePlanGeneration(ctx, roomId, winner);
   return winner;
 }

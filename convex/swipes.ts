@@ -1,11 +1,11 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { publicMutation } from "./lib/customFunctions";
 import { requireMember, roomByCode } from "./lib/access";
 import { throwUserError } from "./lib/errors";
 import { resolveMatch } from "./lib/match";
 
-export const cast = mutation({
+export const cast = publicMutation({
   args: {
     code: v.string(),
     sessionKey: v.string(),
