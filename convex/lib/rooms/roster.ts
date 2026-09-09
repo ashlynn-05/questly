@@ -1,6 +1,7 @@
 import type { Doc } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { resolveMatch } from "./match";
+import { presence } from "../../presence";
 import { dropOwner, seatOwnerKey } from "../push/notify";
 import { resolveOpenProposals } from "../plans/proposals";
 import { clearFinalizeVotes } from "./rules";
@@ -63,6 +64,13 @@ export async function detachMember(ctx: MutationCtx, member: Doc<"members">): Pr
   // filed under their ACCOUNT and must survive this. Leaving one room is not
   // turning notifications off everywhere.
   await dropOwner(ctx, seatOwnerKey(member._id));
+
+  // Same argument, one component over. Presence is keyed on the seat, and the
+  // seat is going: left alone the component would hold a row per departed
+  // member forever, since nothing else ever reaps one. Nobody would see it --
+  // the lobby only asks about members still on the roster -- which is exactly
+  // why it would never get noticed.
+  await presence.removeRoomUser(ctx, member.roomId, member._id);
 
   await ctx.db.delete(member._id);
 

@@ -39,12 +39,15 @@ function nameList(names: string[]): string {
 
 export function Deck({
   view,
+  away,
   code,
   sessionKey,
   headingRef,
   setLeaving,
 }: {
   view: RoomView;
+  /** Seats whose tab has gone quiet. Display only -- see `convex/presence.ts`. */
+  away: ReadonlySet<Id<"members">>;
   code: string;
   sessionKey: string;
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -263,7 +266,13 @@ export function Deck({
                     <li key={m._id}>
                       <ConfirmButton
                         className="self-start"
-                        label={`Take ${m.name} out of the room`}
+                        // The label carries it, because this control is a
+                        // sentence a screen reader reads whole -- a badge
+                        // beside it would be read separately from the name it
+                        // qualifies, or not at all.
+                        label={`Take ${m.name} out of the room${
+                          away.has(m._id) ? " (their tab is closed)" : ""
+                        }`}
                         confirmLabel={`Yes, take ${m.name} out`}
                         cancelLabel="Keep them"
                         onConfirm={() => remove(m._id)}

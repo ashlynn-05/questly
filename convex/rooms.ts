@@ -263,6 +263,7 @@ export const create = authenticatedMutation({
       isHost: true,
       sessionKey,
       joinedAt: Date.now(),
+      swipeCount: 0,
     });
 
     return { code, sessionKey };
@@ -367,6 +368,7 @@ export const join = publicMutation({
       isHost: claimsHostSeat,
       sessionKey: newKey,
       joinedAt: Date.now(),
+      swipeCount: 0,
     });
 
     // Only a genuinely NEW seat, which is why this sits here and not at the top
@@ -411,9 +413,21 @@ export const get = publicQuery({
       .order("asc")
       .collect();
 
-    const swipes = await ctx.db
+    // THIS MEMBER'S ROWS ONLY. It used to be the whole room's -- 96 rows at the
+    // twelve-member ceiling -- and every one of them was read to produce two
+    // numbers that never looked at `dir` or `questId`. This query re-runs on
+    // every write in the room, roughly 1150 times over a full session, so that
+    // was 96 documents fetched about 1150 times to count to nine.
+    //
+    // Everyone else's count now comes off their own member row, which the
+    // roster read above already has in hand. `lib/rooms/match.ts` writes it,
+    // from these same rows, in the transaction that changes them. See the
+    // schema comment on `members.swipeCount`.
+    const yourSwipes = await ctx.db
       .query("swipes")
-      .withIndex("by_room_member", (q) => q.eq("roomId", room._id))
+      .withIndex("by_room_member", (q) =>
+        q.eq("roomId", room._id).eq("memberId", you._id),
+      )
       .collect();
 
     // .first(), not .unique(), and deliberately so -- do not "tidy" this back.
@@ -463,8 +477,6 @@ export const get = publicQuery({
         };
       }),
     );
-
-    const yourSwipes = swipes.filter((s) => s.memberId === you._id);
 
     // Bounded by `MAX_ROOM_MEMBERS`, and most rooms are guests who cost nothing
     // here. Keyed by member rather than by account so `you` reads out of the
@@ -556,9 +568,19 @@ export const get = publicQuery({
       progress: {
         swipedByYou: yourSwipes.length,
         deckSize: quests.length,
-        // Who the room is still waiting on, by name -- the presence signal.
+        // Who the room is still waiting on, by name.
+        //
+        // NOT a presence signal, whatever the old comment here said: it names
+        // people who have not finished the deck, and somebody who shut their
+        // laptop is indistinguishable in it from somebody still deciding.
+        // `convex/presence.ts` answers the other question, separately, and
+        // never feeds this one.
+        //
+        // `?? 0` covers a seat written before `swipeCount` existed and not yet
+        // backfilled, which reads as "has not started" -- the same thing the
+        // old row count said about a member with no rows.
         waitingOn: members
-          .filter((m) => swipes.filter((s) => s.memberId === m._id).length < quests.length)
+          .filter((m) => (m.swipeCount ?? 0) < quests.length)
           .map((m) => m.name),
       },
     };

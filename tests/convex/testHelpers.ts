@@ -1,4 +1,6 @@
 import betterAuth from "@convex-dev/better-auth/test";
+import migrations from "@convex-dev/migrations/test";
+import presence from "@convex-dev/presence/test";
 import rateLimiter from "@convex-dev/rate-limiter/test";
 import workpool from "@convex-dev/workpool/test";
 import type { GenericSchema, SchemaDefinition } from "convex/server";
@@ -11,6 +13,8 @@ const componentTest = (t: TestConvex<typeof schema>) =>
 export function registerComponents(t: TestConvex<typeof schema>): void {
   const generic = componentTest(t);
   betterAuth.register(generic, "betterAuth");
+  migrations.register(generic, "migrations");
+  presence.register(generic, "presence");
   rateLimiter.register(generic, "rateLimiter");
   workpool.register(generic, "planGeneration");
   workpool.register(generic, "pushDelivery");

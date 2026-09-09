@@ -1105,3 +1105,73 @@ test("a failed blurb call says so in the logs", async () => {
     expect.anything(),
   );
 });
+
+/**
+ * The case the embedding cache exists for, driven end to end through two real
+ * builds rather than seeded rows.
+ *
+ * The first room does a full build: Places, then the taste re-rank, then the
+ * blurbs. The second room borrows that finished deck. It must not pay OpenAI
+ * again for venues the first room just embedded.
+ *
+ * WHY THIS IS THE TEST AND NOT THE SEEDED ONE IN `deckCache.test.ts`. The two
+ * paths do not hold the same words for the same place at the moment they rank.
+ * A full build has only the Google summary, because `writeBlurbs` runs AFTER
+ * `rankByTaste`; a borrowing build has the finished LLM blurb off the stored
+ * quest row. Keyed on that string the cache would miss on every borrowed
+ * places card while every other test still passed, which is exactly what the
+ * first version of this change did.
+ */
+test("a room borrowing a deck re-uses the embeddings the first build paid for", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  await roomWithPartner(t);
+  await t.run(async (ctx) => {
+    await ctx.db.insert("profiles", {
+      userId: "u1", displayName: "Bec", tasteVector: TASTE_VECTOR,
+      tasteSentence: "likes coffee", moodAffinity: {}, createdAt: 1,
+    });
+  });
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+
+  await asHost.action(api.deck.build, { code: "2222", sessionKey: "hostkey" });
+  const embedCalls = () =>
+    fetchMock.mock.calls.filter(([url]) => String(url) === EMBEDDINGS_URL).length;
+  expect(embedCalls()).toBe(1);
+
+  // Same mood, budget, centre and radius, so `recentDeck` hands this room the
+  // first room's cards.
+  await t.run(async (ctx) => {
+    const roomId = await ctx.db.insert("rooms", {
+      hostUserId: "u1", mood: "treat", headcount: 4, budgetPerHeadCents: 4000,
+      whenAt: 1_800_000_000_000, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
+      visibility: "private", status: "lobby", code: "3333",
+    });
+    await ctx.db.insert("members", {
+      roomId, name: "Bec", userId: "u1", isHost: true, sessionKey: "hostkey2", joinedAt: 1,
+    });
+  });
+
+  const borrowed = await asHost.action(api.deck.build, { code: "3333", sessionKey: "hostkey2" });
+
+  expect(borrowed.deckSize).toBeGreaterThan(0);
+  // The whole assertion: not one more embeddings request, and no Places call
+  // either, for a deck that was already built.
+  expect(embedCalls()).toBe(1);
+
+  // And the re-rank still ran on the cached vectors rather than being skipped
+  // -- `rankByTaste` swallows its own failures, so a broken cache would look
+  // like a quietly untasted deck instead of an error.
+  const stored = await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", "3333"))
+      .unique();
+    return await ctx.db
+      .query("quests")
+      .withIndex("by_room_rank", (q) => q.eq("roomId", room!._id))
+      .order("asc")
+      .collect();
+  });
+  expect(stored.some((q) => (q.scoreBreakdown.tasteSimilarity ?? 0) > 0)).toBe(true);
+});

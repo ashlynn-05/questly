@@ -103,6 +103,60 @@ export const roomTables = {
     isHost: v.boolean(),
     sessionKey: v.string(),
     joinedAt: v.number(),
+    /**
+     * How many cards this member has answered. The number `rooms.get` used to
+     * work out by collecting every swipe row in the room.
+     *
+     * DERIVED, NEVER INCREMENTED, and that distinction is the whole design.
+     * `resolveMatch` in `lib/rooms/match.ts` is its ONLY writer: it already
+     * holds the roster and every swipe row in memory, after the caller's own
+     * write, so it recomputes each member's count from the rows and patches
+     * only the ones that disagree. Nothing adds one to it. Do not "optimise"
+     * that into a delta at the insert site -- a delta is a second copy of the
+     * rule, and the first path that writes a swipe without adjusting it makes
+     * this number a quiet lie.
+     *
+     * Because it is derived, it also self-heals: any row written outside the
+     * normal path (a fixture, a repair mutation, a feature nobody has written
+     * yet) is corrected by the next mutation in that room.
+     *
+     * THE PRECONDITION, stated exactly, because it is narrower than it looks.
+     * Every mutation that touches a swipe runs `resolveMatch` -- the
+     * never-deadlock rule makes that mandatory, not merely conventional -- but
+     * `resolveMatch` returns early on a room that is missing, already
+     * `matched` or `booked`, not `swiping`, or holding no quests, and the
+     * reconcile sits after those. What actually keeps this number true is that
+     * the only two writers of swipe rows today are `swipes.cast`, which runs
+     * only on a `swiping` room with a deck, and `detachMember`, which deletes
+     * a member's swipes and that member's row in the same transaction, so no
+     * SURVIVING member's count can go stale even down an early-return path.
+     * A future mutation that clears somebody's swipes while leaving them on
+     * the roster -- an undo, a room reset -- would break that, and would need
+     * to reconcile itself or run above those returns.
+     *
+     * WHY IT IS STORED AT ALL. `rooms.get` is the one subscription the product
+     * runs on and it re-runs on every write in the room, roughly 1150 times
+     * over a full twelve-person session. It read the whole `swipes` range each
+     * time, 96 rows at the ceiling, to produce exactly two numbers:
+     * `swipedByYou` and the per-member tallies behind `waitingOn`. Neither ever
+     * looked at `dir` or `questId`.
+     *
+     * WHY IT LIVES ON THE MEMBER ROW rather than in a table of its own. The
+     * schema guidance says to keep high-churn fields off shared documents, and
+     * that is aimed at heartbeats -- writes with no natural ceiling. This has
+     * one: a member can answer each card once, so it is written at most
+     * DECK_SIZE times per seat, ever. The roster is already read in full by
+     * every caller that wants these counts, so a separate table would ADD a
+     * read per member to the query this exists to shrink.
+     *
+     * It needs no decrement. `detachMember` deletes a member's swipes and then
+     * the member row itself, so the count leaves with the thing it counts.
+     *
+     * Optional because every row written before this column existed has no
+     * count; `convex/migrations.ts` backfills them. The read in `rooms.get`
+     * must not switch over until that backfill has run.
+     */
+    swipeCount: v.optional(v.number()),
   })
     .index("by_room", ["roomId"])
     .index("by_room_session", ["roomId", "sessionKey"])

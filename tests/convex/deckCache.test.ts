@@ -5,6 +5,7 @@ import { expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
+import { EMBEDDING_MODEL } from "../../convex/lib/openai";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
@@ -559,4 +560,104 @@ test("a superseded build cannot overwrite a deck built from cache", async () => 
   } finally {
     restore();
   }
+});
+
+/**
+ * The deck cache borrows the candidates but never the ranking, so a borrowing
+ * room still runs `rankByTaste` over the donor's cards -- and what a venue is
+ * does not depend on which room is looking at it.
+ *
+ * The two tests above reach `deck.build` with no signed-in member, so
+ * `blend(vectors)` is undefined and the embedding call is skipped entirely:
+ * neither of them would notice if the taste path were spending quota. This one
+ * gives the host a taste vector, which turns the embedding call on.
+ *
+ * The seeded rows deliberately carry NO relation to the words on the borrowed
+ * cards. That is the regression this encodes: keyed on the card text, a borrow
+ * misses every places card, because a full build embeds the Google summary
+ * (`writeBlurbs` runs after the ranking) and a borrow embeds the finished LLM
+ * blurb. Keyed on the place, the same venue is the same venue either way.
+ *
+ * The ordering assertion is the load-bearing half. `rankByTaste` catches its
+ * own failures and falls back to the untasted order, so a cache that returned
+ * nothing would leave this room on the donor's order with a silent warning.
+ * Alpha and Beta score identically on every other term, so only taste can move
+ * Beta in front, and only a cache hit can supply taste without a network call.
+ */
+test("a borrowed deck re-ranks on cached embeddings and spends no quota", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  await donorRoom(t, {
+    builtAt: Date.now(),
+    quests: [
+      { rank: 0, placeId: "a", title: "Alpha", blurb: "a blurb nobody ever embedded" },
+      { rank: 1, placeId: "b", title: "Beta", blurb: "nor this one" },
+    ],
+  });
+
+  const roomId = await freshRoom(t, "8892");
+  await withHost(t, roomId);
+  await t.run(async (ctx) => {
+    await ctx.db.insert("profiles", {
+      userId: "u2",
+      displayName: "Host",
+      tasteVector: [1, 0],
+      tasteSentence: "likes the first axis",
+      moodAffinity: {},
+      createdAt: 1,
+    });
+    await ctx.db.insert("venueEmbeddings", {
+      model: EMBEDDING_MODEL, placeId: "a", vector: [0, 1],
+    });
+    await ctx.db.insert("venueEmbeddings", {
+      model: EMBEDDING_MODEL, placeId: "b", vector: [1, 0],
+    });
+  });
+
+  const { fetchMock, restore } = noNetwork();
+  try {
+    expect(await t.action(api.deck.build, { code: "8892", sessionKey: "hostkey" }))
+      .toEqual({ deckSize: 2 });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const quests = await deckOf(t, "8892");
+    expect(quests.map((q) => q.placeId)).toEqual(["b", "a"]);
+    expect(quests[0].scoreBreakdown.tasteSimilarity).toBeGreaterThan(0);
+  } finally {
+    restore();
+  }
+});
+
+/**
+ * The cache's whole contract is "same venue, same model, one row". Two rooms
+ * building the same shortlist at the same instant race to write the same
+ * place, which is why `saveEmbeddings` skips rather than throws -- a second
+ * write must be a no-op, not a lost batch.
+ *
+ * The model is part of the key, not a column beside it: a rotation must read
+ * as a miss. A cached 1536-wide vector scored against a 3072-wide taste vector
+ * does not fail, it returns 0 from `cosine`, which would quietly demote every
+ * already-cached venue below every fresh one.
+ */
+test("the embedding cache answers by place and model, and writes each one once", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const model = EMBEDDING_MODEL;
+
+  expect(await t.query(internal.deck.cachedEmbeddings, { model, placeIds: ["a"] }))
+    .toEqual([null]);
+
+  await t.mutation(internal.deck.saveEmbeddings, {
+    model, entries: [{ placeId: "a", vector: [0, 1] }],
+  });
+  await t.mutation(internal.deck.saveEmbeddings, {
+    model, entries: [{ placeId: "a", vector: [9, 9] }],
+  });
+
+  expect(await t.query(internal.deck.cachedEmbeddings, { model, placeIds: ["a", "b"] }))
+    .toEqual([[0, 1], null]);
+  expect(await t.query(internal.deck.cachedEmbeddings, { model: "some-other-model", placeIds: ["a"] }))
+    .toEqual([null]);
+  expect(await t.run(async (ctx) => (await ctx.db.query("venueEmbeddings").collect()).length))
+    .toBe(1);
 });

@@ -48,6 +48,7 @@ const SEAT_ROUNDEL =
  */
 export function Lobby({
   view,
+  away,
   code,
   sessionKey,
   headingRef,
@@ -56,6 +57,8 @@ export function Lobby({
   setLeaving,
 }: {
   view: RoomView;
+  /** Seats whose tab has gone quiet. Display only -- see `convex/presence.ts`. */
+  away: ReadonlySet<Id<"members">>;
   code: string;
   sessionKey: string;
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -220,7 +223,14 @@ export function Lobby({
                       somebody whose name is the next thing on the row is
                       decoration, and their initials are an abbreviation a
                       screen reader would read out as letters. */}
-                  <span aria-hidden="true" className={SEAT_ROUNDEL}>
+                  <span
+                    aria-hidden="true"
+                    className={
+                      member && away.has(member._id)
+                        ? `${SEAT_ROUNDEL} opacity-50`
+                        : SEAT_ROUNDEL
+                    }
+                  >
                     {member?.avatarUrl ? (
                       /* Convex serves these from its own origin with a signed
                          URL that changes per read, so `next/image` has nothing
@@ -238,6 +248,14 @@ export function Lobby({
                       {member.name}
                       {member.isHost ? (
                         <span className="board ml-2 text-[10px] text-accent">Host</span>
+                      ) : null}
+                      {/* A word, not a colour: this is the one thing
+                          "Waiting on Tam" cannot say, and a group decides
+                          whether to wait or move on based on it. Dimmed rather
+                          than accented -- it is a fact about somebody's
+                          attention, not a problem with their seat. */}
+                      {away.has(member._id) ? (
+                        <span className="board ml-2 text-[10px] text-dim">Away</span>
                       ) : null}
                     </span>
                   ) : (
