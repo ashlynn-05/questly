@@ -3,11 +3,22 @@ import type { Stop } from "@convex/lib/plans/stops";
 import { Plate } from "@/components/questly/Plate";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
 import { lockLine, proposalCard, proposalLine } from "@/lib/room/houseRules";
+import { stopsDirectionsUrl, stopsEmbedUrl } from "@/lib/room/maps";
 import type { RoomView } from "../page";
+import { MapsLink } from "./MapsLink";
 
 export type SheetTab = "ask" | "search";
 type Plan = NonNullable<RoomView["plan"]>;
 type ProposalId = RoomView["proposals"][number]["_id"];
+
+/**
+ * Read once at module scope, like `CONVEX_SITE` in `Deck.tsx`.
+ *
+ * A `NEXT_PUBLIC_` variable is inlined at build time, so this is a constant and
+ * not a lookup -- which is why a missing key needs no loading state further
+ * down. Absent, `stopsEmbedUrl` answers null and the plan renders without a map.
+ */
+const MAPS_BROWSER_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY;
 
 const time = (at: number) =>
   new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
@@ -65,6 +76,12 @@ export function PlanStopList({
   castVote: (proposalId: ProposalId, vote: "yes" | "no") => Promise<void>;
   focusAskedVote: (node: HTMLDivElement | null) => void;
 }) {
+  // Both null on a night the model named badly -- see `stopQuery`. The map and
+  // the link then simply are not there, which is the whole of this feature's
+  // failure handling and deliberately not more.
+  const routeUrl = stopsDirectionsUrl(plan.stops);
+  const embedUrl = stopsEmbedUrl(plan.stops, MAPS_BROWSER_KEY);
+
   return (
     <>
       <div>
@@ -333,6 +350,46 @@ export function PlanStopList({
           })}
         </ol>
       </div>
+
+      {/* The shape of the night, which the list above cannot draw. Three stops
+          in sequence say nothing about whether they are next door or across
+          town, and that is the question a group asks before agreeing to any of
+          it.
+
+          An IFRAME, not `@vis.gl/react-google-maps`, and the reason is the bill:
+          the Maps Embed API is SKU 9C10-8313-F21F, unlimited at no charge, while
+          the JS SDK that package loads is Dynamic Maps at $7 per 1000 loads past
+          10k a month. Same route, same interactivity, one of them free. See
+          `src/lib/room/maps.ts` for the full comparison.
+
+          `loading="lazy"` so the plan paints before Google does -- this is the
+          screen a room is trying to agree on and it must not wait on a third
+          party. `referrerpolicy` is Google's own recommendation: it sends the
+          origin so an HTTP-referrer key restriction can validate, without
+          leaking which room is being planned. 240px clears the 200px minimum
+          below which the Embed API refuses to render at all. */}
+      {embedUrl ? (
+        <iframe
+          src={embedUrl}
+          title="The three stops on a map"
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allowFullScreen
+          className="h-[240px] w-full rounded-[6px] border border-hairline"
+        />
+      ) : null}
+
+      {/* The whole night, not one venue of it. `booking.deepLink` links the
+          anchor quest alone, which is why the booked screen used to offer the
+          night and show a single place. */}
+      {routeUrl ? (
+        <MapsLink
+          href={routeUrl}
+          className="board border border-hairline text-[11px] text-text"
+        >
+          Open every stop in Maps
+        </MapsLink>
+      ) : null}
 
       <div className="flex items-baseline justify-between border-t border-hairline pt-4">
         <p className="board text-[11px] text-dim">Est. per head</p>

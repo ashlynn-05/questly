@@ -4,7 +4,9 @@ import { useState, type RefObject } from "react";
 import { Rail, RailNode } from "@/components/questly/Rail";
 import { Plate } from "@/components/questly/Plate";
 import { bookedHeadcount } from "@/lib/room/booking";
+import { stopsDirectionsUrl } from "@/lib/room/maps";
 import type { RoomView } from "../page";
+import { MapsLink } from "./MapsLink";
 
 const time = (at: number) =>
   new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
@@ -138,16 +140,23 @@ export function Booked({
       ) : null}
 
       <div className="flex flex-col gap-2">
-        {/* A plain anchor, not a Plate: this leaves the app for Google Maps, and
-            it opens in its own tab so the room is still there afterwards. */}
-        <a
-          href={booking.deepLink}
-          target="_blank"
-          rel="noreferrer"
-          className="board flex min-h-[44px] items-center justify-center rounded-[6px] border border-action-edge bg-action px-4 text-[11px] text-on-action"
+        {/* THE ROUTE, not the anchor venue. `booking.deepLink` is built by
+            `convex/bookings.ts` from the matched quest alone, so this button
+            offered the night and then showed one place -- the group got the
+            first stop and had to find the other two themselves.
+
+            The stored `deepLink` is untouched and stays the fallback. It is a
+            frozen record of what the room agreed to, and `src/lib/room/
+            booking.ts` is a long argument about not rewriting those after the
+            fact; this is a better link COMPUTED at render time, not a correction
+            applied to history. It also still answers when a plan has no route to
+            draw, which is the case `stopsDirectionsUrl` returns null for. */}
+        <MapsLink
+          href={(view.plan && stopsDirectionsUrl(view.plan.stops)) || booking.deepLink}
+          className="board border border-action-edge bg-action text-[11px] text-on-action"
         >
-          Open in Maps<span className="sr-only"> (opens in a new tab)</span>
-        </a>
+          Open in Maps
+        </MapsLink>
 
         {view.plan ? (
           <Plate
