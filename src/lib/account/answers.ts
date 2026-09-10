@@ -2,14 +2,14 @@
  * The quiz answers, grouped by what was answered rather than listed by card.
  *
  * WHAT THIS FIXED. `/settings` drew one row per card with the answer on the
- * right: seven rows, a hairline under each, and -- because most people lean one
- * way -- the same word seven times down the right-hand edge. Every row looked
+ * right: eight rows, a hairline under each, and -- because most people lean one
+ * way -- the same word eight times down the right-hand edge. Every row looked
  * identical, so the column of answers carried no shape at all, and the thing a
  * person actually came to check ("what did I say I wanted?") had to be read out
  * of seven repetitions of "More".
  *
- * Grouped, the same seven phrases answer that question at a glance, the
- * repeated word is said once as a heading, and six of the seven rules go away.
+ * Grouped, the same eight phrases answer that question at a glance, the
+ * repeated word is said once as a heading, and seven of the eight rules go away.
  *
  * ORDER IS FIXED, NOT DATA-DRIVEN: more, then less, then unanswered. A group
  * order that depended on which was longer would move the headings between

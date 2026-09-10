@@ -43,7 +43,6 @@ const PROFILE = {
   tasteVector: [0.1, 0.2],
   tasteSentence: "likes being outside",
   moodAffinity: { grass: 1 },
-  goals: ["reset"],
 };
 
 // --- the window arithmetic ------------------------------------------------

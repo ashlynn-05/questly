@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { api } from "@convex/_generated/api";
-import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/account/quiz";
+import { QUIZ_CARDS } from "@convex/lib/account/quiz";
 import type { Mood } from "@convex/lib/deck/scoring";
 import { Plate } from "@/components/questly/Plate";
 import { Chip } from "@/components/questly/Chip";
@@ -27,7 +27,7 @@ const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
   { id: "hangout", label: "Hang-outs", sub: "One long table, or somewhere loud." },
 ];
 
-const TOTAL_QUESTIONS = QUIZ_CARDS.length + 1;
+const TOTAL_QUESTIONS = QUIZ_CARDS.length;
 type OpenRooms = UsePaginatedQueryReturnType<typeof api.rooms.openRoomsPage>;
 
 export type StepViewsProps = {
@@ -35,7 +35,6 @@ export type StepViewsProps = {
   headingRef: RefObject<HTMLHeadingElement | null>;
   cardIndex: number;
   answers: FunnelDraft["answers"];
-  goals: FunnelDraft["goals"];
   mood: FunnelDraft["mood"];
   visibility: FunnelDraft["visibility"];
   headcount: FunnelDraft["headcount"];
@@ -49,8 +48,7 @@ export type StepViewsProps = {
   openRooms: OpenRooms;
   edit: (patch: Partial<FunnelDraft>) => void;
   goTo: (next: Step, patch?: Partial<FunnelDraft>) => void;
-  toggleGoal: (id: string) => void;
-  finishQuiz: () => Promise<void>;
+  finishQuiz: (answers: FunnelDraft["answers"]) => Promise<void>;
   openTheRoom: () => Promise<void>;
   joinOpenRoom: (code: string) => Promise<void>;
 };
@@ -59,8 +57,9 @@ function QuizStep({
   headingRef,
   cardIndex,
   answers,
+  busy,
   edit,
-  goTo,
+  finishQuiz,
 }: StepViewsProps) {
   return (
     <section aria-labelledby="quiz-heading" className="flex flex-col gap-6">
@@ -89,64 +88,16 @@ function QuizStep({
             key={dir}
             variant="raised"
             label={dir === "more" ? "More likely" : "Less likely"}
+            disabled={busy}
             onClick={() => {
               const answered = { ...answers, [QUIZ_CARDS[cardIndex].id]: dir };
               if (cardIndex + 1 < QUIZ_CARDS.length) {
                 edit({ answers: answered, step: "quiz", cardIndex: cardIndex + 1 });
-              } else goTo("goals", { answers: answered });
+              } else void finishQuiz(answered);
             }}
           />
         ))}
       </div>
-    </section>
-  );
-}
-
-function GoalsStep({ headingRef, goals, toggleGoal, busy, finishQuiz }: StepViewsProps) {
-  return (
-    <section aria-labelledby="goals-heading" className="flex flex-col gap-6">
-      <div>
-        <p className="board text-[11px] text-accent">
-          Question <span className="num">{TOTAL_QUESTIONS}</span> of{" "}
-          <span className="num">{TOTAL_QUESTIONS}</span>
-        </p>
-        <h1
-          id="goals-heading"
-          ref={headingRef}
-          tabIndex={-1}
-          className="display mt-3 text-[34px] text-text lg:text-[44px]"
-        >
-          What is the night for?
-        </h1>
-      </div>
-
-      <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="board text-[11px] text-accent">Pick as many as are true</legend>
-        <div className="flex flex-wrap gap-2">
-          {QUIZ_GOALS.map((goal) => (
-            <Chip
-              key={goal.id}
-              face="prose"
-              selected={goals.includes(goal.id)}
-              onClick={() => toggleGoal(goal.id)}
-            >
-              {goal.text}
-            </Chip>
-          ))}
-        </div>
-      </fieldset>
-
-      <p className="text-[12px] leading-snug text-dim">
-        These shape what we suggest. Picking none is a fine answer — the seven cards already said
-        plenty.
-      </p>
-
-      <Plate
-        variant="action"
-        label={busy ? "Working it out…" : goals.length === 0 ? "Nothing in particular" : "That is the night"}
-        disabled={busy}
-        onClick={() => void finishQuiz()}
-      />
     </section>
   );
 }
@@ -451,8 +402,6 @@ export function StepViews(props: StepViewsProps) {
   switch (props.current) {
     case "quiz":
       return <QuizStep {...props} />;
-    case "goals":
-      return <GoalsStep {...props} />;
     case "mood":
       return <MoodStep {...props} />;
     case "party":

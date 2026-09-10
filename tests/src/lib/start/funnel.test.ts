@@ -12,8 +12,7 @@ import { EMPTY_DRAFT, parseDraft, type FunnelDraft } from "../../../../src/lib/s
 const FULL: FunnelDraft = {
   step: "constraints",
   answers: { "card-1": "more", "card-2": "less" },
-  cardIndex: 6,
-  goals: ["reset", "meet-someone"],
+  cardIndex: 7,
   mood: "hangout",
   visibility: "open",
   headcount: 6,
@@ -89,7 +88,6 @@ test("one unusable field does not throw away the rest of the funnel", () => {
   const parsed = parseDraft(JSON.stringify({ ...FULL, budget: "heaps" }));
   expect(parsed?.budget).toBe(EMPTY_DRAFT.budget);
   expect(parsed?.answers).toEqual(FULL.answers);
-  expect(parsed?.goals).toEqual(FULL.goals);
   expect(parsed?.mood).toBe("hangout");
   expect(parsed?.step).toBe("constraints");
 });
@@ -101,9 +99,10 @@ test("quiz answers that are not more-or-less are dropped, one by one", () => {
   expect(parsed?.answers).toEqual({ good: "more" });
 });
 
-test("goals keep only the strings", () => {
-  const parsed = parseDraft(JSON.stringify({ ...FULL, goals: ["reset", 3, null, "quiet"] }));
-  expect(parsed?.goals).toEqual(["reset", "quiet"]);
+test("a retired goals list in an old draft is simply not carried forward", () => {
+  const parsed = parseDraft(JSON.stringify({ ...FULL, goals: ["reset", "quiet"] }));
+  expect(parsed).not.toBeNull();
+  expect(parsed).not.toHaveProperty("goals");
 });
 
 test("a missing or nonsensical card index restarts the quiz rather than skipping it", () => {

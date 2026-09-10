@@ -59,7 +59,7 @@ function StartFunnel() {
    * `/settings` sends somebody here to change answers they can already see.
    *
    * Without it the quiz is answered once per account and never again: the
-   * resume below puts a returning host straight on the mood step, so the seven
+   * resume below puts a returning host straight on the mood step, so the eight
    * cards that decide every venue score they will ever be shown were a one-way
    * door. This is the way back through it.
    */
@@ -104,7 +104,6 @@ function StartFunnel() {
           ...EMPTY_DRAFT,
           step: "quiz",
           answers: profile.answers ?? {},
-          goals: profile.goals ?? [],
         }
       : null;
 
@@ -117,7 +116,7 @@ function StartFunnel() {
     writeDraft(next);
   }
 
-  const { answers, cardIndex, goals, mood, visibility, headcount, budget, radiusKm } = draft;
+  const { answers, cardIndex, mood, visibility, headcount, budget, radiusKm } = draft;
   const { whenId, whenMinutes, whenDate } = draft;
 
   const [busy, setBusy] = useState(false);
@@ -177,12 +176,12 @@ function StartFunnel() {
    * would say it twice.
    *
    * Keyed on `current` alone, not `cardIndex`: advancing a quiz card unmounts
-   * nothing (the `<h1>` and both answer plates persist across all seven
+   * nothing (the `<h1>` and both answer plates persist across all eight
    * cards), and the card's question text already carries `aria-live="polite"`,
    * which announces the change on its own. Including `cardIndex` here pulled
    * focus off the very button the user was repeatedly pressing, on every one
-   * of the seven cards. The last card's advance to "goals" still moves focus
-   * -- that transition changes `current`, which does swap the screen.
+   * of the eight cards. The last card's advance to the activity screen still
+   * moves focus -- that transition changes `current`, which does swap it.
    */
   const headingRef = useRef<HTMLHeadingElement>(null);
   const announced = useRef<string | null>(null);
@@ -213,14 +212,6 @@ function StartFunnel() {
     edit({ ...patch, step: next });
   }
 
-  function toggleGoal(id: string) {
-    // Multi-select: leaving with a new name in your phone and coming back
-    // calmer are not mutually exclusive.
-    edit({
-      goals: goals.includes(id) ? goals.filter((g) => g !== id) : [...goals, id],
-    });
-  }
-
   /**
    * Store the quiz answers against the account, when there is one.
    *
@@ -234,12 +225,11 @@ function StartFunnel() {
    *
    * Returns whether the answers are now stored.
    */
-  async function storeTheQuiz(): Promise<boolean> {
+  async function storeTheQuiz(answers: FunnelDraft["answers"]): Promise<boolean> {
     try {
       // No displayName: the server refuses one and derives the name from the
-      // authenticated identity instead. Goals are required and validated
-      // against GOAL_IDS, so only ids from QUIZ_GOALS may be sent.
-      await saveQuiz({ answers, goals });
+      // authenticated identity instead.
+      await saveQuiz({ answers });
       return true;
     } catch (e) {
       if (errorCode(e) !== "NOT_SIGNED_IN") {
@@ -249,12 +239,18 @@ function StartFunnel() {
     }
   }
 
-  async function finishQuiz() {
+  /**
+   * `answers` is passed in rather than read off the draft. The last card's
+   * answer and this call happen in the same handler, and `draft` is the value
+   * this render closed over -- reading it here would save seven answers out of
+   * eight, every time, and the missing one would always be the last card.
+   */
+  async function finishQuiz(answers: FunnelDraft["answers"]) {
     setBusy(true);
     setError(null);
-    const quizSaved = await storeTheQuiz();
+    const quizSaved = await storeTheQuiz(answers);
     setBusy(false);
-    goTo("mood", { quizSaved });
+    goTo("mood", { answers, quizSaved });
   }
 
   async function openTheRoom() {
@@ -295,7 +291,7 @@ function StartFunnel() {
       // identity -- so the answers they gave before signing in finally reach
       // their profile instead of being quietly thrown away.
       if (!draft.quizSaved && Object.keys(answers).length > 0) {
-        if (await storeTheQuiz()) edit({ quizSaved: true });
+        if (await storeTheQuiz(answers)) edit({ quizSaved: true });
       }
       const { code, sessionKey } = await createRoom({
         mood,
@@ -350,9 +346,9 @@ function StartFunnel() {
     // which one that is.
     <Screen
       nav={<ShellNav route="start" />}
-      /* `goals` shares the quiz's stop -- two questions in one sitting -- and
-         `journeyModel` collapses them again into one stage. */
-      journey={<Journey at={current === "goals" ? "quiz" : current} />}
+      /* `quiz` and `mood` are one sitting -- what kind of night is this -- and
+         `journeyModel` collapses them into one stage. */
+      journey={<Journey at={current} />}
     >
       {/* The invitation to turn notifications on, for somebody signed in.
           `/start` because the funnel ends by opening a room and there is no
@@ -428,7 +424,6 @@ function StartFunnel() {
             headingRef={headingRef}
             cardIndex={cardIndex}
             answers={answers}
-            goals={goals}
             mood={mood}
             visibility={visibility}
             headcount={headcount}
@@ -442,7 +437,6 @@ function StartFunnel() {
             openRooms={openRooms}
             edit={edit}
             goTo={goTo}
-            toggleGoal={toggleGoal}
             finishQuiz={finishQuiz}
             openTheRoom={openTheRoom}
             joinOpenRoom={joinOpenRoom}

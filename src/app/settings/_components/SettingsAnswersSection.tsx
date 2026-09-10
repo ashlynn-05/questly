@@ -1,6 +1,6 @@
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
-import { QUIZ_CARDS, QUIZ_GOALS } from "@convex/lib/account/quiz";
+import { QUIZ_CARDS } from "@convex/lib/account/quiz";
 import { groupAnswers } from "@/lib/account/answers";
 import { Plate } from "@/components/questly/Plate";
 import { Section } from "./Section";
@@ -34,20 +34,6 @@ export function SettingsAnswersSection({ profile }: { profile: Profile | undefin
             ))}
           </div>
 
-          <div className="flex flex-col gap-1.5 pt-1">
-            <h3 className="board text-[11px] text-dim">What the night is for</h3>
-            {profile.goals && profile.goals.length > 0 ? (
-              <ul className="flex flex-col gap-1.5">
-                {QUIZ_GOALS.filter((g) => profile.goals?.includes(g.id)).map((g) => (
-                  <li key={g.id} className="text-[15px] leading-snug text-text">
-                    {g.text}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-[15px] leading-snug text-dim">Nothing in particular.</p>
-            )}
-          </div>
         </>
       )}
 

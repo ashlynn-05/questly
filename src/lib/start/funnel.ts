@@ -4,8 +4,8 @@ import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when"
 /**
  * The twelve taps that open a room, kept somewhere a page load cannot destroy.
  *
- * `/start` holds the whole funnel -- seven quiz cards, the goals, the mood, the
- * party, four constraints -- in component state. A signed-out visitor gets all
+ * `/start` holds the whole funnel -- eight quiz cards, the activity, the
+ * party, the constraints -- in component state. A signed-out visitor gets all
  * the way to "Open the room", is told they need an account, signs in, comes
  * back to `/start`, and answers the identical twelve questions again from zero.
  * The quiz answers are gone too: `profiles.saveQuiz` needs an identity, so it
@@ -18,14 +18,13 @@ import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when"
  * is the half that cannot fail, and the persisted half is the bonus.
  */
 
-export type Step = "quiz" | "goals" | "mood" | "party" | "constraints";
+export type Step = "quiz" | "mood" | "party" | "constraints";
 
 /** Every value the funnel collects, and the one fact about what happened to it. */
 export type FunnelDraft = {
   step: Step | null;
   answers: Record<string, "more" | "less">;
   cardIndex: number;
-  goals: string[];
   mood: Mood | null;
   visibility: "private" | "open";
   headcount: number;
@@ -63,7 +62,7 @@ export type FunnelDraft = {
   quizSaved: boolean;
 };
 
-export const STEPS: readonly Step[] = ["quiz", "goals", "mood", "party", "constraints"];
+export const STEPS: readonly Step[] = ["quiz", "mood", "party", "constraints"];
 export const BUDGETS: readonly number[] = [0, 2000, 3000, 5000, 8000];
 export const HEADCOUNTS: readonly number[] = [1, 2, 3, 4, 5, 6];
 export const RADII: readonly number[] = [2, 5, 10, 20];
@@ -72,7 +71,6 @@ export const EMPTY_DRAFT: FunnelDraft = {
   step: null,
   answers: {},
   cardIndex: 0,
-  goals: [],
   mood: null,
   visibility: "private",
   headcount: 4,
@@ -124,7 +122,6 @@ export function parseDraft(raw: string | null): FunnelDraft | null {
       typeof d.cardIndex === "number" && Number.isInteger(d.cardIndex) && d.cardIndex >= 0
         ? d.cardIndex
         : 0,
-    goals: Array.isArray(d.goals) ? d.goals.filter((g): g is string => typeof g === "string") : [],
     mood: MOOD_IDS.includes(d.mood as Mood) ? (d.mood as Mood) : null,
     visibility: d.visibility === "open" ? "open" : "private",
     headcount: oneOf(d.headcount, HEADCOUNTS, EMPTY_DRAFT.headcount),
