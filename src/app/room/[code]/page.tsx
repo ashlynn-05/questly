@@ -186,6 +186,11 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
           }}
         />
       }
+      /* The night as a band above the room, not a column beside it. The nav on
+         the left is the persistent column now, so a second one here would spend
+         200px of every room screen on the same five facts. `Screen` places it,
+         which is also what gives it padding on a route that is `bleed`. */
+      journey={<Journey at={at} />}
     >
       {/* The same invitation as `/start`, offered here because this is the only
           place a GUEST can accept it: they have no account, so their
@@ -205,21 +210,6 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
           is really waiting, no venue has agreed to anything, and any booking is simulated.
         </p>
       ) : null}
-
-      {/* The night as a band above the room, not a column beside it. The nav
-          on the left is the persistent column now, so a second one here would
-          spend 200px of every room screen on the same five facts.
-
-          `px-5` because this `Screen` is `bleed`: the room's four screens each
-          carry their own padding and this band has nothing to inherit from.
-          It sits on `Screen`'s own ground, which is what `.node` needs -- see
-          the note in `Journey`. `hidden` on the WRAPPER and not only on
-          `Journey` itself: an empty flex item still takes the column's 32px
-          gap, which measured as 32px of new whitespace on every room screen on
-          a phone. Below `lg` the room is byte-for-byte the column it was. */}
-      <div className="hidden px-5 lg:block lg:px-0">
-        <Journey at={at} />
-      </div>
 
       {view.room.status === "lobby" ? (
         <Lobby

@@ -348,7 +348,12 @@ function StartFunnel() {
     // roundel matters most here: the funnel is about to write a taste profile
     // to whichever account this browser is holding, and this is where it says
     // which one that is.
-    <Screen nav={<ShellNav route="start" />}>
+    <Screen
+      nav={<ShellNav route="start" />}
+      /* `goals` shares the quiz's stop -- two questions in one sitting -- and
+         `journeyModel` collapses them again into one stage. */
+      journey={<Journey at={current === "goals" ? "quiz" : current} />}
+    >
       {/* The invitation to turn notifications on, for somebody signed in.
           `/start` because the funnel ends by opening a room and there is no
           screen after it, and because `manifest.ts` sets `start_url: "/start"`
@@ -359,22 +364,6 @@ function StartFunnel() {
           same invitation from inside their room, where they have a seat to file
           it under. */}
       <PushHint />
-
-      {/* Where this sitting falls in the whole night, across the top.
-
-          It replaces the 200px column the line used to have. The column was
-          right about the journey and wrong about the cost: 200px of every
-          screen, forever, to say five words. A band says the same thing in one
-          row and gives the width back to the funnel, which is the screen people
-          are actually reading.
-
-          `goals` shares the quiz's stop -- two questions in one sitting -- and
-          `journeyModel` collapses them again into one stage.
-
-          Below `lg` this renders nothing, so the phone gets the same flex
-          column it always had, including the `gap-8` the `empty:-mb-8` on the
-          alert below is measured against. */}
-      <Journey at={current === "goals" ? "quiz" : current} />
 
       <div>
         <div className="flex flex-col gap-8">

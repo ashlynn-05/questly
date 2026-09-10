@@ -22,6 +22,12 @@ import type { Stop } from "./Concourse";
  * which is the wrong axis here -- so they are drawn inline in `--action`, the
  * same colour, at the same 3px.
  *
+ * WHERE IT IS PUT. `Screen` places it, in the `journey` slot, pinned under the
+ * header band at the full width of the column beside the nav. It used to be
+ * passed down as content, which put it inside the reading measure and inside
+ * the body's vertical centring -- so on a short screen it floated in the middle
+ * of the window with a screenful of nothing above it.
+ *
  * WHY IT IS HIDDEN BELOW `lg`. Mobile is unchanged; that is a decision, not an
  * oversight. `hidden` rather than a visual trick, so it leaves the
  * accessibility tree too.
@@ -36,16 +42,34 @@ export function Journey({ at }: { at: Stop }) {
       data-journey
     >
       {stages.map((stage) => (
+        /* Only the stages that DRAW a line grow. The last one has none, and
+           while it was growing too it held a fifth of the band empty: five
+           equal shares meant the line stopped at 80% and the right-hand fifth
+           of every screen was blank. Four growing shares put the roundels on
+           0 / 25 / 50 / 75 / 100 of the full width, which is what makes the
+           band span whatever it is given and re-space itself as that changes. */
         <li
           key={stage.id}
-          className="flex min-w-0 flex-1 items-start"
+          className={`flex min-w-0 items-start ${stage.line ? "flex-1" : "shrink-0"}`}
           aria-current={stage.state === "live" ? "step" : undefined}
         >
           {/* The dot and its label share a zero-width column so the label can
               overhang without pushing the next stage along. Each stage's flex
               basis is therefore the LINE's width, which is what keeps five
               stages evenly spaced whatever their labels say. */}
-          <div className="flex w-0 shrink-0 flex-col items-start gap-3">
+          {/* The last stage hangs its roundel and label to the LEFT of the
+              zero-width column instead of the right, because that column now
+              sits on the band's right edge: left-aligned, the roundel and the
+              word "PLAN" both stood outside the band, 19px past where the
+              content below it ends. Hanging left puts them back inside, and
+              the joining line -- which belongs to the stage before -- runs to
+              the same point and passes behind the roundel, which is what
+              `.node` fills itself with `--ground` for. */}
+          <div
+            className={`flex w-0 shrink-0 flex-col gap-3 ${
+              stage.line ? "items-start" : "items-end"
+            }`}
+          >
             {/* `position: static` overrides `.node`'s absolute placement, which
                 is written for a vertical rail. The class is reused rather than
                 reimplemented so the three states stay one definition. */}

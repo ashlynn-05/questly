@@ -66,9 +66,24 @@ type Props = {
    * door, two forms and a design reference are not places you navigate FROM.
    */
   nav?: ReactNode;
+  /**
+   * The horizontal stepper, on the two routes that are a journey.
+   *
+   * A slot for the same reason `nav` is one -- the stage comes from the route
+   * -- but it is here rather than in `children` because of WHERE it belongs.
+   * Passed down as content it sat inside the reading measure and inside the
+   * body's vertical centring, so on a short screen the line floated in the
+   * middle of the window with 200px of nothing above it. A progress bar that
+   * moves down the page as the page gets shorter is not a bar you look up at.
+   *
+   * So it is pinned under the band, at the full width of the column beside the
+   * nav rather than the measure's, on the same gutter as the content below so
+   * the first roundel and the first heading share a left edge.
+   */
+  journey?: ReactNode;
 };
 
-export function Screen({ children, bleed = false, badge = true, nav }: Props) {
+export function Screen({ children, bleed = false, badge = true, nav, journey }: Props) {
   return (
     /* WHY 1048px AND NOT THE WHOLE WINDOW. The brief's reference is What's On
        Melbourne, and the thing to copy from it is the restraint: measured off
@@ -153,18 +168,35 @@ export function Screen({ children, bleed = false, badge = true, nav }: Props) {
           push against. */}
       <div className="flex min-h-0 flex-1">
         {nav}
-        <div
-          className={`flex min-w-0 flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${
-            bleed ? "" : "px-5 lg:px-10"
-          }`}
-        >
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Nothing at all below `lg`, wrapper included: `Journey` is already
+              hidden there, but an empty flex item still takes a gap, which is
+              how the same band cost every room screen 32px of whitespace on a
+              phone before it moved here. `px-10` and not the body's `px-5
+              lg:px-10`, because this never renders on a phone and so has no
+              phone padding to state. */}
+          {journey ? <div className="hidden lg:block lg:px-10 lg:pt-7">{journey}</div> : null}
+          {/* Centred in whatever height is left, EXCEPT under a journey band.
+              A band is a top anchor: with the content still centring beneath
+              it, a short screen put the stepper at the top, the heading 200px
+              lower, and a void between them that grew with the window. So a
+              route with a band starts its content under the band and lets the
+              space fall at the bottom. Only from `lg`, and only where there IS
+              a band -- the phone has neither, and every other route keeps the
+              centring exactly as it was. */}
+          <div
+            className={`flex min-w-0 flex-1 flex-col justify-center gap-8 pt-2 pb-10 ${
+              journey ? "lg:justify-start lg:pt-8" : ""
+            } ${bleed ? "" : "px-5 lg:px-10"}`}
+          >
           {/* 940px is the design's own measure, and it is capped here rather
               than on `main` so the nav keeps its full 236px at every width
               instead of the two sharing a squeeze. 1120px from `xl` up is the
               other half of the wider shell above -- see the note on `main` for
               why both numbers move together. */}
-          <div className="flex w-full flex-col gap-8 lg:mx-auto lg:max-w-[940px] xl:max-w-[1120px]">
-            {children}
+            <div className="flex w-full flex-col gap-8 lg:mx-auto lg:max-w-[940px] xl:max-w-[1120px]">
+              {children}
+            </div>
           </div>
         </div>
       </div>
