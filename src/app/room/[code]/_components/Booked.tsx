@@ -58,6 +58,21 @@ export function Booked({
   // The two handlers below have always relied on the same guarantee, from
   // inside an event where it is obvious; here it is not, so it is written
   // down. A component without that guard needs the origin in an effect.
+  // Built here rather than sent as the model wrote it: `plan.shareMessage` is
+  // one line with no times, no prices and no way to find anywhere, and a group
+  // chat is where this plan is actually agreed to.
+  //
+  // Computed at render, not inside the handler, because the panel below now
+  // SHOWS it -- what is sent and what is on the screen have to be one string,
+  // or the panel becomes a preview of a message that no longer exists. Same
+  // `location` guarantee as `calendarHref` below.
+  const shareText = planShareText({
+    intro: view.plan?.shareMessage ?? "",
+    stops: view.plan?.stops ?? [],
+    perHeadCents: headcount.perHeadCents,
+    roomUrl: `${location.origin}/room/${view.room.code}`,
+  });
+
   const calendarHref = view.plan
     ? calendarUrl({
         intro: view.plan.shareMessage,
@@ -92,16 +107,7 @@ export function Booked({
    * for everybody who reads it in the chat.
    */
   async function sendItToTheChat() {
-    const link = `${location.origin}/room/${view.room.code}`;
-    // Built here rather than sent as the model wrote it: `plan.shareMessage`
-    // is one line with no times, no prices and no way to find anywhere, and a
-    // group chat is where this plan is actually agreed to.
-    const message = planShareText({
-      intro: view.plan?.shareMessage ?? "",
-      stops: view.plan?.stops ?? [],
-      perHeadCents: headcount.perHeadCents,
-      roomUrl: link,
-    });
+    const message = shareText;
 
     // Absent on desktop browsers and outside a secure context, so this is a
     // feature test rather than a platform guess.
@@ -175,125 +181,186 @@ export function Booked({
         </div>
       </dl>
 
-      {view.plan ? (
-        <div>
-          <h2 className="board text-[11px] text-accent">What you agreed</h2>
-          <div className="relative mt-4">
-            <Rail />
-            <ol className="m-0 flex list-none flex-col gap-6 p-0">
-              {view.plan.stops.map((stop) => {
-                const where = stopMapsUrl(stop);
-                return (
-                  <li key={stop.id} className="relative pl-14">
-                    <RailNode top={6} state="locked" />
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="board num text-[10px] text-accent">{timeLabel(stop.startAt)}</p>
-                        <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
-                        {stop.note ? (
-                          <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
+      {/* Two columns from `lg`, and the itinerary is what forced it. At the
+          full 940px measure each stop's cost sat about 700px from the name it
+          belonged to: the row is `justify-between`, so the price pins to the
+          right edge, and on this screen the right edge was most of the window
+          away. A ~490px list puts the figure back beside its stop, and the
+          things you DO with the night -- the message, the controls, the way
+          onward -- fill the column that narrowing freed.
+
+          NOT a card grid. `DESIGN.md` rules that a list-like screen is not laid
+          out as one, and this does not: the itinerary is still a single rail
+          with its roundels down it. What is split is the screen, not the list.
+
+          `contents` below `lg`, so both wrappers are inert on a phone and the
+          section stays the flat `flex flex-col gap-8` it has always been. The
+          wrappers restate that gap so spacing inside each half is unchanged. */}
+      <div className="contents lg:grid lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start lg:gap-x-12">
+        <div className="contents lg:flex lg:flex-col lg:gap-8">
+          {view.plan ? (
+            <div>
+              <h2 className="board text-[11px] text-accent">What you agreed</h2>
+              <div className="relative mt-4">
+                <Rail />
+                <ol className="m-0 flex list-none flex-col gap-6 p-0">
+                  {view.plan.stops.map((stop) => {
+                    const where = stopMapsUrl(stop);
+                    return (
+                      <li key={stop.id} className="relative pl-14">
+                        <RailNode top={6} state="locked" />
+                        <div className="flex items-baseline justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="board num text-[10px] text-accent">{timeLabel(stop.startAt)}</p>
+                            <p className="mt-1 text-[17px] leading-snug text-text">{stop.name}</p>
+                            {stop.note ? (
+                              <p className="mt-1 text-[13px] leading-snug text-dim">{stop.note}</p>
+                            ) : null}
+                          </div>
+                          <p className="num shrink-0 text-[15px] text-text">
+                            {moneyLabel(stop.costPerHeadCents)}
+                          </p>
+                        </div>
+
+                        {/* The route link above the fold answers "what is the shape
+                            of the night". This answers "where is THAT one" -- the
+                            question somebody asks about the 9:30 stop while standing
+                            up to leave the 7:45 one, and the route view is the wrong
+                            place to go looking for it.
+
+                            `w-fit`, so the 44px target is the link and not the whole
+                            row: a full-width control per stop would read as the
+                            primary action on a screen whose primary action is the
+                            orange button below. Absent when the stop has no name
+                            Google could find -- see `stopMapsUrl`. */}
+                        {where ? (
+                          <OutLink
+                            href={where}
+                            className="board mt-2 w-fit border border-hairline text-[10px] text-dim"
+                          >
+                            Where is it
+                          </OutLink>
                         ) : null}
-                      </div>
-                      <p className="num shrink-0 text-[15px] text-text">
-                        {moneyLabel(stop.costPerHeadCents)}
-                      </p>
-                    </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
-                    {/* The route link above the fold answers "what is the shape
-                        of the night". This answers "where is THAT one" -- the
-                        question somebody asks about the 9:30 stop while standing
-                        up to leave the 7:45 one, and the route view is the wrong
-                        place to go looking for it.
+        <div className="contents lg:flex lg:flex-col lg:gap-8">
 
-                        `w-fit`, so the 44px target is the link and not the whole
-                        row: a full-width control per stop would read as the
-                        primary action on a screen whose primary action is the
-                        orange button below. Absent when the stop has no name
-                        Google could find -- see `stopMapsUrl`. */}
-                    {where ? (
-                      <OutLink
-                        href={where}
-                        className="board mt-2 w-fit border border-hairline text-[10px] text-dim"
-                      >
-                        Where is it
-                      </OutLink>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ol>
+
+          {/* What the group chat is about to be sent, before it is sent.
+              `lg`-only: on a phone the share sheet shows the message itself, and
+              the screen has no room to say it twice. On a laptop `navigator.share`
+              is usually absent, the fallback is a silent clipboard write, and
+              "Copied." is the only evidence anybody gets -- so here the words are
+              on the screen to be read, checked, or selected by hand.
+
+              A raised panel and NOT a rail surface: `.rail` and `.node` paint with
+              `--ground` and would draw as stripes on `--ground-raised`. Nothing in
+              here carries either. */}
+          {view.plan ? (
+            <section
+              aria-label="What gets sent"
+              data-share-preview
+              className="hidden rounded-[10px] bg-ground-raised p-5 lg:block"
+            >
+              <p className="board text-[10px] text-dim">What gets sent</p>
+              {/* `break-all` on top of `break-words`: the message carries full Maps
+                  URLs, and a directions link with three waypoints is one 200-char
+                  token with no break opportunity in it -- it ran out past the
+                  panel's right edge without this. */}
+              <p className="mt-3 text-[13px] leading-relaxed break-all whitespace-pre-wrap text-text">
+                {shareText}
+              </p>
+            </section>
+          ) : null}
+
+          {/* A stack at every width. It was briefly a row from `lg`, which was
+              right while these three sat across the whole 940px measure and is
+              wrong now that they sit in a ~400px column: split three ways that is
+              about 130px each, and "Send it to the group chat" needs 214px, so
+              every label wrapped onto two lines. Descending weight is what orders
+              these -- the route keeps the orange field, the chat control is raised,
+              the calendar is a hairline -- and that never depended on the axis. */}
+          <div className="flex flex-col gap-2">
+            {/* THE ROUTE, not the anchor venue. `booking.deepLink` is built by
+                `convex/bookings.ts` from the matched quest alone, so this button
+                offered the night and then showed one place -- the group got the
+                first stop and had to find the other two themselves.
+
+                The stored `deepLink` is untouched and stays the fallback. It is a
+                frozen record of what the room agreed to, and `src/lib/room/
+                booking.ts` is a long argument about not rewriting those after the
+                fact; this is a better link COMPUTED at render time, not a correction
+                applied to history. It also still answers when a plan has no route to
+                draw, which is the case `stopsDirectionsUrl` returns null for. */}
+            <OutLink
+              href={(view.plan && stopsDirectionsUrl(view.plan.stops)) || booking.deepLink}
+              className="board border border-action-edge bg-action text-[11px] text-on-action"
+            >
+              Open in Maps
+            </OutLink>
+
+            {view.plan ? (
+              <Plate
+                variant="raised"
+                center
+                label="Send it to the group chat"
+                onClick={() => void sendItToTheChat()}
+              />
+            ) : null}
+
+            {/* Quietest of the three, on purpose. The stack descends from the
+                orange route button, and a fourth full-strength control would bury
+                the one this screen is actually for.
+
+                A link rather than a download: the Calendar template URL costs
+                nothing, needs no OAuth scope and no consent screen, and writes the
+                event Google's own API would write. `src/lib/room/calendar.ts` has
+                the comparison. Absent when the plan has no stops to put in a
+                diary. */}
+            {calendarHref ? (
+              <OutLink
+                href={calendarHref}
+                className="board border border-hairline text-[11px] text-text"
+              >
+                Put it in your calendar
+              </OutLink>
+            ) : null}
+
+          </div>
+
+          {/* Mounted empty, then filled: a live region inserted into the DOM with
+              its text already in it is frequently never announced. It sits outside
+              the control group rather than in it, so the status of the last tap is
+              not a fourth thing that looks tappable. */}
+          <p aria-live="polite" className="-mt-6 text-[12px] leading-snug break-words text-dim">
+            {copied ?? ""}
+          </p>
+
+          {/* Never a dead end -- and this is the screen the whole funnel exists to
+              reach, so it was the worst one to leave without a way onward. Until
+              now the only controls here left the app for Google Maps or wrote to
+              the clipboard: a host who wanted a second night edited the URL by
+              hand. A link, not a button, so it opens in a new tab if they want it
+              to and the room stays where it is. */}
+          <div className="flex flex-col gap-2 border-t border-hairline pt-6">
+            <h2 className="board text-[11px] text-accent">After this</h2>
+            <Plate
+              variant="raised"
+              href="/start"
+              label="Plan another night"
+              sub="This room stays exactly where it is — the link still works."
+            />
           </div>
         </div>
-      ) : null}
-
-      <div className="flex flex-col gap-2">
-        {/* THE ROUTE, not the anchor venue. `booking.deepLink` is built by
-            `convex/bookings.ts` from the matched quest alone, so this button
-            offered the night and then showed one place -- the group got the
-            first stop and had to find the other two themselves.
-
-            The stored `deepLink` is untouched and stays the fallback. It is a
-            frozen record of what the room agreed to, and `src/lib/room/
-            booking.ts` is a long argument about not rewriting those after the
-            fact; this is a better link COMPUTED at render time, not a correction
-            applied to history. It also still answers when a plan has no route to
-            draw, which is the case `stopsDirectionsUrl` returns null for. */}
-        <OutLink
-          href={(view.plan && stopsDirectionsUrl(view.plan.stops)) || booking.deepLink}
-          className="board border border-action-edge bg-action text-[11px] text-on-action"
-        >
-          Open in Maps
-        </OutLink>
-
-        {view.plan ? (
-          <Plate
-            variant="raised"
-            center
-            label="Send it to the group chat"
-            onClick={() => void sendItToTheChat()}
-          />
-        ) : null}
-
-        {/* Quietest of the three, on purpose. The stack descends from the
-            orange route button, and a fourth full-strength control would bury
-            the one this screen is actually for.
-
-            A link rather than a download: the Calendar template URL costs
-            nothing, needs no OAuth scope and no consent screen, and writes the
-            event Google's own API would write. `src/lib/room/calendar.ts` has
-            the comparison. Absent when the plan has no stops to put in a
-            diary. */}
-        {calendarHref ? (
-          <OutLink
-            href={calendarHref}
-            className="board border border-hairline text-[11px] text-text"
-          >
-            Put it in your calendar
-          </OutLink>
-        ) : null}
-
-        {/* Mounted empty, then filled: a live region inserted into the DOM
-            with its text already in it is frequently never announced. */}
-        <p aria-live="polite" className="text-[12px] leading-snug break-words text-dim">
-          {copied ?? ""}
-        </p>
       </div>
 
-      {/* Never a dead end -- and this is the screen the whole funnel exists to
-          reach, so it was the worst one to leave without a way onward. Until
-          now the only controls here left the app for Google Maps or wrote to
-          the clipboard: a host who wanted a second night edited the URL by
-          hand. A link, not a button, so it opens in a new tab if they want it
-          to and the room stays where it is. */}
-      <div className="flex flex-col gap-2 border-t border-hairline pt-6">
-        <h2 className="board text-[11px] text-accent">After this</h2>
-        <Plate
-          variant="raised"
-          href="/start"
-          label="Plan another night"
-          sub="This room stays exactly where it is — the link still works."
-        />
-      </div>
 
       <p className="text-[12px] leading-snug text-dim">
         Nothing on this screen has been booked with anybody: no table is held, no venue has

@@ -1216,3 +1216,232 @@ test("a deleted account's picture leaves the roster with it", async () => {
   const view = await asHost.query(api.rooms.get, { code, sessionKey });
   expect(view!.members[0].avatarUrl).toBeNull();
 });
+
+/**
+ * Closing a room.
+ *
+ * Every one of these asserts the CASCADE and not only the room row: an orphan
+ * swipe or member pointing at an id that no longer resolves is the failure
+ * `demolishRoom` exists to prevent, and a test that only checked the room would
+ * pass with the whole rest of the room still in the tables.
+ */
+async function tableCounts(t: TestConvex<typeof schema>) {
+  return await t.run(async (ctx) => ({
+    rooms: (await ctx.db.query("rooms").collect()).length,
+    members: (await ctx.db.query("members").collect()).length,
+    quests: (await ctx.db.query("quests").collect()).length,
+    swipes: (await ctx.db.query("swipes").collect()).length,
+    plans: (await ctx.db.query("plans").collect()).length,
+    bookings: (await ctx.db.query("bookings").collect()).length,
+    finalizeVotes: (await ctx.db.query("finalizeVotes").collect()).length,
+    proposals: (await ctx.db.query("proposals").collect()).length,
+    proposalVotes: (await ctx.db.query("proposalVotes").collect()).length,
+  }));
+}
+
+test("the host closes a room they are alone in, and everything filed under it goes", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  // A deck, a swipe, a plan, a booking and a finalize vote, so the assertion
+  // below has something to fail against. Written directly: building a real deck
+  // needs a provider, and what is under test is the cascade, not the build.
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    const member = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room!._id))
+      .unique();
+    const questId = await ctx.db.insert("quests", {
+      roomId: room!._id,
+      rank: 0,
+      source: "places",
+      placeId: "p1",
+      title: "A walk",
+      blurb: "By the river",
+      priceLabel: "Free",
+      priceCents: 0,
+      distanceKm: 1,
+      discountPct: 0,
+      score: 1,
+      scoreBreakdown: {},
+    });
+    await ctx.db.insert("swipes", {
+      roomId: room!._id,
+      questId,
+      memberId: member!._id,
+      dir: "yes",
+    });
+    await ctx.db.insert("plans", {
+      roomId: room!._id,
+      questId,
+      stops: [],
+      shareMessage: "Tonight",
+      totalPerHeadCents: 0,
+    });
+    await ctx.db.insert("bookings", {
+      roomId: room!._id,
+      questId,
+      ref: "QL-0001",
+      deepLink: "https://example.test",
+      headcount: 1,
+      totalCents: 0,
+      status: "simulated",
+    });
+    await ctx.db.insert("finalizeVotes", {
+      roomId: room!._id,
+      memberId: member!._id,
+      at: Date.now(),
+    });
+  });
+
+  const before = await tableCounts(t);
+  expect(before.rooms).toBe(1);
+  expect(before.swipes).toBe(1);
+  expect(before.bookings).toBe(1);
+
+  await asHost.mutation(api.rooms.deleteRoom, { code });
+
+  expect(await tableCounts(t)).toEqual({
+    rooms: 0,
+    members: 0,
+    quests: 0,
+    swipes: 0,
+    plans: 0,
+    bookings: 0,
+    finalizeVotes: 0,
+    proposals: 0,
+    proposalVotes: 0,
+  });
+
+  // And it is genuinely gone rather than merely unreadable by its host.
+  await expect(asHost.query(api.rooms.get, { code, sessionKey })).resolves.toBeNull();
+});
+
+test("a member who is not the host cannot close the room", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+
+  const asGuest = t.withIdentity({ subject: "u2", name: "Tam" });
+  await asGuest.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await expectUserError(
+    asGuest.mutation(api.rooms.deleteRoom, { code }),
+    "NOT_THE_HOST",
+    /only the host/i,
+  );
+  expect((await tableCounts(t)).rooms).toBe(1);
+});
+
+test("somebody who was never in the room cannot close it", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+
+  const stranger = t.withIdentity({ subject: "u9", name: "Nobody" });
+  await expectUserError(
+    stranger.mutation(api.rooms.deleteRoom, { code }),
+    "NOT_A_MEMBER",
+    /not in this room/i,
+  );
+  expect((await tableCounts(t)).rooms).toBe(1);
+});
+
+test("the host cannot close a room other people are in while the night is still ahead", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await expectUserError(
+    asHost.mutation(api.rooms.deleteRoom, { code }),
+    "ROOM_HAS_COMPANY",
+    /still in this room/i,
+  );
+  expect((await tableCounts(t)).rooms).toBe(1);
+});
+
+// The other half of the guard, and the reason it is a guard rather than a wall:
+// a night that has already happened is not a night anybody can still lose, so
+// the abandoned room stops being permanent. `account.deleteAccount` releases its
+// own refusal on exactly this condition.
+test("once the night has passed the host may close the room even with people in it", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.patch(room!._id, { whenAt: Date.now() - 1000 });
+  });
+
+  await asHost.mutation(api.rooms.deleteRoom, { code });
+  const after = await tableCounts(t);
+  expect(after.rooms).toBe(0);
+  // Both seats, not only the host's.
+  expect(after.members).toBe(0);
+});
+
+test("a demonstration room cannot be closed by whoever took its host seat", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.patch(room!._id, { demo: true });
+  });
+
+  await expectUserError(
+    asHost.mutation(api.rooms.deleteRoom, { code }),
+    "DEMO_ROOM",
+    /demonstration/i,
+  );
+  expect((await tableCounts(t)).rooms).toBe(1);
+});
+
+test("closing a room leaves every other room untouched", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const first = await asHost.mutation(api.rooms.create, CREATE);
+  const second = await asHost.mutation(api.rooms.create, CREATE);
+
+  await asHost.mutation(api.rooms.deleteRoom, { code: first.code });
+
+  const after = await tableCounts(t);
+  expect(after.rooms).toBe(1);
+  expect(after.members).toBe(1);
+  const view = await asHost.query(api.rooms.get, { code: second.code, sessionKey: second.sessionKey });
+  expect(view).not.toBeNull();
+});
+
+// `detachMember` reaps one seat's presence row when somebody leaves a room that
+// carries on. A demolished room has no such moment, so without the component
+// call the rows would outlive the room they name -- and nothing else ever reaps
+// one, which is what would make it permanent rather than merely late.
+test("closing a room takes its presence rows with it", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  const { roomToken } = await t.mutation(api.presence.heartbeat, {
+    code,
+    sessionKey,
+    sessionId: "tab-1",
+  });
+  expect(await t.query(api.presence.list, { roomToken })).toHaveLength(1);
+
+  await asHost.mutation(api.rooms.deleteRoom, { code });
+
+  expect(await t.query(api.presence.list, { roomToken })).toEqual([]);
+});

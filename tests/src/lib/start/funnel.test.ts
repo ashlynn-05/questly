@@ -21,6 +21,7 @@ const FULL: FunnelDraft = {
   radiusKm: 20,
   whenId: "weekend",
   whenMinutes: 20 * 60 + 15,
+  whenDate: null,
   quizSaved: true,
 };
 
@@ -123,4 +124,15 @@ test("quizSaved is only ever true when it was stored as true", () => {
 
 test("an empty object restores as the empty draft, not as null", () => {
   expect(parseDraft("{}")).toEqual(EMPTY_DRAFT);
+});
+
+test("a chosen date survives, and a date nobody could keep does not", () => {
+  const custom = { ...FULL, whenId: "custom" as const, whenDate: "2026-10-03" };
+  expect(parseDraft(JSON.stringify(custom))?.whenDate).toBe("2026-10-03");
+
+  // The shape is right and the day does not exist, which is exactly what a
+  // regex-only guard would let through.
+  expect(parseDraft(JSON.stringify({ ...custom, whenDate: "2026-02-31" }))?.whenDate).toBeNull();
+  expect(parseDraft(JSON.stringify({ ...custom, whenDate: "3/10/2026" }))?.whenDate).toBeNull();
+  expect(parseDraft(JSON.stringify({ ...custom, whenDate: 20261003 }))?.whenDate).toBeNull();
 });

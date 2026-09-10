@@ -3,6 +3,7 @@ import { api } from "@convex/_generated/api";
 import { fetchAuthQuery } from "@/lib/account/auth-server";
 import { Screen } from "@/components/questly/Screen";
 import { Rail, RailEnd, RailNode } from "@/components/questly/Rail";
+import { MapTile } from "@/components/questly/frame";
 import { InstallHint } from "@/components/questly/InstallHint";
 
 /**
@@ -38,69 +39,106 @@ export default async function Home() {
 
   return (
     <Screen>
-      {/* The route line, on the front door.
+      {/* Two columns from `lg`, one below it. The route line and both its stops
+          stay in ONE column and stay vertical -- the line is the product's
+          spine and a hero that breaks it across a grid is a redesign, not a
+          layout change. What the second column gets is artwork, which is the
+          shape the reference's own hero module takes at desktop (its
+          `.content-groups` goes from a column to a row beside `.primary`).
+
+          `1.15fr_0.85fr` rather than an even split: the headline is the reason
+          to be here and the map is the setting it happens in. `/direction`
+          already reaches for the same asymmetry at `lg:grid-cols-[1.1fr_1fr]`,
+          so this is the repo's existing move rather than a new one. */}
+      <div className="lg:grid lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-14">
+        {/* The route line, on the front door.
          
-          The landing page carried none of the product's own vocabulary before
-          this: a headline, two dim paragraphs and a button, structurally
-          interchangeable with any product's front page. DESIGN.md's north star
-          is one orange line with roundel stops, and this surface's brief opens
-          its first viewport with that line -- so the front door is the first
-          stop on it.
+            The landing page carried none of the product's own vocabulary before
+            this: a headline, two dim paragraphs and a button, structurally
+            interchangeable with any product's front page. DESIGN.md's north star
+            is one orange line with roundel stops, and this surface's brief opens
+            its first viewport with that line -- so the front door is the first
+            stop on it.
 
-          Dashed, because nothing is decided yet: the line ahead of a night that
-          has not been planned is exactly the state `rail-dashed` was drawn for.
-          Two stops and no more -- where you are, and the one thing to do next.
-          A third would be inventing a journey the page does not have. */}
-      <div className="relative flex flex-col gap-8">
-        <Rail dashed />
+            Dashed, because nothing is decided yet: the line ahead of a night that
+            has not been planned is exactly the state `rail-dashed` was drawn for.
+            Two stops and no more -- where you are, and the one thing to do next.
+            A third would be inventing a journey the page does not have. */}
+        <div className="relative flex flex-col gap-8">
+          <Rail dashed />
 
-        <div className="relative pl-14">
-          {/* Live: this is where the visitor is standing. 4px puts the
-              roundel's centre (top + 9.5, for a 13px disc in a 3px ring) on the
-              cap height of the first display line. */}
-          <RailNode top={4} state="live" />
-          {/* The proposition, at display scale, rather than the product name --
-              the band above now carries the name, and spending the largest type
-              in the product on a word the header already says is the definition
-              of saying nothing twice. `.display` balances its own wrapping, so
-              this never orphans a word on its own line. */}
-          <h1 className="display text-[34px] text-text">
-            Turns &ldquo;we should catch up&rdquo; into a plan, in two taps.
-          </h1>
+          <div className="relative pl-14">
+            {/* Live: this is where the visitor is standing. 4px puts the
+                roundel's centre (top + 9.5, for a 13px disc in a 3px ring) on the
+                cap height of the first display line. */}
+            <RailNode top={4} state="live" />
+            {/* The proposition, at display scale, rather than the product name --
+                the band above now carries the name, and spending the largest type
+                in the product on a word the header already says is the definition
+                of saying nothing twice. `.display` balances its own wrapping, so
+                this never orphans a word on its own line. */}
+            <h1 className="display text-[34px] text-text lg:text-[54px]">
+              Turns &ldquo;we should catch up&rdquo; into a plan, in two taps.
+            </h1>
+          </div>
+
+          <div className="relative flex flex-col gap-3 pl-14">
+            {/* The line ends here rather than running to the bottom of whatever
+                this column grows to -- the last stop is the end of the route.
+                BEFORE the node, not after: the cap is a 5px stripe of `--ground`
+                painted from the roundel's centre down, and drawn afterwards it
+                takes a bite out of the bottom of a hollow roundel's ring. */}
+            <RailEnd top={26} />
+            {/* Open: the next stop, not yet taken. 16px centres the roundel on
+                the 52px plate beside it. */}
+            <RailNode top={16} state="open" />
+            {/* Same orange field as a `Plate` with variant="action", and it takes
+                the same edge for the same reason: the fill alone is 2.95:1 on the
+                dark ground, under SC 1.4.11's 3:1 for a control's boundary.
+
+                Capped on the wide column. A button does not become a better
+                button by being 530px long -- past a point the label floats in
+                the middle of an orange field and stops reading as a target.
+                340px is the widest this label still looks pressed rather than
+                painted. */}
+            <Link
+              href="/start"
+              className="board flex min-h-[52px] items-center justify-center rounded-[6px] border border-action-edge bg-action text-[12px] text-on-action lg:max-w-[340px]"
+            >
+              Start a quest
+            </Link>
+            {/* Under the button, not above it. It qualifies the action -- which
+                account is about to own this quest -- and read as a third dim
+                paragraph between the headline and the button it was one more
+                thing to get past on the way to the only control that matters.
+                Shown only when there is a name: on a shared laptop, which account
+                this browser is holding is a real question, and the roundel in the
+                band answers it with a picture alone. */}
+            {user ? (
+              <p className="text-[13px] leading-snug text-dim">
+                Signed in as <span className="text-text">{user.name ?? user.email}</span>.
+              </p>
+            ) : null}
+          </div>
         </div>
 
-        <div className="relative flex flex-col gap-3 pl-14">
-          {/* The line ends here rather than running to the bottom of whatever
-              this column grows to -- the last stop is the end of the route.
-              BEFORE the node, not after: the cap is a 5px stripe of `--ground`
-              painted from the roundel's centre down, and drawn afterwards it
-              takes a bite out of the bottom of a hollow roundel's ring. */}
-          <RailEnd top={26} />
-          {/* Open: the next stop, not yet taken. 16px centres the roundel on
-              the 52px plate beside it. */}
-          <RailNode top={16} state="open" />
-          {/* Same orange field as a `Plate` with variant="action", and it takes
-              the same edge for the same reason: the fill alone is 2.95:1 on the
-              dark ground, under SC 1.4.11's 3:1 for a control's boundary. */}
-          <Link
-            href="/start"
-            className="board flex min-h-[52px] items-center justify-center rounded-[6px] border border-action-edge bg-action text-[12px] text-on-action"
-          >
-            Start a quest
-          </Link>
-          {/* Under the button, not above it. It qualifies the action -- which
-              account is about to own this quest -- and read as a third dim
-              paragraph between the headline and the button it was one more
-              thing to get past on the way to the only control that matters.
-              Shown only when there is a name: on a shared laptop, which account
-              this browser is holding is a real question, and the roundel in the
-              band answers it with a picture alone. */}
-          {user ? (
-            <p className="text-[13px] leading-snug text-dim">
-              Signed in as <span className="text-text">{user.name ?? user.email}</span>.
-            </p>
-          ) : null}
-        </div>
+        {/* The desktop half of the hero, and the reason the wide column is not
+            an empty field. Drawn rather than photographed, in the same language
+            `SwipeCard` already falls back to when Google has no picture -- a
+            wayfinding product's front door showing a route through a city is
+            the one piece of artwork this system can make honestly, with no
+            venue named and nothing claimed.
+
+            `hidden` below `lg`: mobile is unchanged, which is an acceptance
+            criterion, and a phone has no room to spend on setting.
+
+            ponytail: reuses MapTile rather than commissioning hero art. If the
+            landing page ever earns a real illustration, this is the one node to
+            replace. */}
+        <MapTile
+          className="hidden h-[300px] w-full rounded-[6px] border border-hairline lg:block"
+          label="A route through the city, drawn as a transit map"
+        />
       </div>
 
       {/* Off the line and last, because it goes out of the product: this is the

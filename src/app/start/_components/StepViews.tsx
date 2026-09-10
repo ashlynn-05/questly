@@ -12,7 +12,13 @@ import {
   type FunnelDraft,
   type Step,
 } from "@/lib/start/funnel";
-import { WHEN_IDS, WHEN_LABELS, inputValueToMinutes } from "@/lib/start/when";
+import {
+  WHEN_IDS,
+  WHEN_LABELS,
+  dateToInputValue,
+  inputValueToMinutes,
+  isValidDateValue,
+} from "@/lib/start/when";
 import type { UsePaginatedQueryReturnType } from "convex/react";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
@@ -37,6 +43,7 @@ export type StepViewsProps = {
   budget: FunnelDraft["budget"];
   whenId: FunnelDraft["whenId"];
   whenValue: string;
+  whenDate: FunnelDraft["whenDate"];
   radiusKm: FunnelDraft["radiusKm"];
   busy: boolean;
   lookingForRoom: boolean;
@@ -67,13 +74,13 @@ function QuizStep({
           id="quiz-heading"
           ref={headingRef}
           tabIndex={-1}
-          className="display mt-3 text-[34px] text-text"
+          className="display mt-3 text-[34px] text-text lg:text-[44px]"
         >
           More likely, or less likely?
         </h1>
       </div>
 
-      <p aria-live="polite" className="text-[19px] leading-snug text-text">
+      <p aria-live="polite" className="text-[19px] leading-snug text-text lg:text-[23px]">
         {QUIZ_CARDS[cardIndex].text}
       </p>
 
@@ -108,7 +115,7 @@ function GoalsStep({ headingRef, goals, toggleGoal, busy, finishQuiz }: StepView
           id="goals-heading"
           ref={headingRef}
           tabIndex={-1}
-          className="display mt-3 text-[34px] text-text"
+          className="display mt-3 text-[34px] text-text lg:text-[44px]"
         >
           What is the night for?
         </h1>
@@ -152,11 +159,20 @@ function MoodStep({ headingRef, mood, goTo }: StepViewsProps) {
         id="mood-heading"
         ref={headingRef}
         tabIndex={-1}
-        className="display text-[38px] text-text"
+        className="display text-[38px] text-text lg:text-[48px]"
       >
         What kind of night?
       </h1>
-      <div className="flex flex-col gap-2">
+      {/* Two columns from `lg` and not `auto-fit`: there are exactly four
+          moods, and every auto-fit track that fits this measure lands on three
+          columns, which leaves one mood alone on a second row looking like an
+          afterthought. Two-by-two is the same block the constraints step
+          already draws, and the four options stay visibly equal -- which they
+          are, since this is the one question with no wrong answer.
+
+          Mobile classes first and unchanged: below `lg` this is the same
+          `flex flex-col gap-2` stack it has always been. */}
+      <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3">
         {MOODS.map((m) => (
           <Plate
             key={m.id}
@@ -193,7 +209,7 @@ function PartyStep({
         id="party-heading"
         ref={headingRef}
         tabIndex={-1}
-        className="display text-[38px] text-text"
+        className="display text-[38px] text-text lg:text-[48px]"
       >
         Who is coming?
       </h1>
@@ -299,6 +315,7 @@ function ConstraintsStep({
   budget,
   whenId,
   whenValue,
+  whenDate,
   radiusKm,
   busy,
   edit,
@@ -310,68 +327,118 @@ function ConstraintsStep({
         id="constraints-heading"
         ref={headingRef}
         tabIndex={-1}
-        className="display text-[38px] text-text"
+        className="display text-[38px] text-text lg:text-[48px]"
       >
         Four answers and it is solved.
       </h1>
 
-      <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="board text-[11px] text-accent">How many</legend>
-        <div className="flex flex-wrap gap-2">
-          {HEADCOUNTS.map((n) => (
-            <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
-              {n === 1 ? "Just me" : n}
-            </Chip>
-          ))}
-        </div>
-      </fieldset>
+      {/* Four questions, two columns from `lg`. These are chip groups, not a
+          list of stops, so a grid here is not the card grid DESIGN.md rules
+          out -- the rule protects list-like SCREENS whose answer is the route
+          line, and this screen's answer is four constraints taken at once.
+          Two columns is what stops the wide shell from being four rows of
+          chips with 600px of nothing beside them.
 
-      <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="board text-[11px] text-accent">Budget per head</legend>
-        <div className="flex flex-wrap gap-2">
-          {BUDGETS.map((cents) => (
-            <Chip key={cents} selected={budget === cents} onClick={() => edit({ budget: cents })}>
-              {cents === 0 ? "$0" : `$${cents / 100}`}
-            </Chip>
-          ))}
-        </div>
-      </fieldset>
+          The mobile classes are stated first and unchanged: below `lg` this
+          div is the same `flex flex-col gap-7` the section already applied to
+          these four fieldsets as direct children, so the phone spacing is
+          byte-for-byte what it was. */}
+      <div className="flex flex-col gap-7 lg:grid lg:grid-cols-2 lg:gap-x-10 lg:gap-y-7">
+        <fieldset className="flex flex-col gap-3 border-0 p-0">
+          <legend className="board text-[11px] text-accent">How many</legend>
+          <div className="flex flex-wrap gap-2">
+            {HEADCOUNTS.map((n) => (
+              <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
+                {n === 1 ? "Just me" : n}
+              </Chip>
+            ))}
+          </div>
+        </fieldset>
 
-      <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="board text-[11px] text-accent">When</legend>
-        <div className="flex flex-wrap gap-2">
-          {WHEN_IDS.map((id) => (
-            <Chip
-              key={id}
-              selected={whenId === id}
-              onClick={() => edit({ whenId: id, whenMinutes: null })}
-            >
-              {WHEN_LABELS[id]}
-            </Chip>
-          ))}
-        </div>
-        <label className="flex items-center gap-3 text-[13px] text-dim">
-          Start at
-          <input
-            type="time"
-            value={whenValue}
-            onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
-            className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
-          />
-        </label>
-      </fieldset>
+        <fieldset className="flex flex-col gap-3 border-0 p-0">
+          <legend className="board text-[11px] text-accent">Budget per head</legend>
+          <div className="flex flex-wrap gap-2">
+            {BUDGETS.map((cents) => (
+              <Chip key={cents} selected={budget === cents} onClick={() => edit({ budget: cents })}>
+                {cents === 0 ? "$0" : `$${cents / 100}`}
+              </Chip>
+            ))}
+          </div>
+        </fieldset>
 
-      <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="board text-[11px] text-accent">How far</legend>
-        <div className="flex flex-wrap gap-2">
-          {RADII.map((km) => (
-            <Chip key={km} selected={radiusKm === km} onClick={() => edit({ radiusKm: km })}>
-              {km} km
-            </Chip>
-          ))}
-        </div>
-        <p className="text-[12px] text-dim">Measured from the Melbourne CBD.</p>
-      </fieldset>
+        <fieldset className="flex flex-col gap-3 border-0 p-0">
+          <legend className="board text-[11px] text-accent">When</legend>
+          <div className="flex flex-wrap gap-2">
+            {WHEN_IDS.map((id) => (
+              <Chip
+                key={id}
+                selected={whenId === id}
+                /* Picking a day seeds the field with today, so the chip never
+                   opens onto an empty date that resolves to a day nobody
+                   chose. `new Date()` is safe in a click handler for the
+                   reason it is not safe in this file's render: nothing here
+                   has to match server-rendered HTML.
+
+                   `whenDate ?? ...` and not a plain assignment, because
+                   coming back to the chip after moving off it should return
+                   the day already chosen rather than reset to today. */
+                onClick={() =>
+                  edit({
+                    whenId: id,
+                    whenMinutes: null,
+                    whenDate: id === "custom" ? (whenDate ?? dateToInputValue(new Date())) : null,
+                  })
+                }
+              >
+                {WHEN_LABELS[id]}
+              </Chip>
+            ))}
+          </div>
+          {/* The date only when a date was asked for. The three presets NAME
+              their day -- a date field beside "Tomorrow" is either redundant
+              or a second answer contradicting the first. `flex-wrap` because
+              a date and a time together need about 300px, which is more than
+              this fieldset gets in the two-column layout at `lg`. */}
+          <div className="flex flex-wrap items-center gap-3">
+            {whenId === "custom" ? (
+              <label className="flex items-center gap-3 text-[13px] text-dim">
+                On
+                <input
+                  type="date"
+                  value={whenDate ?? ""}
+                  onChange={(e) =>
+                    edit({
+                      whenDate: isValidDateValue(e.target.value) ? e.target.value : null,
+                    })
+                  }
+                  className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+                />
+              </label>
+            ) : null}
+            <label className="flex items-center gap-3 text-[13px] text-dim">
+              Start at
+              <input
+                type="time"
+                value={whenValue}
+                onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
+                className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-3 border-0 p-0">
+          <legend className="board text-[11px] text-accent">How far</legend>
+          <div className="flex flex-wrap gap-2">
+            {RADII.map((km) => (
+              <Chip key={km} selected={radiusKm === km} onClick={() => edit({ radiusKm: km })}>
+                {km} km
+              </Chip>
+            ))}
+          </div>
+          <p className="text-[12px] text-dim">Measured from the Melbourne CBD.</p>
+        </fieldset>
+      </div>
 
       <Plate
         variant="action"

@@ -190,13 +190,23 @@ test("the refusal names only actions the product actually has", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
-  await asHost.mutation(api.rooms.create, CREATE);
+  const { code } = await asHost.mutation(api.rooms.create, CREATE);
 
-  // There is no "close the room" and there never has been, so the sentence
-  // must not send somebody looking for one.
+  // This assertion used to read the other way round: it forbade the word
+  // "close", because closing a room was advice with nothing behind it. Now
+  // `rooms.deleteRoom` exists, so the sentence may name it -- and the point of
+  // the test is unchanged, which is why it now proves the advice is real rather
+  // than trusting the wording. The host is alone in this room, which is exactly
+  // the case `deleteRoom` allows.
   await expect(asHost.mutation(api.account.deleteAccount, {})).rejects.toMatchObject({
-    data: { message: expect.not.stringContaining("close") },
+    data: { message: expect.stringContaining("close") },
   });
+
+  // The action the sentence names, actually taken. If `deleteRoom` ever stops
+  // covering this case the refusal is a dead end again, and this line fails
+  // rather than the wording quietly drifting away from the product.
+  await asHost.mutation(api.rooms.deleteRoom, { code });
+  await asHost.mutation(api.account.deleteAccount, {});
 });
 
 test("holding a demo room's host seat blocks the delete, even though hostUserId is not you", async () => {

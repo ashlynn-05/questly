@@ -12,6 +12,7 @@ import { throwUserError } from "./lib/errors";
 import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
 import { notifyRoom } from "./lib/push/notify";
 import { detachMember } from "./lib/rooms/roster";
+import { demolishRoom } from "./lib/rooms/demolish";
 import {
   DEFAULT_FINALIZE_RULE,
   DEFAULT_LOCK_RULE,
@@ -199,6 +200,31 @@ const roomViewValidator = v.union(
       deckSize: v.number(),
       waitingOn: v.array(v.string()),
     }),
+    // How the room has voted on the card the ASKING MEMBER is looking at.
+    //
+    // "The current card" is not a property of the room. The deck is paced per
+    // member -- your position in it is your own swipe count -- so at any instant
+    // four people are on four different cards, and this list is computed against
+    // the caller's position rather than some shared one.
+    //
+    // `dir: null` is therefore load-bearing and not a tidy-up of "no". A member
+    // behind you has not reached this card at all, and drawing that as a no
+    // would show a rejection nobody made. Empty when you are through the deck,
+    // because then there is no card to be voting on.
+    //
+    // This changes what members can see about each other mid-deck: before it,
+    // nobody could see a vote until unanimity fired. That was a deliberate
+    // request, not a leak that crept in.
+    currentCardVotes: v.array(
+      v.object({
+        // The id as well as the name, because `waitingOn` above projects names
+        // alone and `Deck` records that two members called the same thing
+        // collide there. A list that says who voted must not have that bug.
+        memberId: v.id("members"),
+        name: v.string(),
+        dir: v.union(v.literal("yes"), v.literal("no"), v.null()),
+      }),
+    ),
   }),
 );
 
@@ -478,6 +504,29 @@ export const get = publicQuery({
       }),
     );
 
+    // The card THIS member is on, which is what `currentCardVotes` is about.
+    // Undefined once they are through the deck, and the projection below turns
+    // that into an empty list rather than guessing at a last card.
+    const currentCard = quests[yourSwipes.length];
+
+    // ONE CARD'S ROWS, not the room's. This used to filter the whole room's
+    // swipes, which were in memory anyway -- and then that read was removed for
+    // the reason written above `yourSwipes`: 96 documents, about 1150 times a
+    // session, to count to nine. Reinstating it to answer "who else voted on
+    // this one card" would hand that cost straight back.
+    //
+    // `by_room_quest` keyed on both parts is at most one row per member, so
+    // this is bounded by the roster rather than by the roster times the deck,
+    // and it is skipped entirely once somebody is through their cards.
+    const cardSwipes = currentCard
+      ? await ctx.db
+          .query("swipes")
+          .withIndex("by_room_quest", (q) =>
+            q.eq("roomId", room._id).eq("questId", currentCard._id),
+          )
+          .collect()
+      : [];
+
     // Bounded by `MAX_ROOM_MEMBERS`, and most rooms are guests who cost nothing
     // here. Keyed by member rather than by account so `you` reads out of the
     // same map as everybody else and the two cannot disagree.
@@ -583,6 +632,17 @@ export const get = publicQuery({
           .filter((m) => (m.swipeCount ?? 0) < quests.length)
           .map((m) => m.name),
       },
+      // Every member named, including the ones with nothing to say yet: `null`
+      // means "has not reached this card", which is not the same as a no. The
+      // deck is paced per member, so somebody behind you genuinely has no vote
+      // on the card you are looking at.
+      currentCardVotes: currentCard
+        ? members.map((m) => ({
+            memberId: m._id,
+            name: m.name,
+            dir: cardSwipes.find((s) => s.memberId === m._id)?.dir ?? null,
+          }))
+        : [],
     };
   },
 });
@@ -807,6 +867,84 @@ export const removeMember = publicMutation({
     // must leave the room in the same state. One implementation, so the two can
     // never drift.
     await detachMember(ctx, target);
+    return null;
+  },
+});
+
+/**
+ * The host closes their own room, and it stops existing.
+ *
+ * WHY THE PRODUCT NEEDED THIS. Nothing here could close a room. `leave` refuses
+ * the host, `removeMember` refuses to remove one, there is no cancel, and a
+ * `lobby` room nobody ever started stayed `lobby` for good. `account.ts` had to
+ * write its refusal around that absence: it could not tell somebody blocked
+ * from deleting their account to close the room, because closing a room was not
+ * a thing anyone could do. A mistyped date became permanent.
+ *
+ * WHY IT AUTHORISES ON THE ACCOUNT AND NOT A `sessionKey`. Every other room
+ * mutation takes the capability this browser holds, and that is right for them:
+ * they act INSIDE a room somebody is standing in. This one is reached from the
+ * settings list and the nav, which are account-scoped surfaces listing rooms
+ * this browser may hold no key for -- a host who cleared their storage, or who
+ * is on their laptop for the first time. Requiring the key would make the
+ * control unusable on exactly the screens it belongs to.
+ *
+ * Host authority is still `members.isHost` and NOT `rooms.hostUserId`, which is
+ * the ruling `account.ts` records at length: `join` hands the host seat of an
+ * empty demo room to whoever walks in first, so the two genuinely disagree, and
+ * every other host check in this product asks the seat.
+ *
+ * WHY IT REFUSES A ROOM WITH OTHER PEOPLE IN IT AND A NIGHT STILL AHEAD. This
+ * deletes the night for everybody, not only for the host, and the product
+ * already holds that a host may not walk out of a room mid-flight. A night in
+ * the PAST is not a night anyone can still lose -- `account.ts` makes exactly
+ * that argument for exactly this reason -- so once the date has passed the room
+ * is the host's to clear, however many people were in it. And a room the host
+ * is alone in was never anybody else's night to lose.
+ *
+ * WHY IT REFUSES A DEMO ROOM. Seeded rooms exist so the matchmaking lobby is
+ * never empty, and `join` hands their host seat to the first person through the
+ * door. Letting that person delete one would let any visitor empty the lobby
+ * for everybody.
+ */
+export const deleteRoom = authenticatedMutation({
+  args: { code: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { code }): Promise<null> => {
+    const room = await roomByCode(ctx, code);
+
+    // Bounded by ROOM_FULL, and read once for all three things below: finding
+    // the caller's seat, proving it is the host seat, and counting who else is
+    // still in the room.
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .collect();
+
+    const seat = members.find((m) => m.userId === ctx.userId);
+    if (!seat) throwUserError("NOT_A_MEMBER", "You are not in this room.");
+    if (!seat.isHost) {
+      throwUserError("NOT_THE_HOST", "Only the host can close this room.");
+    }
+
+    if (room.demo === true) {
+      throwUserError(
+        "DEMO_ROOM",
+        "This is one of the demonstration rooms, and it stays where it is so the lobby is never empty.",
+      );
+    }
+
+    const others = members.filter((m) => m._id !== seat._id).length;
+    if (others > 0 && room.whenAt > Date.now()) {
+      throwUserError(
+        "ROOM_HAS_COMPANY",
+        others === 1
+          ? "Somebody else is still in this room and the night has not happened yet. Let the date pass, or remove them first."
+          : `${others} other people are still in this room and the night has not happened yet. Let the date pass, or remove them first.`,
+      );
+    }
+
+    await demolishRoom(ctx, room);
     return null;
   },
 });

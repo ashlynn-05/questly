@@ -37,6 +37,54 @@ function nameList(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/**
+ * How the rest of the room answered the card you are looking at.
+ *
+ * WHY IT IS `lg`-ONLY. It is new, and a phone's deck is unchanged by decision.
+ * There is also no room for it there: the card, the two plates and the timer
+ * already fill a phone, and this is the column the laptop's second column was
+ * freed up to hold.
+ *
+ * WHY "NOT YET" IS NOT A NO. `dir: null` means that member has not reached this
+ * card -- the deck is paced by each person's own swipe count, so somebody
+ * behind you has no answer to give rather than a negative one. Saying "Nah"
+ * there would invent a vote. See `rooms.get`, which computes this against the
+ * ASKING member's position.
+ *
+ * WHY YOUR OWN ROW STAYS. You are always undecided on the card in front of you
+ * -- answering it is what moves you off it -- so your row reads the same as
+ * anyone still on their way. Dropping it would make the count disagree with the
+ * roster everywhere else in the room.
+ */
+function VotePanel({ votes }: { votes: RoomView["currentCardVotes"] }) {
+  if (votes.length < 2) return null;
+
+  return (
+    <section
+      aria-label="The room on this card"
+      data-vote-panel
+      className="hidden rounded-[10px] bg-ground-raised p-4 lg:block"
+    >
+      <p className="board mb-3 text-[10px] text-dim">On this one</p>
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+        {votes.map((v) => (
+          <li key={v.memberId} className="flex items-center justify-between gap-3">
+            <span className="min-w-0 flex-1 truncate text-[14px] text-text">{v.name}</span>
+            {/* The word carries the answer, never the colour on its own. */}
+            <span
+              className={`board shrink-0 text-[10px] ${
+                v.dir === null ? "text-dim" : "text-accent"
+              }`}
+            >
+              {v.dir === "yes" ? "In" : v.dir === "no" ? "Nah" : "Still on it"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function Deck({
   view,
   away,
@@ -235,7 +283,10 @@ export function Deck({
     const stuck = view.members.filter((m) => waiting.includes(m.name));
 
     return (
-      <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8">
+      // Same 560px measure as the deck itself. This screen replaces the card in
+      // place, so a version of it that ran the full width would be a jump
+      // sideways at the exact moment the swiping stops.
+      <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8 lg:mx-auto lg:w-full lg:max-w-[560px]">
         <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
           You are through the deck
         </h1>
@@ -319,31 +370,46 @@ export function Deck({
   const priceKnown = quest.priceCents !== null;
 
   return (
-    <section className="flex flex-col gap-5 px-5 py-8">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="board text-[11px] text-accent">
-          <span className="num">{index + 1}</span> of <span className="num">{deckSize}</span>
-          {/* aria-hidden, and not a live region: a number that changes every
-              second would be read out every second, which would make the card
-              itself unusable with a screen reader. The one announcement of the
-              timer is in the card's own sr-only summary below, once per card,
-              which is where a person needs to know it is running. Sighted
-              users get the count; nobody gets a ticking earful. */}
-          {left !== null ? (
-            <span aria-hidden="true" className={left <= 5 ? "num ml-3 text-danger" : "num ml-3 text-dim"}>
-              {left}s
-            </span>
-          ) : null}
-        </p>
-        {/* Names are not used here: `waitingOn` includes you while you are still
-            swiping, and "Still swiping: you" is nonsense. Counts say the same
-            thing without it. */}
-        {view.members.length > 1 ? (
-          <p className="text-right text-[12px] text-dim">
-            <span className="num">{through}</span> of{" "}
-            <span className="num">{view.members.length}</span> through
+    /* Still ONE card at a time. The acceptance criterion says so outright and
+       the split does not touch it: what moves at `lg` is where the card's
+       companions sit, not how many cards there are.
+
+       A single 940px column was the wrong answer -- a swipe card that wide is
+       a banner, the photo crops to a letterbox, and the two answer plates end
+       up a hand's width apart. So the measure splits `1.15fr / 1fr`: the card
+       keeps roughly the 480px it was drawn at, and the second column holds the
+       things that were stacked under it on a phone plus the panel saying how
+       the room answered.
+
+       The two groups below are `display: contents` under `lg`, so the phone
+       gets exactly the flat flex column it had before this split existed --
+       same order, same gaps, same output. */
+    <section className="flex flex-col gap-5 px-5 py-8 lg:mx-auto lg:grid lg:w-full lg:max-w-[940px] lg:grid-cols-[1.15fr_1fr] lg:items-start lg:gap-x-10">
+      <div className="contents lg:flex lg:flex-col lg:gap-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="board text-[11px] text-accent">
+            <span className="num">{index + 1}</span> of <span className="num">{deckSize}</span>
+            {/* aria-hidden, and not a live region: a number that changes every
+                second would be read out every second, which would make the card
+                itself unusable with a screen reader. The one announcement of the
+                timer is in the card's own sr-only summary below, once per card,
+                which is where a person needs to know it is running. Sighted
+                users get the count; nobody gets a ticking earful. */}
+            {left !== null ? (
+              <span aria-hidden="true" className={left <= 5 ? "num ml-3 text-danger" : "num ml-3 text-dim"}>
+                {left}s
+              </span>
+            ) : null}
           </p>
-        ) : null}
+          {/* Names are not used here: `waitingOn` includes you while you are still
+              swiping, and "Still swiping: you" is nonsense. Counts say the same
+              thing without it. */}
+          {view.members.length > 1 ? (
+            <p className="text-right text-[12px] text-dim">
+              <span className="num">{through}</span> of{" "}
+              <span className="num">{view.members.length}</span> through
+            </p>
+          ) : null}
       </div>
 
       {/* A one-cell grid, with both cards placed in that same cell by
@@ -420,49 +486,54 @@ export function Deck({
           ? ` ${swipeSeconds} seconds to answer, and then it passes itself.`
           : ""}
       </p>
-
-      {/* Mounted before its text arrives, like every other announcement in
-          the room. `empty:-mb-5` takes back the flex gap an empty paragraph
-          would leave between the card and the buttons -- hiding it would take
-          it out of the accessibility tree and be no better than not rendering
-          it at all. */}
-      <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-5">
-        {error ?? ""}
-      </p>
-
-      {/* No `disabled` here on purpose -- `swipe` refuses a second call itself,
-          and see the `inFlight` ref above for what `disabled` cost this screen:
-          the CTA changing identity on every swipe, and focus falling to <body>
-          under a keyboard user's finger. */}
-      {/* `selected` is the drag's affordance, not a state of the button itself:
-          it lights while a finger is heading this way and goes out if the drag
-          comes back. Same ring `Plate` already draws everywhere else. */}
-      <div className="flex gap-3">
-        <Plate
-          variant="raised"
-          center
-          label="Nah"
-          selected={lean === "no"}
-          onClick={() => void swipe("no")}
-        />
-        <Plate
-          variant="action"
-          center
-          label="I’m in"
-          selected={lean === "yes"}
-          onClick={() => void swipe("yes")}
-        />
       </div>
-      {/* The timer is the host's rule, so the screen says whose it is and what
-          it does BEFORE it does it. A card that vanishes with no warning reads
-          as a bug, and a pass nobody chose is exactly the thing to be honest
-          about. */}
-      <p className="text-center text-[12px] text-dim">
-        Arrow keys work too.
-        {swipeSeconds > 0
-          ? ` ${hostName} set ${swipeSeconds} seconds a card — run out and it counts as a nah.`
-          : ""}
-      </p>
+
+      <div className="contents lg:flex lg:flex-col lg:gap-5">
+        <VotePanel votes={view.currentCardVotes} />
+
+        {/* Mounted before its text arrives, like every other announcement in
+            the room. `empty:-mb-5` takes back the flex gap an empty paragraph
+            would leave between the card and the buttons -- hiding it would take
+            it out of the accessibility tree and be no better than not rendering
+            it at all. */}
+        <p role="alert" className="text-[13px] leading-snug text-danger empty:-mb-5">
+          {error ?? ""}
+        </p>
+
+        {/* No `disabled` here on purpose -- `swipe` refuses a second call itself,
+            and see the `inFlight` ref above for what `disabled` cost this screen:
+            the CTA changing identity on every swipe, and focus falling to <body>
+            under a keyboard user's finger. */}
+        {/* `selected` is the drag's affordance, not a state of the button itself:
+            it lights while a finger is heading this way and goes out if the drag
+            comes back. Same ring `Plate` already draws everywhere else. */}
+        <div className="flex gap-3">
+          <Plate
+            variant="raised"
+            center
+            label="Nah"
+            selected={lean === "no"}
+            onClick={() => void swipe("no")}
+          />
+          <Plate
+            variant="action"
+            center
+            label="I’m in"
+            selected={lean === "yes"}
+            onClick={() => void swipe("yes")}
+          />
+        </div>
+        {/* The timer is the host's rule, so the screen says whose it is and what
+            it does BEFORE it does it. A card that vanishes with no warning reads
+            as a bug, and a pass nobody chose is exactly the thing to be honest
+            about. */}
+        <p className="text-center text-[12px] text-dim">
+          Arrow keys work too.
+          {swipeSeconds > 0
+            ? ` ${hostName} set ${swipeSeconds} seconds a card — run out and it counts as a nah.`
+            : ""}
+        </p>
+      </div>
     </section>
   );
 }

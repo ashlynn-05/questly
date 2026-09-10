@@ -193,104 +193,145 @@ export function Lobby({
   }
 
   return (
-    <section className="flex flex-col gap-8 px-5 py-10">
-      <div>
-        <h1 ref={headingRef} tabIndex={-1} className="flex flex-col gap-2">
-          <span className="board text-[11px] text-accent">Room</span>
-          <span className="num text-[64px] leading-none text-text">{code}</span>
-        </h1>
-        <p className="mt-3 text-[13px] text-dim">Read this out, or send the link.</p>
-      </div>
+    /* Two columns from `xl`, and only because this screen genuinely has two
+       halves: who is here, and what the host is about to set for them. The
+       roster is a list on the route line and stays one; the join link and the
+       house rules are a control panel that was always a second thing stacked
+       under it, off the bottom of the fold on a laptop.
 
-      {/* The rail sits on the container; every row carries its own node and its
-          own left padding, so a row is free to grow (a confirmation, a longer
-          name) without the roundels drifting off the line. */}
-      <div className="relative">
-        <Rail dashed />
-        <ul className="m-0 flex list-none flex-col p-0">
-          {Array.from({ length: seats }, (_, i) => {
-            const member = view.members[i];
-            return (
-              <li key={member?._id ?? `seat-${i}`} className="relative py-1 pl-14">
-                {/* 16px puts the roundel's centre (top + 9.5, for a 13px disc
-                    inside a 3px ring) on the centre of the 44px row below its
-                    4px of top padding. */}
-                <RailNode top={16} state={member ? "locked" : "open"} />
-                <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
-                  {/* Drawn for the empty seats too, so the names line up down
-                      the column rather than stepping in and out by 44px as
-                      people arrive. `aria-hidden` throughout: a picture of
-                      somebody whose name is the next thing on the row is
-                      decoration, and their initials are an abbreviation a
-                      screen reader would read out as letters. */}
-                  <span
-                    aria-hidden="true"
-                    className={
-                      member && away.has(member._id)
-                        ? `${SEAT_ROUNDEL} opacity-50`
-                        : SEAT_ROUNDEL
-                    }
-                  >
-                    {member?.avatarUrl ? (
-                      /* Convex serves these from its own origin with a signed
-                         URL that changes per read, so `next/image` has nothing
-                         stable to cache on -- the same call `AccountBadge`
-                         makes, and for the same reason. */
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={member.avatarUrl} alt="" className="size-full object-cover" />
-                    ) : member ? (
-                      initialsFor(member.name)
-                    ) : null}
-                  </span>
+       `lg`, not `xl`. This used to wait for `xl` because the concourse column
+       took 200px of every `lg` screen and left the room about 776px, which is
+       one column's worth. The concourse is gone -- the journey is a band above
+       the room now and the nav is the shell's, not this screen's -- so the two
+       halves fit from `lg` and there is no reason left to make them queue.
 
-                  {member ? (
-                    <span className="text-[16px] text-text">
-                      {member.name}
-                      {member.isHost ? (
-                        <span className="board ml-2 text-[10px] text-accent">Host</span>
-                      ) : null}
-                      {/* A word, not a colour: this is the one thing
-                          "Waiting on Tam" cannot say, and a group decides
-                          whether to wait or move on based on it. Dimmed rather
-                          than accented -- it is a fact about somebody's
-                          attention, not a problem with their seat. */}
-                      {away.has(member._id) ? (
-                        <span className="board ml-2 text-[10px] text-dim">Away</span>
+       `items-start`, or the rules panel would be centred against a roster that
+       grows a seat at a time.
+
+       The mobile classes lead and are untouched: below `lg` this is the same
+       `flex flex-col gap-8` section it always was. */
+    <section className="flex flex-col gap-8 px-5 py-10 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-x-12">
+      {/* The half that is the room filling up. Restates `gap-8` because it is
+          now one grid cell rather than four children of the section. */}
+      <div className="flex flex-col gap-8">
+        <div>
+          <h1 ref={headingRef} tabIndex={-1} className="flex flex-col gap-2">
+            <span className="board text-[11px] text-accent">Room</span>
+            <span className="num text-[64px] leading-none text-text">{code}</span>
+          </h1>
+          <p className="mt-3 text-[13px] text-dim">Read this out, or send the link.</p>
+        </div>
+
+        {/* The rail sits on the container; every row carries its own node and its
+            own left padding, so a row is free to grow (a confirmation, a longer
+            name) without the roundels drifting off the line. */}
+        <div className="relative">
+          <Rail dashed />
+          <ul className="m-0 flex list-none flex-col p-0">
+            {Array.from({ length: seats }, (_, i) => {
+              const member = view.members[i];
+              return (
+                <li key={member?._id ?? `seat-${i}`} className="relative py-1 pl-14">
+                  {/* 16px puts the roundel's centre (top + 9.5, for a 13px disc
+                      inside a 3px ring) on the centre of the 44px row below its
+                      4px of top padding. */}
+                  <RailNode top={16} state={member ? "locked" : "open"} />
+                  <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1">
+                    {/* Drawn for the empty seats too, so the names line up down
+                        the column rather than stepping in and out by 44px as
+                        people arrive. `aria-hidden` throughout: a picture of
+                        somebody whose name is the next thing on the row is
+                        decoration, and their initials are an abbreviation a
+                        screen reader would read out as letters. */}
+                    <span
+                      aria-hidden="true"
+                      className={
+                        member && away.has(member._id)
+                          ? `${SEAT_ROUNDEL} opacity-50`
+                          : SEAT_ROUNDEL
+                      }
+                    >
+                      {member?.avatarUrl ? (
+                        /* Convex serves these from its own origin with a signed
+                           URL that changes per read, so `next/image` has nothing
+                           stable to cache on -- the same call `AccountBadge`
+                           makes, and for the same reason. */
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={member.avatarUrl} alt="" className="size-full object-cover" />
+                      ) : member ? (
+                        initialsFor(member.name)
                       ) : null}
                     </span>
-                  ) : (
-                    <span className="text-[16px] text-dim">Waiting…</span>
-                  )}
 
-                  {/* R55: taking someone out of a group plan is socially loaded,
-                      so the control says whose seat it is and what pressing it
-                      does. Never a bare icon, and never an ambiguous cross.
-                      Two steps, because there is no undo -- they would have to
-                      be sent the link again. */}
-                  {view.you.isHost && member && !member.isHost ? (
-                    <ConfirmButton
-                      className="ml-auto"
-                      label={`Remove ${member.name}`}
-                      confirmLabel={`Yes, remove ${member.name}`}
-                      cancelLabel="Keep them"
-                      onConfirm={() => remove(member._id)}
-                    />
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                    {member ? (
+                      <span className="text-[16px] text-text">
+                        {member.name}
+                        {member.isHost ? (
+                          <span className="board ml-2 text-[10px] text-accent">Host</span>
+                        ) : null}
+                        {/* A word, not a colour: this is the one thing
+                            "Waiting on Tam" cannot say, and a group decides
+                            whether to wait or move on based on it. Dimmed rather
+                            than accented -- it is a fact about somebody's
+                            attention, not a problem with their seat. */}
+                        {away.has(member._id) ? (
+                          <span className="board ml-2 text-[10px] text-dim">Away</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-[16px] text-dim">Waiting…</span>
+                    )}
+
+                    {/* R55: taking someone out of a group plan is socially loaded,
+                        so the control says whose seat it is and what pressing it
+                        does. Never a bare icon, and never an ambiguous cross.
+                        Two steps, because there is no undo -- they would have to
+                        be sent the link again. */}
+                    {view.you.isHost && member && !member.isHost ? (
+                      <ConfirmButton
+                        className="ml-auto"
+                        label={`Remove ${member.name}`}
+                        confirmLabel={`Yes, remove ${member.name}`}
+                        cancelLabel="Keep them"
+                        onConfirm={() => remove(member._id)}
+                      />
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        {/* The roster changes under people while they are looking elsewhere on
+            the screen, so the count is announced rather than only drawn. */}
+        <p aria-live="polite" className="sr-only">
+          {view.members.length} of {seats} in the room.
+        </p>
       </div>
 
-      {/* The roster changes under people while they are looking elsewhere on
-          the screen, so the count is announced rather than only drawn. */}
-      <p aria-live="polite" className="sr-only">
-        {view.members.length} of {seats} in the room.
-      </p>
-
+      {/* The other half: the link out, and the two rules the host sets before
+          either binds anybody. */}
       <div className="flex flex-col gap-2">
         <Plate variant="raised" label="Copy the join link" onClick={() => void copyTheLink()} />
+
+        {/* The link itself, readable and selectable, for the laptop where
+            there is room for it: a clipboard that silently refuses -- an
+            insecure origin, a locked-down browser -- currently only surfaces
+            the URL inside an error sentence. `readOnly` rather than
+            `disabled`, so it can still be focused, selected and copied by
+            hand, which is the entire point of it being here.
+
+            `location` during render is safe for the reason `Booked.tsx`
+            records: `page.tsx` holds this whole subtree behind `ready`, so it
+            never renders on the server or on the hydrating pass. */}
+        <input
+          readOnly
+          value={`${location.origin}/join/${code}`}
+          aria-label="The join link"
+          onFocus={(e) => e.currentTarget.select()}
+          className="hidden min-h-[44px] w-full rounded-[6px] border border-hairline bg-transparent px-4 text-[13px] text-dim lg:block"
+        />
         {/* Mounted empty and filled later, never mounted with its text already
             in it: a live region inserted into the DOM with content is
             frequently not announced at all. */}

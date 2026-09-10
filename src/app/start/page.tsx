@@ -7,6 +7,8 @@ import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/reac
 import { api } from "@convex/_generated/api";
 import { PushHint } from "@/components/questly/PushHint";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
+import { Journey } from "@/components/questly/Journey";
+import { ShellNav } from "@/components/questly/ShellNav";
 import { storeSessionKey } from "@/lib/room/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
@@ -22,9 +24,11 @@ import {
 import {
   PRESET_MINUTES,
   isInThePast,
+  isValidDateValue,
   minutesToInputValue,
   resolveWhenAt,
 } from "@/lib/start/when";
+import { Back } from "@/components/questly/icons";
 import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
 import { StepViews } from "./_components/StepViews";
 
@@ -40,6 +44,7 @@ const CBD = { lat: -37.8136, lng: 144.9631 };
 
 /** The sentence a time already gone gets, on the client and on the server. */
 const PAST_WHEN = "That time has already passed. Pick a later time.";
+const NO_WHEN_DATE = "Pick the day you want, or choose one of the three above.";
 const OPEN_ROOMS_PAGE_SIZE = 8;
 
 function StartFunnel() {
@@ -113,7 +118,7 @@ function StartFunnel() {
   }
 
   const { answers, cardIndex, goals, mood, visibility, headcount, budget, radiusKm } = draft;
-  const { whenId, whenMinutes } = draft;
+  const { whenId, whenMinutes, whenDate } = draft;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -264,7 +269,15 @@ function StartFunnel() {
     // Resolved here, against the clock as it is NOW -- not at mount, and not
     // when the chip was tapped. Somebody who sat on this screen while the hour
     // turned gets the time they are looking at, not the one they arrived with.
-    const whenAt = resolveWhenAt(whenId, whenMinutes, new Date());
+    // The date field is seeded when the chip is tapped, so an empty one means
+    // it was cleared -- or that a draft is being resumed from a browser store
+    // where the pair could have been separated. Either way the resolver would
+    // quietly fall back to today, and today is not the day anyone asked for.
+    if (whenId === "custom" && !isValidDateValue(whenDate)) {
+      setError(NO_WHEN_DATE);
+      return;
+    }
+    const whenAt = resolveWhenAt(whenId, whenMinutes, new Date(), whenDate);
     // The server refuses this too, and the server is the rule -- but a refusal
     // that arrives after a round trip, on a screen that has already said
     // "Opening...", is a worse way to learn you typed 6:30 when you meant
@@ -335,7 +348,12 @@ function StartFunnel() {
     // roundel matters most here: the funnel is about to write a taste profile
     // to whichever account this browser is holding, and this is where it says
     // which one that is.
-    <Screen>
+    <Screen
+      nav={<ShellNav route="start" />}
+      /* `goals` shares the quiz's stop -- two questions in one sitting -- and
+         `journeyModel` collapses them again into one stage. */
+      journey={<Journey at={current === "goals" ? "quiz" : current} />}
+    >
       {/* The invitation to turn notifications on, for somebody signed in.
           `/start` because the funnel ends by opening a room and there is no
           screen after it, and because `manifest.ts` sets `start_url: "/start"`
@@ -347,75 +365,90 @@ function StartFunnel() {
           it under. */}
       <PushHint />
 
-      {/* Always mounted, filled when something is refused: a live region
-          inserted into the DOM with its text already in it is frequently never
-          announced. `empty:-mb-8` takes back the flex gap an empty paragraph
-          would otherwise leave at the top of every step -- `display: none`
-          would take it out of the accessibility tree and be no better than not
-          rendering it at all. */}
-      <p role="alert" className="text-[13px] text-danger empty:-mb-8">
-        {error ?? ""}
-        {error && needsSignIn ? (
-          <>
-            {" "}
-            {/* Carries the funnel's own URL, so signing in comes back to the
-                twelve answers already given rather than to the top. */}
-            <Link href="/sign-in?redirect=%2Fstart" className="text-text underline underline-offset-4">
-              Sign in
-            </Link>{" "}
-            to open a room.
-          </>
+      <div>
+        <div className="flex flex-col gap-8">
+        {/* Always mounted, filled when something is refused: a live region
+            inserted into the DOM with its text already in it is frequently never
+            announced. `empty:-mb-8` takes back the flex gap an empty paragraph
+            would otherwise leave at the top of every step -- `display: none`
+            would take it out of the accessibility tree and be no better than not
+            rendering it at all. */}
+        <p role="alert" className="text-[13px] text-danger empty:-mb-8">
+          {error ?? ""}
+          {error && needsSignIn ? (
+            <>
+              {" "}
+              {/* Carries the funnel's own URL, so signing in comes back to the
+                  twelve answers already given rather than to the top. */}
+              <Link href="/sign-in?redirect=%2Fstart" className="text-text underline underline-offset-4">
+                Sign in
+              </Link>{" "}
+              to open a room.
+            </>
+          ) : null}
+        </p>
+
+        {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
+            otherwise strands you: nothing later in the flow returns to them. */}
+        {backTo ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => goTo(backTo)}
+            // `self-start` shrinks this to its content width, and "BACK" at 11px
+            // is nowhere near the 44px target floor this project holds itself
+            // to. The padding is what makes the target, not the label.
+            //
+            // Bordered rather than underlined, matching the vocabulary `Chip`
+            // already set two steps earlier in this same funnel: 5px radius,
+            // `border-dim` at rest, `--accent` on hover. An underline under a
+            // tracked capital word reads as a stray link in a screen that has
+            // no other links in it, and the border is what says "control".
+            //
+            // The arrow is the icon this product already draws for going back,
+            // and its own note explains why it is an arrow and not a chevron.
+            //
+            // Disabled swaps the token, never the opacity -- the same rule
+            // `Plate.tsx` states, which this control is not exempt from. This
+            // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
+            // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
+            // 2.63:1 light, both under the 4.5:1 this project does not waive for
+            // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
+            // and it is the tone the rest of the funnel already uses for "not
+            // right now".
+            className="board flex min-h-[44px] min-w-[44px] items-center gap-2 self-start rounded-[5px] border border-dim px-4 text-[11px] text-accent transition-colors hover:border-accent disabled:pointer-events-none disabled:text-dim"
+          >
+            <Back className="size-[14px]" aria-hidden />
+            Back
+          </button>
         ) : null}
-      </p>
 
-      {/* Mood and party are single-tap decisions with no confirm, so a mis-tap
-          otherwise strands you: nothing later in the flow returns to them. */}
-      {backTo ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => goTo(backTo)}
-          // `self-start` shrinks this to its content width, and "BACK" at 11px
-          // is nowhere near the 44px target floor this project holds itself
-          // to. The padding is what makes the target, not the label.
-          //
-          // Disabled swaps the token, never the opacity -- the same rule
-          // `Plate.tsx` states, which this control is not exempt from. This
-          // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
-          // `disabled:opacity-50` composited --accent over it: 2.49:1 dark,
-          // 2.63:1 light, both under the 4.5:1 this project does not waive for
-          // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
-          // and it is the tone the rest of the funnel already uses for "not
-          // right now".
-          className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:text-dim"
-        >
-          Back
-        </button>
-      ) : null}
-
-      <StepViews
-        current={current}
-        headingRef={headingRef}
-        cardIndex={cardIndex}
-        answers={answers}
-        goals={goals}
-        mood={mood}
-        visibility={visibility}
-        headcount={headcount}
-        budget={budget}
-        whenId={whenId}
-        whenValue={whenValue}
-        radiusKm={radiusKm}
-        busy={busy}
-        lookingForRoom={lookingForRoom}
-        openRooms={openRooms}
-        edit={edit}
-        goTo={goTo}
-        toggleGoal={toggleGoal}
-        finishQuiz={finishQuiz}
-        openTheRoom={openTheRoom}
-        joinOpenRoom={joinOpenRoom}
-      />
+          <StepViews
+            current={current}
+            headingRef={headingRef}
+            cardIndex={cardIndex}
+            answers={answers}
+            goals={goals}
+            mood={mood}
+            visibility={visibility}
+            headcount={headcount}
+            budget={budget}
+            whenId={whenId}
+            whenValue={whenValue}
+            whenDate={whenDate}
+            radiusKm={radiusKm}
+            busy={busy}
+            lookingForRoom={lookingForRoom}
+            openRooms={openRooms}
+            edit={edit}
+            goTo={goTo}
+            toggleGoal={toggleGoal}
+            finishQuiz={finishQuiz}
+            openTheRoom={openTheRoom}
+            joinOpenRoom={joinOpenRoom}
+          />
+        </div>
+      </div>
     </Screen>
   );
 }

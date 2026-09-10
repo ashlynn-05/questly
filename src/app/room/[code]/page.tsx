@@ -8,8 +8,11 @@ import { api } from "@convex/_generated/api";
 import { PushHint } from "@/components/questly/PushHint";
 import { Plate } from "@/components/questly/Plate";
 import { Screen, ScreenPending } from "@/components/questly/Screen";
+import { Journey } from "@/components/questly/Journey";
+import { ShellNav } from "@/components/questly/ShellNav";
 import { errorCode, userMessage } from "@/lib/errors";
 import { roomRedirect, statusTransition } from "@/lib/room/room";
+import { moneyLabel } from "@/lib/room/share";
 import { useSessionKey } from "@/hooks/useSessionKey";
 import { useAwaySeats } from "@/lib/room/presence";
 import { Lobby } from "./_components/Lobby";
@@ -161,13 +164,41 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
 
   const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
 
+  // `building` is the deck arriving, not a place anybody stands, so it shares
+  // the swipe stop rather than inventing a ninth one.
+  const at =
+    view.room.status === "lobby"
+      ? ("room" as const)
+      : view.room.status === "building"
+        ? ("swiping" as const)
+        : view.room.status;
+
   // One route, driven entirely by room.status: the same URL is the lobby, the
   // deck, the plan and the booking, so a shared link never goes stale.
   return (
     // `bleed`: the deck is a full-bleed card surface and each of the four
     // room screens carries its own padding. The band above keeps its padding
     // either way, so the roundels stay on the same line as every other screen.
-    <Screen bleed>
+    <Screen
+      bleed
+      nav={
+        <ShellNav
+          route="room"
+          ctx={{
+            roomCode: code,
+            roomStatus: view.room.status,
+            swiped: view.progress.swipedByYou,
+            deckSize: view.progress.deckSize,
+            planTotal: view.plan ? moneyLabel(view.plan.totalPerHeadCents) : null,
+          }}
+        />
+      }
+      /* The night as a band above the room, not a column beside it. The nav on
+         the left is the persistent column now, so a second one here would spend
+         200px of every room screen on the same five facts. `Screen` places it,
+         which is also what gives it padding on a route that is `bleed`. */
+      journey={<Journey at={at} />}
+    >
       {/* The same invitation as `/start`, offered here because this is the only
           place a GUEST can accept it: they have no account, so their
           subscription is filed against this seat, and the seat is only in

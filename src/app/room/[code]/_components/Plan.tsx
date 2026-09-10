@@ -9,6 +9,8 @@ import { useCountdown } from "@/hooks/useCountdown";
 import { useFocusOnArrival } from "@/hooks/useFocusOnArrival";
 import { useInFlight } from "@/hooks/useInFlight";
 import { errorCode, userMessage } from "@/lib/errors";
+import { budgetModel } from "@/lib/room/budget";
+import { moneyLabel } from "@/lib/room/share";
 import type { RoomView } from "../page";
 import { PlanBookingPanel } from "./PlanBookingPanel";
 import { PlanStopList, type SheetTab } from "./PlanStopList";
@@ -21,6 +23,94 @@ import { PlanStopList, type SheetTab } from "./PlanStopList";
  * stop cannot be swapped at all, and one stop can carry only one open proposal.
  * The UI must never offer a control the server is going to reject.
  */
+/**
+ * What the night costs a head, against what the room said it would spend.
+ *
+ * WHY IT IS A HEAD FIGURE AND NOT A GROUP TOTAL. `booking.ts` rules against
+ * re-dividing totals behind the group's back, and `room.headcount` and
+ * `members.length` legitimately disagree -- a room seeded for six that four
+ * people joined. Every number here is per head, which is the number the room
+ * actually agreed on and the only one that is true whoever turns up.
+ *
+ * WHY THE BAR IS NOT THE ANSWER. `budgetModel` clamps an over-budget plan to a
+ * full bar, so the bar alone cannot say HOW far over. The sentence under it
+ * does, and the server's own `overBudget` decides which sentence it is -- the
+ * bar is the glance, not the fact.
+ *
+ * WHY `lg` AND NOT `xl`. It goes in the column the booking panel already owns
+ * from `xl`; under that it is a block above the stops, which is where a phone
+ * would want it too if a phone were getting it. It is not: mobile keeps the
+ * screen it has.
+ */
+function BudgetPanel({
+  stops,
+  totalPerHeadCents,
+  budgetPerHeadCents,
+  overBudget,
+}: {
+  stops: { id: string; name: string; costPerHeadCents: number }[];
+  totalPerHeadCents: number;
+  budgetPerHeadCents: number;
+  overBudget: boolean;
+}) {
+  const meter = budgetModel(totalPerHeadCents, budgetPerHeadCents);
+
+  return (
+    <section
+      aria-label="What tonight costs"
+      data-budget-panel
+      className="hidden rounded-[10px] bg-ground-raised p-5 lg:block"
+    >
+      <p className="board text-[10px] text-dim">Each of you</p>
+      <p className="num mt-1 text-[44px] leading-none text-text">
+        {moneyLabel(totalPerHeadCents)}
+      </p>
+
+      {/* Decoration, and labelled as such. Both numbers it draws are already in
+          type either side of it -- the figure above, the budget in the sentence
+          below -- so a `role="img"` here would announce the same two facts a
+          third time, and in a free room ("Free of a Free budget") it announced
+          them worse than the sentence does. */}
+      <div
+        aria-hidden="true"
+        className="mt-4 h-[6px] w-full overflow-hidden rounded-[3px] bg-hairline"
+      >
+        <div
+          className={`h-full rounded-[3px] ${meter.tone === "danger" ? "bg-danger" : "bg-action"}`}
+          style={{ width: `${meter.percent}%` }}
+        />
+      </div>
+
+      {/* Full-strength ink for the over-budget sentence, NOT `--danger`.
+          Measured on this surface: `--danger` on `--ground-raised` is 4.32:1
+          in night mode, under the 4.5:1 floor, and `--danger` is measured
+          against `--ground` rather than this one. The sentence says "Over"
+          outright and the bar beside it is already red, so nothing here was
+          resting on the colour anyway. */}
+      <p className={`mt-2 text-[13px] leading-snug ${overBudget ? "text-text" : "text-dim"}`}>
+        {budgetPerHeadCents === 0
+          ? overBudget
+            ? "You said free, and this one is not."
+            : "You said free, and this one is."
+          : overBudget
+            ? `Over the ${moneyLabel(budgetPerHeadCents)} you set.`
+            : `Of the ${moneyLabel(budgetPerHeadCents)} you set.`}
+      </p>
+
+      <ul className="m-0 mt-4 flex list-none flex-col gap-2 border-t border-hairline p-0 pt-4">
+        {stops.map((stop) => (
+          <li key={stop.id} className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 flex-1 truncate text-[13px] text-dim">{stop.name}</span>
+            <span className="num shrink-0 text-[13px] text-text">
+              {moneyLabel(stop.costPerHeadCents)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function Plan({
   view,
   code,
@@ -389,53 +479,80 @@ export function Plan({
           : null;
 
   return (
-    <section className="flex flex-col gap-7 px-5 py-8">
-      <PlanStopList
-        view={view}
-        plan={plan}
-        headingRef={headingRef}
-        isGroup={isGroup}
-        lockByVote={lockByVote}
-        mayLock={mayLock}
-        sheetFor={sheetFor}
-        tab={tab}
-        options={options}
-        queryText={queryText}
-        reason={reason}
-        loading={loading}
-        sheetClosedBecause={sheetClosedBecause}
-        setSheetFor={setSheetFor}
-        setTab={setTab}
-        setOptions={setOptions}
-        setQueryText={setQueryText}
-        setReason={setReason}
-        openSheet={openSheet}
-        loadOptions={loadOptions}
-        choose={choose}
-        toggleLock={toggleLock}
-        castVote={castVote}
-        focusAskedVote={focusAskedVote}
-      />
-      <PlanBookingPanel
-        view={view}
-        plan={plan}
-        error={error}
-        rule={rule}
-        voting={voting}
-        voteLapsed={voteLapsed}
-        votes={votes}
-        youVoted={youVoted}
-        hostName={hostName}
-        secondsToVote={secondsToVote}
-        booking={booking}
-        confirmBook={confirmBook}
-        setConfirmBook={setConfirmBook}
-        focusFirstButton={focusFirstButton}
-        restoreBookRef={restoreBook}
-        bookRestore={bookRestore}
-        bookIt={bookIt}
-        takeItBack={takeItBack}
-      />
+    /* Two columns from `lg`. This screen has always been two things -- the
+       itinerary you are editing, and the decision to book it -- and they are
+       already two components. On a phone the booking panel is under four stops
+       and a swap sheet; on a laptop the thing you are deciding and the control
+       that decides it belong in view at once.
+
+       `lg` rather than `xl` for the same reason as the lobby: the concourse
+       that used to take 200px of every `lg` screen is gone, so the second
+       column no longer has to wait for a wider window to fit.
+
+       Both children return fragments, so each takes a wrapper here to be one
+       grid cell. `items-start`, or the booking panel would float against the
+       middle of a four-stop itinerary. Below `lg` the wrappers are inert and
+       the section is the same `flex flex-col gap-7` it was -- the two wrappers
+       restate that gap so the spacing inside each half does not change. */
+    <section className="flex flex-col gap-7 px-5 py-8 lg:grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start lg:gap-x-12">
+      <div className="flex flex-col gap-7">
+        <PlanStopList
+          view={view}
+          plan={plan}
+          headingRef={headingRef}
+          isGroup={isGroup}
+          lockByVote={lockByVote}
+          mayLock={mayLock}
+          sheetFor={sheetFor}
+          tab={tab}
+          options={options}
+          queryText={queryText}
+          reason={reason}
+          loading={loading}
+          sheetClosedBecause={sheetClosedBecause}
+          setSheetFor={setSheetFor}
+          setTab={setTab}
+          setOptions={setOptions}
+          setQueryText={setQueryText}
+          setReason={setReason}
+          openSheet={openSheet}
+          loadOptions={loadOptions}
+          choose={choose}
+          toggleLock={toggleLock}
+          castVote={castVote}
+          focusAskedVote={focusAskedVote}
+        />
+      </div>
+
+      <div className="flex flex-col gap-7">
+        <BudgetPanel
+          stops={plan.stops}
+          totalPerHeadCents={plan.totalPerHeadCents}
+          budgetPerHeadCents={view.room.budgetPerHeadCents}
+          overBudget={plan.overBudget}
+        />
+
+        <PlanBookingPanel
+          view={view}
+          plan={plan}
+          error={error}
+          rule={rule}
+          voting={voting}
+          voteLapsed={voteLapsed}
+          votes={votes}
+          youVoted={youVoted}
+          hostName={hostName}
+          secondsToVote={secondsToVote}
+          booking={booking}
+          confirmBook={confirmBook}
+          setConfirmBook={setConfirmBook}
+          focusFirstButton={focusFirstButton}
+          restoreBookRef={restoreBook}
+          bookRestore={bookRestore}
+          bookIt={bookIt}
+          takeItBack={takeItBack}
+        />
+      </div>
     </section>
   );
 }
