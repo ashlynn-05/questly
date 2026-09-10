@@ -1,5 +1,6 @@
 import type { Doc } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
+import { presence } from "../../presence";
 import { dropOwner, seatOwnerKey } from "../push/notify";
 
 /**
@@ -108,6 +109,14 @@ export async function demolishRoom(ctx: MutationCtx, room: Doc<"rooms">): Promis
     await dropOwner(ctx, seatOwnerKey(member._id));
     await ctx.db.delete(member._id);
   }
+
+  // One call, not `removeRoomUser` per seat as `detachMember` does. That helper
+  // is for one person leaving a room that continues; here the room itself is
+  // going, and the component offers exactly that. Left out, presence would hold
+  // a row per member of a room that no longer resolves, forever -- nothing else
+  // reaps one, and nobody would ever see it, which is what makes it worth
+  // stating rather than assuming.
+  await presence.removeRoom(ctx, roomId);
 
   await ctx.db.delete(roomId);
 }

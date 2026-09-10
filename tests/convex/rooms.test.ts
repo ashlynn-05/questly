@@ -1423,3 +1423,25 @@ test("closing a room leaves every other room untouched", async () => {
   const view = await asHost.query(api.rooms.get, { code: second.code, sessionKey: second.sessionKey });
   expect(view).not.toBeNull();
 });
+
+// `detachMember` reaps one seat's presence row when somebody leaves a room that
+// carries on. A demolished room has no such moment, so without the component
+// call the rows would outlive the room they name -- and nothing else ever reaps
+// one, which is what would make it permanent rather than merely late.
+test("closing a room takes its presence rows with it", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  const { roomToken } = await t.mutation(api.presence.heartbeat, {
+    code,
+    sessionKey,
+    sessionId: "tab-1",
+  });
+  expect(await t.query(api.presence.list, { roomToken })).toHaveLength(1);
+
+  await asHost.mutation(api.rooms.deleteRoom, { code });
+
+  expect(await t.query(api.presence.list, { roomToken })).toEqual([]);
+});
