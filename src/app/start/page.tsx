@@ -28,6 +28,7 @@ import {
   minutesToInputValue,
   resolveWhenAt,
 } from "@/lib/start/when";
+import { Back } from "@/components/questly/icons";
 import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
 import { StepViews } from "./_components/StepViews";
 
@@ -409,6 +410,15 @@ function StartFunnel() {
             // is nowhere near the 44px target floor this project holds itself
             // to. The padding is what makes the target, not the label.
             //
+            // Bordered rather than underlined, matching the vocabulary `Chip`
+            // already set two steps earlier in this same funnel: 5px radius,
+            // `border-dim` at rest, `--accent` on hover. An underline under a
+            // tracked capital word reads as a stray link in a screen that has
+            // no other links in it, and the border is what says "control".
+            //
+            // The arrow is the icon this product already draws for going back,
+            // and its own note explains why it is an arrow and not a chevron.
+            //
             // Disabled swaps the token, never the opacity -- the same rule
             // `Plate.tsx` states, which this control is not exempt from. This
             // sits on `--ground` (`Screen`'s frame is `bg-ground`), so
@@ -417,8 +427,9 @@ function StartFunnel() {
             // disabled controls. `--text-dim` is 5.26:1 dark and 6.21:1 light,
             // and it is the tone the rest of the funnel already uses for "not
             // right now".
-            className="board min-h-[44px] min-w-[44px] self-start px-4 text-[11px] text-accent underline underline-offset-4 disabled:pointer-events-none disabled:text-dim"
+            className="board flex min-h-[44px] min-w-[44px] items-center gap-2 self-start rounded-[5px] border border-dim px-4 text-[11px] text-accent transition-colors hover:border-accent disabled:pointer-events-none disabled:text-dim"
           >
+            <Back className="size-[14px]" aria-hidden />
             Back
           </button>
         ) : null}

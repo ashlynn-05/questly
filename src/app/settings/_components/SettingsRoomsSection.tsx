@@ -95,22 +95,18 @@ export function SettingsRoomsSection({
                `variant="raised"` rather than `ghost`, because ghost would add a
                hairline border around the half of the card that is a link.
 
-               The control gets the hover, and the plate does not: that is the
-               only thing distinguishing a 74px button from the card it sits on
-               once they share a background.
-
-               The hover is a BOUNDARY and not a fill, which is a measurement
-               rather than a preference. Every ground token that reads as a step
-               away from `--ground-raised` in one theme collapses in the other:
-               `--ground` is 1.17:1 in night and 1.18:1 in day, `--ground-deep`
-               is 1.95:1 in night but 1.08:1 in day -- the day palette's three
-               grounds are all near-luminance yellows. `--action` clears both at
-               2.5:1, but it is the primary-action fill and this is the one
-               destructive control on the screen. `--accent` as an EDGE is
-               4.88:1 in night and 8.08:1 in day, far over the 3:1 non-text
-               floor in both, and it leaves the label on the surface its own
-               contrast was measured against. The border is transparent when
-               idle so nothing moves when it appears. */
+               The control is drawn as a BOUNDARY and not a fill, which is a
+               measurement rather than a preference. Every ground token that
+               reads as a step away from `--ground-raised` in one theme
+               collapses in the other: `--ground` is 1.17:1 in night and 1.18:1
+               in day, `--ground-deep` is 1.95:1 in night but 1.08:1 in day --
+               the day palette's three grounds are all near-luminance yellows.
+               `--action` clears both at 2.5:1, but it is the primary-action
+               fill and this is the one destructive control on the screen. An
+               EDGE has no such problem: `--text-dim` at rest and `--accent` on
+               hover both clear the 3:1 non-text floor on this surface in both
+               themes, and the label keeps the background its own contrast was
+               measured against. */
             <li
               key={room.code}
               className="flex flex-wrap items-center rounded-[6px] bg-ground-raised"
@@ -131,7 +127,8 @@ export function SettingsRoomsSection({
                   out before anything happens. */}
               {room.isHost && !room.demo ? (
                 <ConfirmButton
-                  className="mr-3 shrink-0 rounded-[6px] border border-transparent transition-colors hover:border-accent"
+                  variant="pill"
+                  className="mr-3 shrink-0"
                   label="Close"
                   confirmLabel="Yes, close it"
                   cancelLabel="Keep it"
