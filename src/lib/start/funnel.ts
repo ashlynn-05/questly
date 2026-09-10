@@ -1,5 +1,5 @@
 import type { Mood } from "@convex/lib/deck/scoring";
-import { WHEN_IDS, isValidMinutes, type WhenId } from "./when";
+import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when";
 
 /**
  * The twelve taps that open a room, kept somewhere a page load cannot destroy.
@@ -44,6 +44,17 @@ export type FunnelDraft = {
    */
   whenMinutes: number | null;
   /**
+   * The day the host picked, as `YYYY-MM-DD`, or `null` for every `whenId`
+   * that names its own day.
+   *
+   * A CALENDAR DATE IS NOT A TIMESTAMP, which is why this one is allowed to be
+   * written down while `whenMinutes` above forbids an epoch. "Tonight" has to
+   * be re-resolved tomorrow because it means a different day tomorrow. The 3rd
+   * of October means the 3rd of October on whatever day the draft comes back,
+   * and re-resolving it would be the bug rather than the fix.
+   */
+  whenDate: string | null;
+  /**
    * Whether `profiles.saveQuiz` actually stored these answers. False after a
    * signed-out visitor finishes the quiz, which is what lets `/start` retry the
    * save once they have an identity instead of silently throwing the answers
@@ -70,6 +81,7 @@ export const EMPTY_DRAFT: FunnelDraft = {
   radiusKm: 5,
   whenId: "tonight",
   whenMinutes: null,
+  whenDate: null,
   quizSaved: false,
 };
 
@@ -125,6 +137,7 @@ export function parseDraft(raw: string | null): FunnelDraft | null {
     // preset TIME, an unknown one has to be refused where the rest are.
     whenId: oneOf(d.whenId, WHEN_IDS, EMPTY_DRAFT.whenId),
     whenMinutes: isValidMinutes(d.whenMinutes) ? d.whenMinutes : EMPTY_DRAFT.whenMinutes,
+    whenDate: isValidDateValue(d.whenDate) ? d.whenDate : EMPTY_DRAFT.whenDate,
     quizSaved: d.quizSaved === true,
   };
 }

@@ -12,7 +12,13 @@ import {
   type FunnelDraft,
   type Step,
 } from "@/lib/start/funnel";
-import { WHEN_IDS, WHEN_LABELS, inputValueToMinutes } from "@/lib/start/when";
+import {
+  WHEN_IDS,
+  WHEN_LABELS,
+  dateToInputValue,
+  inputValueToMinutes,
+  isValidDateValue,
+} from "@/lib/start/when";
 import type { UsePaginatedQueryReturnType } from "convex/react";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
@@ -37,6 +43,7 @@ export type StepViewsProps = {
   budget: FunnelDraft["budget"];
   whenId: FunnelDraft["whenId"];
   whenValue: string;
+  whenDate: FunnelDraft["whenDate"];
   radiusKm: FunnelDraft["radiusKm"];
   busy: boolean;
   lookingForRoom: boolean;
@@ -308,6 +315,7 @@ function ConstraintsStep({
   budget,
   whenId,
   whenValue,
+  whenDate,
   radiusKm,
   busy,
   edit,
@@ -365,21 +373,58 @@ function ConstraintsStep({
               <Chip
                 key={id}
                 selected={whenId === id}
-                onClick={() => edit({ whenId: id, whenMinutes: null })}
+                /* Picking a day seeds the field with today, so the chip never
+                   opens onto an empty date that resolves to a day nobody
+                   chose. `new Date()` is safe in a click handler for the
+                   reason it is not safe in this file's render: nothing here
+                   has to match server-rendered HTML.
+
+                   `whenDate ?? ...` and not a plain assignment, because
+                   coming back to the chip after moving off it should return
+                   the day already chosen rather than reset to today. */
+                onClick={() =>
+                  edit({
+                    whenId: id,
+                    whenMinutes: null,
+                    whenDate: id === "custom" ? (whenDate ?? dateToInputValue(new Date())) : null,
+                  })
+                }
               >
                 {WHEN_LABELS[id]}
               </Chip>
             ))}
           </div>
-          <label className="flex items-center gap-3 text-[13px] text-dim">
-            Start at
-            <input
-              type="time"
-              value={whenValue}
-              onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
-              className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
-            />
-          </label>
+          {/* The date only when a date was asked for. The three presets NAME
+              their day -- a date field beside "Tomorrow" is either redundant
+              or a second answer contradicting the first. `flex-wrap` because
+              a date and a time together need about 300px, which is more than
+              this fieldset gets in the two-column layout at `lg`. */}
+          <div className="flex flex-wrap items-center gap-3">
+            {whenId === "custom" ? (
+              <label className="flex items-center gap-3 text-[13px] text-dim">
+                On
+                <input
+                  type="date"
+                  value={whenDate ?? ""}
+                  onChange={(e) =>
+                    edit({
+                      whenDate: isValidDateValue(e.target.value) ? e.target.value : null,
+                    })
+                  }
+                  className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+                />
+              </label>
+            ) : null}
+            <label className="flex items-center gap-3 text-[13px] text-dim">
+              Start at
+              <input
+                type="time"
+                value={whenValue}
+                onChange={(e) => edit({ whenMinutes: inputValueToMinutes(e.target.value) })}
+                className="num min-h-[44px] min-w-[44px] rounded-[5px] border border-dim bg-transparent px-3 py-2 text-[14px] text-text"
+              />
+            </label>
+          </div>
         </fieldset>
 
         <fieldset className="flex flex-col gap-3 border-0 p-0">

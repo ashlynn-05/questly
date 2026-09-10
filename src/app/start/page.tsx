@@ -115,7 +115,7 @@ function StartFunnel() {
   }
 
   const { answers, cardIndex, goals, mood, visibility, headcount, budget, radiusKm } = draft;
-  const { whenId, whenMinutes } = draft;
+  const { whenId, whenMinutes, whenDate } = draft;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -266,7 +266,7 @@ function StartFunnel() {
     // Resolved here, against the clock as it is NOW -- not at mount, and not
     // when the chip was tapped. Somebody who sat on this screen while the hour
     // turned gets the time they are looking at, not the one they arrived with.
-    const whenAt = resolveWhenAt(whenId, whenMinutes, new Date());
+    const whenAt = resolveWhenAt(whenId, whenMinutes, new Date(), whenDate);
     // The server refuses this too, and the server is the rule -- but a refusal
     // that arrives after a round trip, on a screen that has already said
     // "Opening...", is a worse way to learn you typed 6:30 when you meant
@@ -425,6 +425,7 @@ function StartFunnel() {
             budget={budget}
             whenId={whenId}
             whenValue={whenValue}
+            whenDate={whenDate}
             radiusKm={radiusKm}
             busy={busy}
             lookingForRoom={lookingForRoom}

@@ -1,8 +1,10 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   PRESET_MINUTES,
+  dateToInputValue,
   dayOffset,
   inputValueToMinutes,
+  isValidDateValue,
   isInThePast,
   isValidMinutes,
   minutesToInputValue,
@@ -159,4 +161,69 @@ test("the same clock face on a different day is still labelled differently", () 
   const tonight = resolveWhenAt("tonight", 18 * 60, WEDNESDAY);
   const tomorrow = resolveWhenAt("tomorrow", 18 * 60, WEDNESDAY);
   expect(roomWhenLabel(tonight, WEDNESDAY)).not.toBe(roomWhenLabel(tomorrow, WEDNESDAY));
+});
+
+describe("a day the host picked", () => {
+  // Every date below is built with local parts. An ISO string would be UTC,
+  // which is a different day for most of the world for part of every day, and
+  // this whole module reads the clock the host is standing next to.
+  const NOW = new Date(2026, 8, 11, 23, 40); // Fri 11 Sep 2026, 11:40pm
+
+  test("resolves to the chosen day at the chosen time, not to an offset from today", () => {
+    const at = new Date(resolveWhenAt("custom", 19 * 60, NOW, "2026-10-03"));
+    expect([at.getFullYear(), at.getMonth(), at.getDate()]).toEqual([2026, 9, 3]);
+    expect([at.getHours(), at.getMinutes()]).toEqual([19, 0]);
+  });
+
+  test("a chosen day with no time of day opens in the evening", () => {
+    const at = new Date(resolveWhenAt("custom", null, NOW, "2026-10-03"));
+    expect([at.getHours(), at.getMinutes()]).toEqual([18, 30]);
+  });
+
+  // 11 Sep is the 11th; October has 31 days and so does August, but the same
+  // code path applied to the 31st of a month has to reach a 30-day month
+  // without passing through the next one.
+  test("a short target month does not roll the date into the following one", () => {
+    const endOfMonth = new Date(2026, 6, 31, 9, 0); // Fri 31 Jul 2026
+    const at = new Date(resolveWhenAt("custom", 12 * 60, endOfMonth, "2026-11-05"));
+    expect([at.getFullYear(), at.getMonth(), at.getDate()]).toEqual([2026, 10, 5]);
+  });
+
+  test("no date, or a date nobody could keep, falls back to today", () => {
+    for (const date of [null, "", "2026-02-31", "3/10/2026"]) {
+      const at = new Date(resolveWhenAt("custom", 20 * 60, NOW, date));
+      expect([at.getMonth(), at.getDate()]).toEqual([8, 11]);
+    }
+  });
+
+  // A date is only a date for the one id that asks for one. The three presets
+  // name their own day and must not be overruled by a value left behind.
+  test("a preset ignores a date left over from a custom pick", () => {
+    const at = new Date(resolveWhenAt("tomorrow", null, NOW, "2026-10-03"));
+    expect([at.getMonth(), at.getDate()]).toEqual([8, 12]);
+  });
+
+  test("a chosen day that has gone is in the past like any other", () => {
+    const at = resolveWhenAt("custom", 18 * 60, NOW, "2026-09-01");
+    expect(isInThePast(at, NOW.getTime())).toBe(true);
+  });
+});
+
+describe("the date bridge", () => {
+  test("writes local parts, so the day is the day the host is having", () => {
+    // 11:40pm in Melbourne is the 11th; the same instant in UTC is the 11th
+    // too only some of the year, and `toISOString` would be a coin flip.
+    expect(dateToInputValue(new Date(2026, 0, 5, 23, 40))).toBe("2026-01-05");
+    expect(dateToInputValue(new Date(2026, 11, 31, 0, 5))).toBe("2026-12-31");
+  });
+
+  test("accepts a real day and refuses everything else", () => {
+    expect(isValidDateValue("2026-10-03")).toBe(true);
+    expect(isValidDateValue("2024-02-29")).toBe(true);
+    expect(isValidDateValue("2026-02-29")).toBe(false);
+    expect(isValidDateValue("2026-13-01")).toBe(false);
+    expect(isValidDateValue("2026-10-3")).toBe(false);
+    expect(isValidDateValue(20261003)).toBe(false);
+    expect(isValidDateValue(null)).toBe(false);
+  });
 });

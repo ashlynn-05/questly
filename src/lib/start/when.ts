@@ -21,13 +21,14 @@
  * a seeded room has no person behind it to have a clock.
  */
 
-export const WHEN_IDS = ["tonight", "tomorrow", "weekend"] as const;
+export const WHEN_IDS = ["tonight", "tomorrow", "weekend", "custom"] as const;
 export type WhenId = (typeof WHEN_IDS)[number];
 
 export const WHEN_LABELS: Record<WhenId, string> = {
   tonight: "Tonight",
   tomorrow: "Tomorrow",
   weekend: "This weekend",
+  custom: "Another day",
 };
 
 /**
@@ -39,6 +40,9 @@ export const PRESET_MINUTES: Record<WhenId, number> = {
   tonight: 18 * 60 + 30,
   tomorrow: 18 * 60 + 30,
   weekend: 14 * 60,
+  // A chosen date says which day and nothing about the hour, so it opens on the
+  // same evening the two weekday chips do and the host moves it from there.
+  custom: 18 * 60 + 30,
 };
 
 const MINUTES_IN_DAY = 24 * 60;
@@ -52,6 +56,11 @@ const MINUTES_IN_DAY = 24 * 60;
  * "today at 2pm" is what the "Tonight" chip is for.
  */
 export function dayOffset(id: WhenId, now: Date): number {
+  // `custom` carries its own date and never asks this. Zero is what it gets if
+  // the date is missing or unparseable, which makes an unanswered custom pick
+  // behave as today -- visible in the field, and caught by `isInThePast` the
+  // moment today's slot has gone.
+  if (id === "custom") return 0;
   if (id === "tomorrow") return 1;
   if (id === "weekend") return (6 - now.getDay() + 7) % 7 || 7;
   return 0;
@@ -63,12 +72,55 @@ export function dayOffset(id: WhenId, now: Date): number {
  * `minutes` of `null` means "follow the preset", which is what tapping a chip
  * restores -- so the fast path produces exactly the timestamp it always did.
  */
-export function resolveWhenAt(id: WhenId, minutes: number | null, now: Date): number {
+export function resolveWhenAt(
+  id: WhenId,
+  minutes: number | null,
+  now: Date,
+  date: string | null = null,
+): number {
   const sinceMidnight = minutes ?? PRESET_MINUTES[id];
   const d = new Date(now.getTime());
-  d.setDate(d.getDate() + dayOffset(id, now));
+  if (id === "custom" && isValidDateValue(date)) {
+    // All three parts at once, because setting them one at a time walks
+    // through invalid dates: the 31st of a month, moved to a 30-day month,
+    // rolls into the next one before the day is written.
+    const [year, month, day] = date.split("-").map(Number);
+    d.setFullYear(year, month - 1, day);
+  } else {
+    d.setDate(d.getDate() + dayOffset(id, now));
+  }
   d.setHours(Math.floor(sinceMidnight / 60), sinceMidnight % 60, 0, 0);
   return d.getTime();
+}
+
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * The `YYYY-MM-DD` an `<input type="date">` reads and writes, and a real day.
+ *
+ * The shape check is not enough on its own: `2026-02-31` matches it and is not
+ * a date. Building it and asking whether the parts survived is what catches
+ * that -- a rolled-over date reports a different month. This is the guard on a
+ * value that comes back out of `sessionStorage`, so it is as strict as the
+ * allow-lists every other constrained field goes through.
+ */
+export function isValidDateValue(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = DATE_PATTERN.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const d = new Date(year, month - 1, day);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
+/**
+ * The same bridge the other way. Local parts, never `toISOString`, which is UTC
+ * and therefore the wrong day for anyone east of Greenwich after their morning.
+ */
+export function dateToInputValue(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 /**
