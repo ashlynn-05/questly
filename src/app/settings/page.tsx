@@ -208,12 +208,8 @@ export default function SettingsPage() {
   }
 
   return (
-    /* A 520px measure rather than the shell's 940. Every section on this page
-       is a label and one control, and a switch three feet to the right of the
-       sentence that names it is a switch nobody is sure they read correctly.
-       The nav on the left is what fills the rest of the width. */
     <Screen nav={<ShellNav route="settings" />}>
-      <div className="flex w-full flex-col gap-8 lg:max-w-[520px]">
+      <div className="flex w-full flex-col gap-8">
         {/* The way back, at the top where a back control belongs, drawn rather
             than written. It used to be the words "Back to Questly" at the very
             bottom of the page -- past six sections, reachable only by scrolling
@@ -243,103 +239,138 @@ export default function SettingsPage() {
           {error ?? ""}
         </p>
 
-        <SettingsProfileSection
-          user={user}
-          profile={profile}
-          displayName={displayName}
-          busy={busy}
-          saved={saved}
-          uploading={uploading}
-          fileInput={fileInput}
-          setName={setName}
-          setSaved={setSaved}
-          saveName={saveName}
-          uploadAvatar={uploadAvatar}
-          removeAvatar={removeAvatar}
-        />
+        {/* Two columns from `lg`. One column of sections was right when the
+          shell was a phone-width sheet and stayed right at 1024px, where 520px
+          of measure and a 236px nav account for most of the window. It stops
+          being right above that: at 1440px it left 420px of the body empty and
+          at 1856px it left 836px, so the page read as a phone screen someone
+          had parked on the left of a monitor.
 
-        <SettingsAnswersSection profile={profile} />
+          The 520px ruling it replaces was about DISTANCE, not about one column:
+          every section here is a label and one control, and a switch three feet
+          to the right of the sentence naming it is a switch nobody is sure they
+          read correctly. Two columns of 446px keep every control closer to its
+          own label than 520px ever did.
 
-        <SettingsPushSection />
+          The split is by what you are there to do. Left is who you are: the
+          account, the picture, the name, and the answers that score every venue
+          you will ever be shown. Right is what this browser holds -- what it
+          notifies, what rooms it can see, and how to end both -- which is the
+          division the nav beside it already labels in so many words.
 
-        <Section id="rooms" title="Your rooms" topic="rooms">
-          {rooms === undefined ? (
-            <p className="text-[13px] text-dim">Looking…</p>
-          ) : rooms.length === 0 ? (
-            <p className="text-[13px] leading-snug text-dim">
-              No rooms yet. Start one and it will be here.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {rooms.map((room) => (
-                <Plate
-                  key={room.code}
-                  variant="raised"
-                  href={`/room/${room.code}`}
-                  label={`${MOOD_LABEL[room.mood] ?? room.mood}${room.isHost ? " · yours" : ""}`}
-                  sub={`${STATUS_LABEL[room.status] ?? room.status} · ${roomWhen(room.whenAt)}${
-                    room.demo ? " · demonstration room" : ""
-                  }`}
-                  right={room.code}
+          The two halves do not come out the same height, and balancing them is
+          not worth what it costs: the only section long enough to even the
+          columns is Leaving, and moving it changes the order on a PHONE, where
+          it would put "Delete my account" above the room list. The rule here is
+          that the phone owns its own layout, so DOM order is the phone's order
+          and the laptop takes the ragged bottom edge.
+
+          `contents` below `lg`, so both levels of wrapper are inert there and
+          the five sections stay direct children of one flex column. */}
+        <div className="contents lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-12">
+          <div className="contents lg:flex lg:flex-col lg:gap-8">
+            <SettingsProfileSection
+              user={user}
+              profile={profile}
+              displayName={displayName}
+              busy={busy}
+              saved={saved}
+              uploading={uploading}
+              fileInput={fileInput}
+              setName={setName}
+              setSaved={setSaved}
+              saveName={saveName}
+              uploadAvatar={uploadAvatar}
+              removeAvatar={removeAvatar}
+            />
+
+            <SettingsAnswersSection profile={profile} />
+
+          </div>
+
+          <div className="contents lg:flex lg:flex-col lg:gap-8">
+            <SettingsPushSection />
+
+            <Section id="rooms" title="Your rooms" topic="rooms">
+              {rooms === undefined ? (
+                <p className="text-[13px] text-dim">Looking…</p>
+              ) : rooms.length === 0 ? (
+                <p className="text-[13px] leading-snug text-dim">
+                  No rooms yet. Start one and it will be here.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {rooms.map((room) => (
+                    <Plate
+                      key={room.code}
+                      variant="raised"
+                      href={`/room/${room.code}`}
+                      label={`${MOOD_LABEL[room.mood] ?? room.mood}${room.isHost ? " · yours" : ""}`}
+                      sub={`${STATUS_LABEL[room.status] ?? room.status} · ${roomWhen(room.whenAt)}${
+                        room.demo ? " · demonstration room" : ""
+                      }`}
+                      right={room.code}
+                    />
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            {/* `id` as well as the heading's own: the account menu's "Delete
+                account" navigates to /settings#leaving rather than deleting from a
+                dropdown, and this is what it lands on. */}
+            <Section id="leaving" title="Leaving">
+              {/* Each row is control-then-question-mark, so the two things that end a
+                  session sit on the same line as the sentence explaining what they
+                  cost. They used to be a button followed by a paragraph, which put
+                  the warning BELOW the control it was warning about. */}
+              {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+                  area rather than indent: without it these two labels start three
+                  pixels in from the column every other row in this screen is flush
+                  with. The negative margin is on the row so it holds in the armed
+                  state too, where the trigger is replaced by two buttons. */}
+              <div className="-ml-3 flex items-center justify-between gap-3">
+                <ConfirmButton
+                  label="Sign out"
+                  confirmLabel="Yes, sign out"
+                  cancelLabel="Stay signed in"
+                  onConfirm={async () => {
+                    await signOut();
+                    return "gone";
+                  }}
                 />
-              ))}
-            </div>
-          )}
-        </Section>
+                <Hint topic="signout" />
+              </div>
 
-        {/* `id` as well as the heading's own: the account menu's "Delete
-            account" navigates to /settings#leaving rather than deleting from a
-            dropdown, and this is what it lands on. */}
-        <Section id="leaving" title="Leaving">
-          {/* Each row is control-then-question-mark, so the two things that end a
-              session sit on the same line as the sentence explaining what they
-              cost. They used to be a button followed by a paragraph, which put
-              the warning BELOW the control it was warning about. */}
-          {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
-              area rather than indent: without it these two labels start three
-              pixels in from the column every other row in this screen is flush
-              with. The negative margin is on the row so it holds in the armed
-              state too, where the trigger is replaced by two buttons. */}
-          <div className="-ml-3 flex items-center justify-between gap-3">
-            <ConfirmButton
-              label="Sign out"
-              confirmLabel="Yes, sign out"
-              cancelLabel="Stay signed in"
-              onConfirm={async () => {
-                await signOut();
-                return "gone";
-              }}
-            />
-            <Hint topic="signout" />
+              {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
+                  area rather than indent: without it these two labels start three
+                  pixels in from the column every other row in this screen is flush
+                  with. The negative margin is on the row so it holds in the armed
+                  state too, where the trigger is replaced by two buttons. */}
+              <div className="-ml-3 flex items-center justify-between gap-3">
+                <ConfirmButton
+                  label="Delete my account"
+                  confirmLabel="Yes, delete it"
+                  cancelLabel="Keep my account"
+                  onConfirm={async () => {
+                    setError(null);
+                    try {
+                      await deleteAccount({});
+                    } catch (e) {
+                      setError(userMessage(e, "Could not delete the account. Please try again."));
+                      return "trigger";
+                    }
+                    clearLocalState();
+                    await authClient.signOut();
+                    router.push("/");
+                    return "gone";
+                  }}
+                />
+                <Hint topic="deletion" />
+              </div>
+            </Section>
           </div>
-
-          {/* `-ml-3` cancels ConfirmButton's own left padding, which is target
-              area rather than indent: without it these two labels start three
-              pixels in from the column every other row in this screen is flush
-              with. The negative margin is on the row so it holds in the armed
-              state too, where the trigger is replaced by two buttons. */}
-          <div className="-ml-3 flex items-center justify-between gap-3">
-            <ConfirmButton
-              label="Delete my account"
-              confirmLabel="Yes, delete it"
-              cancelLabel="Keep my account"
-              onConfirm={async () => {
-                setError(null);
-                try {
-                  await deleteAccount({});
-                } catch (e) {
-                  setError(userMessage(e, "Could not delete the account. Please try again."));
-                  return "trigger";
-                }
-                clearLocalState();
-                await authClient.signOut();
-                router.push("/");
-                return "gone";
-              }}
-            />
-            <Hint topic="deletion" />
-          </div>
-        </Section>
+        </div>
       </div>
     </Screen>
   );
