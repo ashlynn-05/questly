@@ -114,16 +114,16 @@ function MoodStep({ headingRef, mood, goTo }: StepViewsProps) {
       >
         What kind of night?
       </h1>
-      {/* Two columns from `lg` and not `auto-fit`: there are exactly four
-          moods, and every auto-fit track that fits this measure lands on three
-          columns, which leaves one mood alone on a second row looking like an
-          afterthought. Two-by-two is the same block the constraints step
-          already draws, and the four options stay visibly equal -- which they
-          are, since this is the one question with no wrong answer.
+      {/* Three columns from `lg`, one per activity, and the count is the
+          reason. This was two-by-two when there were four moods; three in a
+          two-column grid puts the last one alone on a second row beside an
+          empty cell, which is the afterthought the original grid was chosen to
+          avoid. One row keeps the three visibly equal -- which they are, since
+          this is the one question with no wrong answer.
 
           Mobile classes first and unchanged: below `lg` this is the same
           `flex flex-col gap-2` stack it has always been. */}
-      <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3">
+      <div className="flex flex-col gap-2 lg:grid lg:grid-cols-3 lg:gap-3">
         {MOODS.map((m) => (
           <Plate
             key={m.id}
@@ -149,7 +149,7 @@ function PartyStep({ headingRef, company, busy, goTo }: StepViewsProps) {
         id="party-heading"
         ref={headingRef}
         tabIndex={-1}
-        className="display text-[38px] text-text"
+        className="display text-[38px] text-text lg:text-[48px]"
       >
         Alone, or with people?
       </h1>

@@ -3,6 +3,7 @@ import {
   isJoinReason,
   roomRedirect,
   shouldStartSoloBuild,
+  shownStatus,
   statusTransition,
   waitingScreen,
 } from "../../../../src/lib/room/room";
@@ -115,6 +116,24 @@ test("a room that has started waits for nothing", () => {
   for (const status of ["swiping", "matched", "booked"]) {
     expect(waitingScreen({ status, headcount: 1 })).toBeNull();
     expect(waitingScreen({ status, headcount: 4 })).toBeNull();
+  }
+});
+
+// The band above the room and the column beside it both name a place, and both
+// used to read `room.status`. A solo room holds `lobby` and draws the build
+// screen, so reading the stored status put the band on Room while the screen
+// said "Building the deck" -- and a failed build hands the room back to `lobby`,
+// so it stayed wrong rather than flickering.
+test("what the room is drawing is what the band and the column are told", () => {
+  expect(shownStatus({ status: "lobby", headcount: 1 })).toBe("building");
+  expect(shownStatus({ status: "lobby", headcount: 4 })).toBe("lobby");
+  expect(shownStatus({ status: "building", headcount: 1 })).toBe("building");
+});
+
+test("a room that has started reports the status it holds", () => {
+  for (const status of ["swiping", "matched", "booked"] as const) {
+    expect(shownStatus({ status, headcount: 1 })).toBe(status);
+    expect(shownStatus({ status, headcount: 4 })).toBe(status);
   }
 });
 

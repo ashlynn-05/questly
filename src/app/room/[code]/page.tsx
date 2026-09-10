@@ -11,7 +11,13 @@ import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { Journey } from "@/components/questly/Journey";
 import { ShellNav } from "@/components/questly/ShellNav";
 import { errorCode, userMessage } from "@/lib/errors";
-import { roomRedirect, shouldStartSoloBuild, statusTransition, waitingScreen } from "@/lib/room/room";
+import {
+  roomRedirect,
+  shouldStartSoloBuild,
+  shownStatus,
+  statusTransition,
+  waitingScreen,
+} from "@/lib/room/room";
 import { moneyLabel } from "@/lib/room/share";
 import { useSessionKey } from "@/hooks/useSessionKey";
 import { useAwaySeats } from "@/lib/room/presence";
@@ -195,14 +201,20 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
 
   const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
 
+  /**
+   * The screen this room is ACTUALLY showing, which is not always its status.
+   *
+   * A solo room sits at `lobby` and draws the build screen, because it has no
+   * lobby to draw (see `waitingScreen`). The band above the room and the column
+   * beside it have to agree with what is on screen rather than with the column
+   * in the database -- otherwise going alone lands you on "Building the deck"
+   * under a band that says Room, and a failed build leaves it there.
+   */
+  const shown = shownStatus(view.room);
+
   // `building` is the deck arriving, not a place anybody stands, so it shares
   // the swipe stop rather than inventing a ninth one.
-  const at =
-    view.room.status === "lobby"
-      ? ("room" as const)
-      : view.room.status === "building"
-        ? ("swiping" as const)
-        : view.room.status;
+  const at = shown === "lobby" ? ("room" as const) : shown === "building" ? ("swiping" as const) : shown;
 
   // One route, driven entirely by room.status: the same URL is the lobby, the
   // deck, the plan and the booking, so a shared link never goes stale.
@@ -217,7 +229,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
           route="room"
           ctx={{
             roomCode: code,
-            roomStatus: view.room.status,
+            roomStatus: shown,
             swiped: view.progress.swipedByYou,
             deckSize: view.progress.deckSize,
             planTotal: view.plan ? moneyLabel(view.plan.totalPerHeadCents) : null,

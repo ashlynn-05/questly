@@ -21,8 +21,8 @@ function room(code: string, over: Partial<MyRoom> = {}): MyRoom {
 
 describe("navRoomsModel", () => {
   test("says the moods and statuses in the same words the settings screen uses", () => {
-    const { rows } = navRoomsModel([room("8363", { mood: "treat", status: "booked" })]);
-    expect(rows[0].label).toBe(MOOD_LABEL.treat);
+    const { rows } = navRoomsModel([room("8363", { mood: "hangout", status: "booked" })]);
+    expect(rows[0].label).toBe(MOOD_LABEL.hangout);
     expect(rows[0].sub).toBe(STATUS_LABEL.booked);
   });
 
