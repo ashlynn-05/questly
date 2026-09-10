@@ -6,6 +6,7 @@ import { api, internal } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
 import { EMBEDDING_MODEL } from "../../convex/lib/openai";
+import type { Mood } from "../../convex/lib/deck/scoring";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
@@ -23,7 +24,7 @@ type Harness = TestConvex<typeof schema>;
 
 /** The one search every room in these tests asks, unless it says otherwise. */
 const SEARCH: {
-  mood: "grass" | "meet" | "treat" | "new";
+  mood: Mood;
   budgetPerHeadCents: number;
   centreLat: number;
   centreLng: number;
@@ -115,9 +116,27 @@ function noNetwork() {
   return { fetchMock, restore: () => { globalThis.fetch = originalFetch; } };
 }
 
+/**
+ * The deck as it was STORED, in rank order.
+ *
+ * Reads the table rather than `rooms.get`. These tests are about which cached
+ * rows a room reused and how it re-scored them, and `rooms.get` deliberately
+ * projects none of `placeId`, `rank` or `score` -- no card renders them, and
+ * how a venue was ranked is commercial detail. Asserting the cache through the
+ * browser's projection would tie this file to a contract it is not testing.
+ */
 const deckOf = async (t: Harness, code: string) => {
-  const view = await t.query(api.rooms.get, { code, sessionKey: "hostkey" });
-  return view!.quests;
+  return await t.run(async (ctx) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_code", (q) => q.eq("code", code))
+      .unique();
+    return await ctx.db
+      .query("quests")
+      .withIndex("by_room_rank", (q) => q.eq("roomId", room!._id))
+      .order("asc")
+      .collect();
+  });
 };
 
 test("a matching recent deck is reused", async () => {
@@ -144,7 +163,7 @@ test("a deck built for a different mood is not reused", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
   await donorRoom(t, { builtAt: Date.now() });
-  const roomId = await freshRoom(t, "8890", { mood: "treat" });
+  const roomId = await freshRoom(t, "8890", { mood: "hangout" });
   expect(await t.query(internal.deck.recentDeck, { roomId, now: Date.now() })).toBeNull();
 });
 
@@ -177,11 +196,11 @@ test("build reuses a cached deck instead of calling Places or OpenAI", async () 
     expect(result).toEqual({ deckSize: 1 });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // Confirmed through the same query the room screen subscribes to, not by
-    // reaching into ctx.db.
+    // The room really opened for swiping -- confirmed through the same query
+    // the room screen subscribes to -- and it opened on the borrowed rows.
     const view = await t.query(api.rooms.get, { code: "8891", sessionKey: "hostkey" });
-    expect(view!.quests.map((q) => q.placeId)).toEqual(["cached"]);
     expect(view!.room.status).toBe("swiping");
+    expect((await deckOf(t, "8891")).map((q) => q.placeId)).toEqual(["cached"]);
   } finally {
     restore();
   }
@@ -543,7 +562,7 @@ test("a superseded build cannot overwrite a deck built from cache", async () => 
     await t.action(api.deck.build, { code: "8899", sessionKey: "hostkey" });
     const view = await t.query(api.rooms.get, { code: "8899", sessionKey: "hostkey" });
     expect(view!.room.status).toBe("swiping");
-    expect(view!.quests.map((q) => q.placeId)).toEqual(["cached"]);
+    expect((await deckOf(t, "8899")).map((q) => q.placeId)).toEqual(["cached"]);
 
     // Build #1 wakes up holding a token the room no longer honours.
     const wrote = await t.mutation(internal.deck.insert, {

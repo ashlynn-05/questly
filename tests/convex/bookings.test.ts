@@ -63,7 +63,7 @@ async function matchedRoom(
   const names = over.members ?? ["Bec", "Tam"];
   const ids = await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u1", mood: "treat", headcount: names.length, budgetPerHeadCents: 3000,
+      hostUserId: "u1", mood: "hangout", headcount: names.length, budgetPerHeadCents: 3000,
       whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
       visibility: "private", status: "matched", code: "6666",
     });
@@ -177,7 +177,7 @@ test("a room with no match cannot be booked", async () => {
   registerComponents(t);
   await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u1", mood: "treat", headcount: 1, budgetPerHeadCents: 0,
+      hostUserId: "u1", mood: "hangout", headcount: 1, budgetPerHeadCents: 0,
       whenAt: START, centreLat: 0, centreLng: 0, radiusKm: 5,
       visibility: "private", status: "swiping", code: "7777",
     });
@@ -503,7 +503,7 @@ test("booking is refused until the plan the group can see actually exists", asyn
   try {
     const questId = await t.run(async (ctx) => {
       const roomId = await ctx.db.insert("rooms", {
-        hostUserId: "u1", mood: "treat", headcount: 2, budgetPerHeadCents: 3000,
+        hostUserId: "u1", mood: "hangout", headcount: 2, budgetPerHeadCents: 3000,
         whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
         visibility: "private", status: "swiping", code: "9191",
       });
@@ -902,7 +902,7 @@ test("a room with no plan yet records no vote, whatever the rule is", async () =
   registerComponents(t);
   const ids = await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u1", mood: "treat", headcount: 2, budgetPerHeadCents: 3000,
+      hostUserId: "u1", mood: "hangout", headcount: 2, budgetPerHeadCents: 3000,
       whenAt: START, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
       visibility: "private", status: "matched", code: "5151",
       finalizeRule: "all",

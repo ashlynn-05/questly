@@ -13,7 +13,7 @@ export const PARTNERS = [
     lat: -37.8003, lng: 144.9674,
     priceFromCents: 1800, discountPct: 25,
     offerText: "25% off the kitchen, Tuesday to Thursday",
-    partnerTier: 3, moods: ["treat" as const], active: true,
+    partnerTier: 3, moods: ["hangout" as const], active: true,
   },
   {
     placeId: "questly-demo-nightjar",
@@ -21,7 +21,7 @@ export const PARTNERS = [
     lat: -37.7986, lng: 144.9784,
     priceFromCents: 1400, discountPct: 20,
     offerText: "First round on the house for groups of four",
-    partnerTier: 3, moods: ["meet" as const], active: true,
+    partnerTier: 3, moods: ["hangout" as const], active: true,
   },
   {
     placeId: "questly-demo-second-wind",
@@ -29,7 +29,7 @@ export const PARTNERS = [
     lat: -37.7667, lng: 144.9601,
     priceFromCents: 1600, discountPct: 15,
     offerText: "15% off midweek bookings",
-    partnerTier: 2, moods: ["meet" as const, "treat" as const], active: true,
+    partnerTier: 2, moods: ["hangout" as const], active: true,
   },
   {
     placeId: "questly-demo-quarry-loop",
@@ -45,7 +45,7 @@ export const PARTNERS = [
     lat: -37.8677, lng: 144.9740,
     priceFromCents: 0, discountPct: 0,
     offerText: "Free. Bring a towel",
-    partnerTier: 1, moods: ["grass" as const, "new" as const], active: true,
+    partnerTier: 1, moods: ["grass" as const, "sidequest" as const], active: true,
   },
   {
     placeId: "questly-demo-paper-lantern",
@@ -53,7 +53,7 @@ export const PARTNERS = [
     lat: -37.8118, lng: 144.9656,
     priceFromCents: 2200, discountPct: 30,
     offerText: "30% off the set menu before 7pm",
-    partnerTier: 3, moods: ["treat" as const], active: true,
+    partnerTier: 3, moods: ["hangout" as const], active: true,
   },
   {
     placeId: "questly-demo-throwing-range",
@@ -61,7 +61,7 @@ export const PARTNERS = [
     lat: -37.8016, lng: 144.9877,
     priceFromCents: 2500, discountPct: 20,
     offerText: "20% off a lane for groups of four or more",
-    partnerTier: 2, moods: ["new" as const, "meet" as const], active: true,
+    partnerTier: 2, moods: ["sidequest" as const, "hangout" as const], active: true,
   },
   {
     placeId: "questly-demo-glasshouse",
@@ -69,7 +69,7 @@ export const PARTNERS = [
     lat: -37.8036, lng: 144.9975,
     priceFromCents: 3500, discountPct: 25,
     offerText: "25% off a two-hour beginners class",
-    partnerTier: 2, moods: ["new" as const], active: true,
+    partnerTier: 2, moods: ["sidequest" as const], active: true,
   },
   {
     placeId: "questly-demo-fig-lane",
@@ -105,9 +105,9 @@ export const PARTNERS = [
  */
 const DEMO_ROOMS = [
   { code: "1001", mood: "grass" as const, headcount: 4, budgetPerHeadCents: 0 },
-  { code: "1002", mood: "meet" as const, headcount: 6, budgetPerHeadCents: 3000 },
-  { code: "1003", mood: "treat" as const, headcount: 4, budgetPerHeadCents: 5000 },
-  { code: "1004", mood: "new" as const, headcount: 5, budgetPerHeadCents: 3000 },
+  { code: "1002", mood: "hangout" as const, headcount: 6, budgetPerHeadCents: 3000 },
+  { code: "1003", mood: "sidequest" as const, headcount: 4, budgetPerHeadCents: 5000 },
+  { code: "1004", mood: "sidequest" as const, headcount: 5, budgetPerHeadCents: 3000 },
 ];
 
 const MELBOURNE_TZ = "Australia/Melbourne";

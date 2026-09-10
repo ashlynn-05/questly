@@ -14,7 +14,9 @@ import {
   DECK_SIZE,
   FREE_TYPES,
   MOOD_TYPES,
+  type Mood,
   cosine,
+  normalizeMood,
   distanceKm,
   priceLevelToCents,
   scoreQuest,
@@ -264,7 +266,7 @@ type ActiveVenuePage = {
 
 async function loadActiveVenues(
   ctx: ActionCtx,
-  mood: Doc<"rooms">["mood"],
+  mood: Mood,
 ): Promise<Array<Doc<"venues">>> {
   const partners: Array<Doc<"venues">> = [];
   let activeCount = 0;
@@ -298,7 +300,7 @@ async function loadActiveVenues(
       );
     }
     for (const venue of page.page) {
-      if (venue.moods.includes(mood)) partners.push(venue);
+      if (venue.moods.some((m) => normalizeMood(m) === mood)) partners.push(venue);
     }
     if (page.isDone) return partners;
     cursor = page.continueCursor;
@@ -404,7 +406,7 @@ export async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: stri
   const { room, vectors, moodAffinity } = await ctx.runQuery(internal.deck.contextBase, {
     roomId,
   });
-  const partners = await loadActiveVenues(ctx, room.mood);
+  const partners = await loadActiveVenues(ctx, normalizeMood(room.mood));
   const rank = rankFor(room, moodAffinity);
 
   // A room that recently asked the same question -- same mood, radius, budget
@@ -435,7 +437,7 @@ export async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: stri
   }
 
   const free = room.budgetPerHeadCents === 0;
-  const includedTypes = free ? FREE_TYPES : MOOD_TYPES[room.mood];
+  const includedTypes = free ? FREE_TYPES : MOOD_TYPES[normalizeMood(room.mood)];
 
   const places = await ctx.runAction(internal.places.searchNearbyInternal, {
     lat: room.centreLat,
@@ -529,7 +531,7 @@ export async function buildDeck(ctx: ActionCtx, roomId: Id<"rooms">, token: stri
   // calls is the difference between a loading state and an abandoned room --
   // and because this is the last latency before the swipe, where none is
   // allowed at all.
-  const blurbs = await writeBlurbs(ctx, scored.map((c) => c.title), room.mood);
+  const blurbs = await writeBlurbs(ctx, scored.map((c) => c.title), normalizeMood(room.mood));
 
   return insertDeck(
     ctx,

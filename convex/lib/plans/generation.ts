@@ -2,6 +2,7 @@ import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { jsonCompletion } from "../openai";
+import { normalizeMood } from "../deck/scoring";
 import { isOverBudget } from "./stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse, type PlanInput } from "./prompt";
 import { isProviderReservationError, isRateLimitedError } from "../errors";
@@ -50,7 +51,7 @@ export async function generatePlan(ctx: ActionCtx, args: GeneratePlanArgs): Prom
         // all the way to the stop rather than becoming a number nobody quoted.
         anchorPriceCents: quest.priceCents ?? null,
         startAt: room.whenAt,
-        mood: room.mood,
+        mood: normalizeMood(room.mood),
       };
 
       // Charge only the build that won the room lease. Queued duplicates and

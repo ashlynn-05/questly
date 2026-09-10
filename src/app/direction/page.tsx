@@ -12,9 +12,8 @@ import { Rail, RailNode } from "@/components/questly/Rail";
 
 const MOODS = [
   { key: "grass", title: "Touch grass", sub: "Outside, moving, free" },
-  { key: "meet", title: "Meet people", sub: "Rooms with strangers in them" },
-  { key: "treat", title: "Treat yourself", sub: "Spend it on something good" },
-  { key: "new", title: "Do something new", sub: "You have not done this before" },
+  { key: "sidequest", title: "Random crazy sidequests", sub: "The detour, not the destination" },
+  { key: "hangout", title: "Hang-outs", sub: "One long table, or somewhere loud" },
 ];
 
 const BOARD = ["Sifting the deck", "Ranking on budget", "Princes Park"];

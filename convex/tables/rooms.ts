@@ -1,11 +1,11 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { moodValidator } from "../validators";
+import { storedMoodValidator } from "../validators";
 
 export const roomTables = {
   rooms: defineTable({
     hostUserId: v.string(),
-    mood: moodValidator,
+    mood: storedMoodValidator,
     headcount: v.number(),
     budgetPerHeadCents: v.number(),
     whenAt: v.number(),

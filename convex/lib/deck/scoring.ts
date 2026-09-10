@@ -3,7 +3,43 @@
  * directly and reasoned about on its own.
  */
 
-export type Mood = "grass" | "meet" | "treat" | "new";
+export type Mood = "grass" | "sidequest" | "hangout";
+
+/**
+ * The three activities, in the order the screen offers them.
+ *
+ * There were four, and two of them -- `meet` and `treat` -- described who you
+ * were with rather than what you were doing, which is now its own question one
+ * screen later. What is left is three things you can actually go and do.
+ */
+export const MOOD_IDS: readonly Mood[] = ["grass", "sidequest", "hangout"];
+
+/** Everything a stored row may hold: the three above, plus the four it replaced. */
+export type StoredMood = Mood | "meet" | "treat" | "new";
+
+const RETIRED: Record<"meet" | "treat" | "new", Mood> = {
+  // Both were kinds of company, and a room full of company is a hang-out.
+  meet: "hangout",
+  treat: "hangout",
+  // "Do something new" is the same idea as a sidequest, with less personality.
+  new: "sidequest",
+};
+
+/**
+ * A stored mood as one of the three the product now speaks.
+ *
+ * Every room and venue written before the taxonomy changed carries one of the
+ * retired ids, and `migrations.backfillMoods` rewrites them -- but a backfill
+ * takes time to run and the screens cannot be wrong while it does. So the
+ * translation lives at every read, and the backfill's job is to make this
+ * function a no-op rather than to make it unnecessary.
+ *
+ * DELETE THIS, and `storedMoodValidator` with it, once the backfill has run
+ * against every deployment. Nothing else keeps the retired ids alive.
+ */
+export function normalizeMood(stored: StoredMood): Mood {
+  return stored in RETIRED ? RETIRED[stored as keyof typeof RETIRED] : (stored as Mood);
+}
 
 /**
  * Cards in a room's deck. Long enough that a unanimous match feels earned,
@@ -18,9 +54,8 @@ export const DECK_SIZE = 9;
 /** Mood drives the Places query. It is a filter, not a theme. */
 export const MOOD_TYPES: Record<Mood, string[]> = {
   grass: ["park", "hiking_area", "beach", "garden"],
-  meet: ["bar", "night_club", "community_center", "cafe"],
-  treat: ["restaurant", "spa", "movie_theater", "bakery"],
-  new: ["art_gallery", "museum", "tourist_attraction", "bowling_alley"],
+  sidequest: ["amusement_park", "tourist_attraction", "museum", "art_gallery", "bowling_alley"],
+  hangout: ["bar", "cafe", "restaurant", "night_club", "bakery"],
 };
 
 /**

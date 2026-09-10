@@ -6,6 +6,7 @@
  * function of its input, so it can be unit-tested without a backend.
  */
 
+import type { Mood } from "../deck/scoring";
 import {
   UNNAMED_STOP,
   recomputeItinerary,
@@ -32,17 +33,16 @@ export type PlanInput = {
    */
   anchorPriceCents: number | null;
   startAt: number;
-  mood: "grass" | "meet" | "treat" | "new";
+  mood: Mood;
 };
 
 const SLOTS: Slot[] = ["meet", "main", "after"];
 
 /** What each mood actually asks for, in words the model can act on. */
-const MOOD_BRIEF: Record<PlanInput["mood"], string> = {
+const MOOD_BRIEF: Record<Mood, string> = {
   grass: "outdoors and unhurried -- parks, riverside, fresh air.",
-  meet: "easy to talk over -- somewhere a group can actually hear each other.",
-  treat: "a bit special, the night they will talk about afterwards.",
-  new: "somewhere they are unlikely to have been before.",
+  sidequest: "odd, specific and a little absurd -- the detour, not the destination.",
+  hangout: "easy to talk over -- one long table, or somewhere loud enough to lean in.",
 };
 
 export function buildPlanPrompt(input: PlanInput): string {

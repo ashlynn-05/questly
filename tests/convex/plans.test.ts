@@ -10,6 +10,7 @@ import { applyStopSwap } from "../../convex/lib/plans/swap";
 import { TRAVEL_BUFFER_MIN, type Stop } from "../../convex/lib/plans/stops";
 import { buildPlanPrompt, fallbackPlan, parsePlanResponse } from "../../convex/lib/plans/prompt";
 import { enqueuePlanGeneration } from "../../convex/lib/plans/queue";
+import type { Mood } from "../../convex/lib/deck/scoring";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 const START = 1_800_000_000_000;
@@ -190,7 +191,7 @@ async function seedRoom(
   t: T,
   over: {
     code?: string; headcount?: number; budgetPerHeadCents?: number; title?: string;
-    mood?: "grass" | "meet" | "treat" | "new";
+    mood?: Mood;
   } = {},
 ) {
   return await t.run(async (ctx) => {
@@ -884,7 +885,7 @@ async function seedMemberRoom(
   t: T,
   over: {
     code?: string; budgetPerHeadCents?: number; stops?: Stop[];
-    mood?: "grass" | "meet" | "treat" | "new";
+    mood?: Mood;
   } = {},
 ) {
   const code = over.code ?? "4446";
@@ -1279,7 +1280,7 @@ test("a $0 room that swaps in a paid venue can see that it is over budget", asyn
 
 /**
  * The mood fallback picks its search types the way `deck.build` does. A $0
- * "treat" room asked for MOOD_TYPES would be offered restaurants and spas --
+ * "hangout" room asked for MOOD_TYPES would be offered bars and cafes --
  * the fabricated-$0 honesty problem pointed the other way. A group who said
  * they have nothing to spend gets places that are genuinely free to enter.
  */
@@ -1304,7 +1305,7 @@ test("a $0 room's mood fallback asks for free places, not restaurants and spas",
 
   const { code } = await seedMemberRoom(t, {
     code: "4455",
-    mood: "treat",
+    mood: "hangout",
     budgetPerHeadCents: 0,
     stops: [stop({ id: "a", slot: "main", name: "Gate", placeId: "p1" })],
   });
@@ -1340,14 +1341,14 @@ test("a paid room's mood fallback still asks for that mood's own types", async (
 
   const { code } = await seedMemberRoom(t, {
     code: "4456",
-    mood: "treat",
+    mood: "hangout",
     budgetPerHeadCents: 5000,
     stops: [stop({ id: "a", slot: "main", name: "Gate", placeId: "p1" })],
   });
 
   await t.action(api.plans.suggestStop, { code, sessionKey: "k-bec", stopId: "a" });
 
-  expect(textQueries[1]).toBe("restaurant spa movie theater bakery");
+  expect(textQueries[1]).toBe("bar cafe restaurant night club bakery");
 });
 
 // --- setLocked ------------------------------------------------------------

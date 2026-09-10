@@ -1,6 +1,7 @@
 import { Migrations } from "@convex-dev/migrations";
 import { components } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
+import { normalizeMood } from "./lib/deck/scoring";
 import schema from "./schema";
 
 /**
@@ -64,5 +65,59 @@ export const backfillSwipeCount = migrations.define({
     // Returning undefined patches nothing, so an already-correct row costs a
     // read and no write.
     return member.swipeCount === swipes.length ? undefined : { swipeCount: swipes.length };
+  },
+});
+
+/**
+ * Rewrite every room whose activity is one of the four the product retired.
+ *
+ * `npx convex run migrations:run '{"fn": "migrations:backfillMoods"}'`
+ *
+ * WHY IT IS NEEDED. `meet` and `treat` described who you were with rather than
+ * what you were doing, and that is now a separate question one screen later, so
+ * the activity list is `grass`, `sidequest` and `hangout`. Every room written
+ * before that carries one of the old ids.
+ *
+ * WHEN TO RUN IT. Any time after this branch is deployed, and the sooner the
+ * better. The stored contract still accepts the retired ids -- see
+ * `storedMoodValidator` -- precisely so this can be deployed and then run,
+ * rather than needing to have already run. Until it does, `normalizeMood`
+ * translates at every read, so nothing on screen is wrong in the meantime; what
+ * is waiting on the backfill is the ability to DELETE that translation.
+ *
+ * IT IS SAFE TO RUN TWICE. The three current ids map to themselves, and a row
+ * that already holds one is returned unpatched, so a second pass costs a read
+ * and no write.
+ *
+ * IT IS SAFE TO RUN AGAINST A LIVE ROOM. The only field touched is `mood`, and
+ * nothing in the product writes that field after `rooms.create`.
+ */
+export const backfillMoods = migrations.define({
+  table: "rooms",
+  migrateOne: (_ctx, room) => {
+    const mood = normalizeMood(room.mood);
+    return mood === room.mood ? undefined : { mood };
+  },
+});
+
+/**
+ * The same rewrite for the partner catalogue.
+ *
+ * `npx convex run migrations:run '{"fn": "migrations:backfillVenueMoods"}'`
+ *
+ * Separate from `backfillMoods` because it is a separate table and the runner
+ * takes one -- not because either depends on the other. Run both.
+ *
+ * A venue tagged `meet` AND `treat` now wants a single `hangout` tag, not two,
+ * so the mapped list is de-duplicated. Order is preserved, which keeps the
+ * write off rows that were already correct.
+ */
+export const backfillVenueMoods = migrations.define({
+  table: "venues",
+  migrateOne: (_ctx, venue) => {
+    const moods = [...new Set(venue.moods.map(normalizeMood))];
+    const same =
+      moods.length === venue.moods.length && moods.every((m, i) => m === venue.moods[i]);
+    return same ? undefined : { moods };
   },
 });

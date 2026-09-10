@@ -207,8 +207,8 @@ export const deleteAccount = authenticatedMutation({
  * Change your mind, inside the window.
  *
  * Clearing the tombstone is the whole of it. The taste vector, the sentence,
- * the answers and the goals were never touched, so the account comes back as it
- * was -- minus the seats and the push subscriptions, which are gone for good and
+ * and the answers were never touched, so the account comes back as it was
+ * -- minus the seats and the push subscriptions, which are gone for good and
  * which the delete screen said would be.
  */
 export const restoreAccount = authenticatedMutation({

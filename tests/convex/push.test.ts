@@ -53,7 +53,7 @@ async function roomWith(
   return await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
       hostUserId: seats[0].userId ?? "u1",
-      mood: "treat",
+      mood: "hangout",
       headcount: seats.length,
       budgetPerHeadCents: 3000,
       whenAt: START,

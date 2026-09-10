@@ -333,10 +333,10 @@ test("open rooms are discoverable by mood, private rooms are not", async () => {
   registerComponents(t);
   const asA = t.withIdentity({ subject: "u1", name: "A" });
   const asB = t.withIdentity({ subject: "u2", name: "B" });
-  await asA.mutation(api.rooms.create, { ...CREATE, visibility: "open", mood: "meet" });
-  await asB.mutation(api.rooms.create, { ...CREATE, visibility: "private", mood: "meet" });
+  await asA.mutation(api.rooms.create, { ...CREATE, visibility: "open", mood: "hangout" });
+  await asB.mutation(api.rooms.create, { ...CREATE, visibility: "private", mood: "hangout" });
 
-  const open = await t.query(api.rooms.openRooms, { mood: "meet" });
+  const open = await t.query(api.rooms.openRooms, { mood: "hangout" });
   expect(open).toHaveLength(1);
   expect(open[0].memberCount).toBe(1);
 });
@@ -349,14 +349,14 @@ test("openRooms omits a room that has reached its headcount and keeps one that h
 
   // Full the moment it is created: headcount 1, one member (the host).
   const full = await asA.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 1,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 1,
   });
   // Room for more.
   const open = await asB.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 4,
   });
 
-  const rooms = await t.query(api.rooms.openRooms, { mood: "meet" });
+  const rooms = await t.query(api.rooms.openRooms, { mood: "hangout" });
   expect(rooms.map((r) => r.code)).toEqual([open.code]);
   expect(rooms.map((r) => r.code)).not.toContain(full.code);
 });
@@ -367,21 +367,21 @@ test("openRoomsPage advances past a full first page to find an eligible room", a
   const asHost = t.withIdentity({ subject: "u1", name: "A" });
 
   await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 1,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 1,
   });
   const eligible = await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 4,
   });
 
   const first = await t.query(api.rooms.openRoomsPage, {
-    mood: "meet",
+    mood: "hangout",
     paginationOpts: { numItems: 1, cursor: null },
   });
   expect(first.page).toEqual([]);
   expect(first.isDone).toBe(false);
 
   const second = await t.query(api.rooms.openRoomsPage, {
-    mood: "meet",
+    mood: "hangout",
     paginationOpts: { numItems: 1, cursor: first.continueCursor },
   });
   expect(second.page.map((room) => room.code)).toEqual([eligible.code]);
@@ -392,16 +392,16 @@ test("openRoomsPage excludes private, started, and wrong-mood rooms at the index
   registerComponents(t);
   const asHost = t.withIdentity({ subject: "u1", name: "A" });
   const eligible = await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 4,
   });
   await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "private", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "private", mood: "hangout", headcount: 4,
   });
   await asHost.mutation(api.rooms.create, {
     ...CREATE, visibility: "open", mood: "grass", headcount: 4,
   });
   const started = await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 4,
   });
   await t.run(async (ctx) => {
     const room = await ctx.db
@@ -412,7 +412,7 @@ test("openRoomsPage excludes private, started, and wrong-mood rooms at the index
   });
 
   const page = await t.query(api.rooms.openRoomsPage, {
-    mood: "meet",
+    mood: "hangout",
     paginationOpts: { numItems: 10, cursor: null },
   });
   expect(page.page.map((room) => room.code)).toEqual([eligible.code]);
@@ -424,12 +424,12 @@ test("openRoomsPage keeps every eligible row across bounded pages", async () => 
   registerComponents(t);
   const asHost = t.withIdentity({ subject: "u1", name: "A" });
   await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 1,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 1,
   });
   const eligible = await Promise.all(
     [4, 5, 6].map((headcount) =>
       asHost.mutation(api.rooms.create, {
-        ...CREATE, visibility: "open", mood: "meet", headcount,
+        ...CREATE, visibility: "open", mood: "hangout", headcount,
       }),
     ),
   );
@@ -438,7 +438,7 @@ test("openRoomsPage keeps every eligible row across bounded pages", async () => 
   let cursor: string | null = null;
   for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
     const page: OpenRoomsPage = await t.query(api.rooms.openRoomsPage, {
-      mood: "meet",
+      mood: "hangout",
       paginationOpts: { numItems: 1, cursor },
     });
     expect(page.page.length).toBeLessThanOrEqual(1);
@@ -455,7 +455,7 @@ test("openRoomsPage rejects an oversized page instead of accepting an unbounded 
   registerComponents(t);
   await expectUserError(
     t.query(api.rooms.openRoomsPage, {
-      mood: "meet",
+      mood: "hangout",
       paginationOpts: { numItems: 21, cursor: null },
     }),
     "DISCOVERY_LIMIT",
@@ -468,13 +468,13 @@ test("openRooms keeps the legacy summary shape", async () => {
   registerComponents(t);
   const asHost = t.withIdentity({ subject: "u1", name: "A" });
   const room = await asHost.mutation(api.rooms.create, {
-    ...CREATE, visibility: "open", mood: "meet", headcount: 4,
+    ...CREATE, visibility: "open", mood: "hangout", headcount: 4,
   });
 
-  await expect(t.query(api.rooms.openRooms, { mood: "meet" })).resolves.toEqual([
+  await expect(t.query(api.rooms.openRooms, { mood: "hangout" })).resolves.toEqual([
     {
       code: room.code,
-      mood: "meet",
+      mood: "hangout",
       headcount: 4,
       memberCount: 1,
       whenAt: CREATE.whenAt,
@@ -490,7 +490,7 @@ test("openRooms reports its legacy capacity instead of truncating eligible rooms
     for (let i = 0; i <= 100; i++) {
       await ctx.db.insert("rooms", {
         hostUserId: `u${i}`,
-        mood: "meet",
+        mood: "hangout",
         headcount: 4,
         budgetPerHeadCents: 0,
         whenAt: CREATE.whenAt,
@@ -505,7 +505,7 @@ test("openRooms reports its legacy capacity instead of truncating eligible rooms
   });
 
   await expectUserError(
-    t.query(api.rooms.openRooms, { mood: "meet" }),
+    t.query(api.rooms.openRooms, { mood: "hangout" }),
     "DISCOVERY_LIMIT",
     /more than 100/i,
   );
@@ -1444,4 +1444,70 @@ test("closing a room takes its presence rows with it", async () => {
   await asHost.mutation(api.rooms.deleteRoom, { code });
 
   expect(await t.query(api.presence.list, { roomToken })).toEqual([]);
+});
+
+// Two defects in the one query the whole client subscribes to.
+
+test("rooms.get's deck carries only what a card renders, never the ranking detail", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.insert("quests", {
+      roomId: room!._id, rank: 0, source: "places", placeId: "ChIJ-secret", title: "The bench",
+      blurb: "", priceLabel: "Free", priceCents: 0, distanceKm: 1, discountPct: 0,
+      // Every optional card field populated, so the key assertion below sees
+      // the widest shape this projection can return rather than the narrowest.
+      photoUrl: "https://example.test/p.jpg", photoName: "places/x/photos/y",
+      mapsUri: "https://maps.google.test/?q=bench",
+      websiteUri: "https://bench.test",
+      score: 42, scoreBreakdown: { partnerBoost: 9 },
+    });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  // Not vacuous: the deck is populated and the card's own fields survive.
+  expect(view!.quests).toHaveLength(1);
+  expect(view!.quests[0]).toMatchObject({ title: "The bench", priceLabel: "Free" });
+
+  // The whole projected shape, asserted by key. How a venue was ranked -- what
+  // it scores, and how much of that score its partner tier bought -- is
+  // commercial detail, and a card that never renders it has no reason to ship
+  // it to every browser in the room.
+  expect(Object.keys(view!.quests[0]).sort()).toEqual([
+    "_id", "blurb", "discountPct", "distanceKm", "mapsUri", "photoName", "photoUrl",
+    "priceCents", "priceLabel", "source", "title",
+  ]);
+});
+
+test("waitingOn names member rows, so two people called Tam stay separable", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  // The exact roster a double-tapped join leaves behind.
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.insert("quests", {
+      roomId: room!._id, rank: 0, source: "places", placeId: "p", title: "T", blurb: "",
+      priceLabel: "Free", priceCents: 0, distanceKm: 1, discountPct: 0, score: 1, scoreBreakdown: {},
+    });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  const waiting = view!.progress.waitingOn;
+  expect(waiting.map((w) => w.name).sort()).toEqual(["Bec", "Tam", "Tam"]);
+
+  // Two distinct rows, two distinct ids -- and every id is a member of this
+  // room, so the host's "take them out" button can name one without taking
+  // the other's seat by accident.
+  const ids = waiting.map((w) => w._id);
+  expect(new Set(ids).size).toBe(3);
+  expect(view!.members.map((m) => m._id).sort()).toEqual([...ids].sort());
 });

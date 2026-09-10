@@ -45,7 +45,7 @@ async function roomWithPlan(t: T, memberNames: string[]) {
   const ids = await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
       hostUserId: "u1",
-      mood: "treat",
+      mood: "hangout",
       headcount: memberNames.length,
       budgetPerHeadCents: 3000,
       whenAt: START,
@@ -555,7 +555,7 @@ test("a member of another room cannot vote with a borrowed proposal id", async (
 
   await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u9", mood: "treat", headcount: 1, budgetPerHeadCents: 3000, whenAt: START,
+      hostUserId: "u9", mood: "hangout", headcount: 1, budgetPerHeadCents: 3000, whenAt: START,
       centreLat: -37.8, centreLng: 144.96, radiusKm: 5, visibility: "private",
       status: "matched", code: "6666",
     });

@@ -12,7 +12,7 @@ import { settleProposal } from "./lib/plans/proposals";
 import { DEFAULT_LOCK_RULE } from "./lib/rooms/rules";
 import { applyStopSwap } from "./lib/plans/swap";
 import { jsonCompletion } from "./lib/openai";
-import { FREE_TYPES, MOOD_TYPES } from "./lib/deck/scoring";
+import { FREE_TYPES, MOOD_TYPES, normalizeMood } from "./lib/deck/scoring";
 import { sanitizeClientStop, totalPerHeadCents, type Stop } from "./lib/plans/stops";
 import { generatePlan } from "./lib/plans/generation";
 import { optionsValidator, toOptions } from "./lib/plans/search";
@@ -696,7 +696,9 @@ export const suggestStop = publicAction({
     );
 
     const byMood = await ctx.runAction(internal.places.searchText, {
-      query: (free ? FREE_TYPES : MOOD_TYPES[view.room.mood]).join(" ").replace(/_/g, " "),
+      query: (free ? FREE_TYPES : MOOD_TYPES[normalizeMood(view.room.mood)])
+        .join(" ")
+        .replace(/_/g, " "),
       lat: view.room.centreLat,
       lng: view.room.centreLng,
       radiusKm: view.room.radiusKm,

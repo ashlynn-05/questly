@@ -1,11 +1,11 @@
-import type { Mood } from "@convex/lib/deck/scoring";
+import { MOOD_IDS, type Mood } from "@convex/lib/deck/scoring";
 import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when";
 
 /**
  * The twelve taps that open a room, kept somewhere a page load cannot destroy.
  *
- * `/start` holds the whole funnel -- seven quiz cards, the goals, the mood, the
- * party, four constraints -- in component state. A signed-out visitor gets all
+ * `/start` holds the whole funnel -- eight quiz cards, the activity, the
+ * party, the constraints -- in component state. A signed-out visitor gets all
  * the way to "Open the room", is told they need an account, signs in, comes
  * back to `/start`, and answers the identical twelve questions again from zero.
  * The quiz answers are gone too: `profiles.saveQuiz` needs an identity, so it
@@ -18,15 +18,26 @@ import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when"
  * is the half that cannot fail, and the persisted half is the bonus.
  */
 
-export type Step = "quiz" | "goals" | "mood" | "party" | "constraints";
+export type Step = "quiz" | "mood" | "party" | "company" | "constraints";
+
+/**
+ * Who the night is with, which is two questions rather than one.
+ *
+ * `null` until the party screen is answered. "With people" is not a value here:
+ * it is the branch that leads to the company screen, and the answer that comes
+ * back from there is `friends` or `strangers`.
+ */
+export type Company = "alone" | "friends" | "strangers";
+
+export const COMPANY_IDS: readonly Company[] = ["alone", "friends", "strangers"];
 
 /** Every value the funnel collects, and the one fact about what happened to it. */
 export type FunnelDraft = {
   step: Step | null;
   answers: Record<string, "more" | "less">;
   cardIndex: number;
-  goals: string[];
   mood: Mood | null;
+  company: Company | null;
   visibility: "private" | "open";
   headcount: number;
   budget: number;
@@ -63,8 +74,7 @@ export type FunnelDraft = {
   quizSaved: boolean;
 };
 
-export const STEPS: readonly Step[] = ["quiz", "goals", "mood", "party", "constraints"];
-export const MOOD_IDS: readonly Mood[] = ["grass", "meet", "treat", "new"];
+export const STEPS: readonly Step[] = ["quiz", "mood", "party", "company", "constraints"];
 export const BUDGETS: readonly number[] = [0, 2000, 3000, 5000, 8000];
 export const HEADCOUNTS: readonly number[] = [1, 2, 3, 4, 5, 6];
 export const RADII: readonly number[] = [2, 5, 10, 20];
@@ -73,8 +83,8 @@ export const EMPTY_DRAFT: FunnelDraft = {
   step: null,
   answers: {},
   cardIndex: 0,
-  goals: [],
   mood: null,
+  company: null,
   visibility: "private",
   headcount: 4,
   budget: 0,
@@ -125,8 +135,8 @@ export function parseDraft(raw: string | null): FunnelDraft | null {
       typeof d.cardIndex === "number" && Number.isInteger(d.cardIndex) && d.cardIndex >= 0
         ? d.cardIndex
         : 0,
-    goals: Array.isArray(d.goals) ? d.goals.filter((g): g is string => typeof g === "string") : [],
     mood: MOOD_IDS.includes(d.mood as Mood) ? (d.mood as Mood) : null,
+    company: COMPANY_IDS.includes(d.company as Company) ? (d.company as Company) : null,
     visibility: d.visibility === "open" ? "open" : "private",
     headcount: oneOf(d.headcount, HEADCOUNTS, EMPTY_DRAFT.headcount),
     budget: oneOf(d.budget, BUDGETS, EMPTY_DRAFT.budget),
@@ -217,4 +227,30 @@ export function noDraft(): FunnelDraft | null {
 export function resetDraftForTests() {
   memory = null;
   restorePoint = undefined;
+}
+
+/**
+ * The screen a Back tap returns to, or `null` where there is nothing behind.
+ *
+ * A map from step to step cannot express this any more. The constraints screen
+ * is reached two ways -- straight from "on your own", or through the
+ * friends-or-strangers screen -- and sending somebody alone back to a question
+ * they were never asked is how a Back button starts lying. So the answer
+ * depends on the draft, not only on the step.
+ *
+ * The quiz is answered forwards only, and the activity screen is the first
+ * thing after it, so both stop here.
+ */
+export function backFrom(step: Step, draft: FunnelDraft): Step | null {
+  switch (step) {
+    case "quiz":
+    case "mood":
+      return null;
+    case "party":
+      return "mood";
+    case "company":
+      return "party";
+    case "constraints":
+      return draft.company === "alone" ? "party" : "company";
+  }
 }

@@ -9,7 +9,8 @@ import {
   authenticatedMutation,
   publicQuery,
 } from "./lib/customFunctions";
-import { CARD_IDS, GOAL_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/account/quiz";
+import { CARD_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/account/quiz";
+import { normalizeMood } from "./lib/deck/scoring";
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/account/avatar";
 
 // The 1536-float vector never goes to the browser -- this validator is what
@@ -21,12 +22,16 @@ import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/account/ava
 // to branch on it and get the answer wrong -- the tombstone is read through
 // `account.deletionStatus`, which is the one function that knows about it.
 //
+// `goals` is omitted because the question that filled it is gone. The column
+// survives so rows that still carry one stay valid (see the schema note); a
+// value nothing on screen can explain has no business reaching the browser.
+//
 // `avatarId` is omitted and `avatarUrl` added in its place: the id is a handle
 // only this backend can do anything with, and the URL is what an <img> needs.
 // Resolved per read rather than stored, so it can never be a stale signed
 // string sitting in a row (see the schema note on the field).
 const publicProfileValidator = v.object({
-  ...schema.doc("profiles").omit("tasteVector", "deletedAt", "avatarId").fields,
+  ...schema.doc("profiles").omit("tasteVector", "deletedAt", "avatarId", "goals").fields,
   avatarUrl: v.union(v.string(), v.null()),
 });
 
@@ -88,7 +93,7 @@ export const me = publicQuery({
 
     // The 1536-float vector never goes to the browser; `deletedAt` is `undefined`
     // by the line above and is not projected either.
-    const { tasteVector: _vector, deletedAt: _deletedAt, avatarId, ...rest } = profile;
+    const { tasteVector: _vector, deletedAt: _deletedAt, goals: _goals, avatarId, ...rest } = profile;
     // `getUrl` returns null for an id whose file is gone -- a purge, a failed
     // upload -- and the screen already draws initials when there is no picture,
     // so that is a state it handles rather than an error worth throwing at
@@ -110,7 +115,6 @@ export const write = internalMutation({
     tasteVector: v.array(v.float64()),
     tasteSentence: v.string(),
     moodAffinity: v.record(v.string(), v.number()),
-    goals: v.optional(v.array(v.string())),
     answers: v.optional(v.record(v.string(), answerValidator)),
   },
   returns: v.id("profiles"),
@@ -135,6 +139,12 @@ export const write = internalMutation({
         // left. Clearing the tombstone here means there is no second path that
         // could write a live profile while leaving it marked for the purge.
         deletedAt: undefined,
+        // The goals question is gone, and so is anything it wrote. Clearing it
+        // here rather than passing `undefined` as an argument is the only way
+        // that works: Convex drops undefined arguments before the handler sees
+        // them, so a retake would leave the row still answering a question
+        // nobody was asked.
+        goals: undefined,
       });
       return existing._id;
     }
@@ -145,7 +155,6 @@ export const write = internalMutation({
 export const saveQuiz = authenticatedAction({
   args: {
     answers: v.record(v.string(), answerValidator),
-    goals: v.array(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -157,23 +166,16 @@ export const saveQuiz = authenticatedAction({
     const identity = await ctx.auth.getUserIdentity();
     const displayName = identity?.name?.trim() || identity?.email?.trim() || "Explorer";
 
-    // Both halves of the quiz are checked against the set the product actually
-    // offers. The goals check has always been here; the answers check is new,
-    // and is what stops an arbitrary key reaching a stored column that
-    // `/settings` renders back to the person as "what you said".
+    // Checked against the set the product actually offers. This is what stops
+    // an arbitrary key reaching a stored column that `/settings` renders back
+    // to the person as "what you said".
     for (const cardId of Object.keys(args.answers)) {
       if (!CARD_IDS.has(cardId)) {
         throwUserError("INVALID_ANSWER", `"${cardId}" is not one of the cards in the quiz.`);
       }
     }
 
-    for (const goal of args.goals) {
-      if (!GOAL_IDS.has(goal)) {
-        throwUserError("INVALID_GOAL", `"${goal}" is not one of the goals on offer.`);
-      }
-    }
-
-    const sentence = tasteSentence(args.answers as QuizAnswers, args.goals);
+    const sentence = tasteSentence(args.answers as QuizAnswers);
 
     // The one OpenAI call in the product with no fallback, on the one screen
     // where every failure costs a signup. It used to let a plain `Error` out,
@@ -185,7 +187,7 @@ export const saveQuiz = authenticatedAction({
     // one: `deck.blend` skips profiles with no vector and `scoring.cosine`
     // returns 0 for an absent one, so the deck falls back to ranking on budget,
     // distance, mood and partner tier -- which is exactly what a guest gets.
-    // The quiz answers, the taste sentence and the goals are all still stored,
+    // The quiz answers and the taste sentence are both still stored,
     // so re-running the quiz later fills the vector in. Never silently, though:
     // a permanent outage would otherwise turn personalisation off for every new
     // user with nothing in the logs to say when it stopped.
@@ -206,7 +208,6 @@ export const saveQuiz = authenticatedAction({
       tasteVector: embedding,
       tasteSentence: sentence,
       moodAffinity: moodAffinity(args.answers as QuizAnswers),
-      goals: args.goals,
       // Stored as well as summed, so the answers can be shown back and changed.
       // The derived fields above are all one-way.
       answers: args.answers,
@@ -425,7 +426,7 @@ export const myRooms = publicQuery({
       .slice(0, MAX_MY_ROOMS)
       .map(({ room, isHost }) => ({
         code: room.code,
-        mood: room.mood,
+        mood: normalizeMood(room.mood),
         status: room.status,
         whenAt: room.whenAt,
         isHost,

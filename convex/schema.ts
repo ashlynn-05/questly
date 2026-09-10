@@ -6,7 +6,14 @@ import { pushTables } from "./tables/push";
 import { questTables } from "./tables/quests";
 import { roomTables } from "./tables/rooms";
 import { venueTables } from "./tables/venues";
-export { answerValidator, moodValidator, proposalKindValidator, slotValidator, stopValidator } from "./validators";
+export {
+  answerValidator,
+  moodValidator,
+  proposalKindValidator,
+  slotValidator,
+  stopValidator,
+  storedMoodValidator,
+} from "./validators";
 
 export default defineSchema({
   ...profileTables,

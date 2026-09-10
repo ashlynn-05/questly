@@ -9,6 +9,11 @@ export const profileTables = {
     tasteVector: v.array(v.float64()),
     tasteSentence: v.string(),
     moodAffinity: v.record(v.string(), v.number()),
+    // RETIRED. The goals question was folded into the eight cards, and
+    // `saveQuiz` now clears this on every write. It stays declared, and stays
+    // optional, only so rows that still carry one do not fail schema
+    // validation; nothing reads it. Drop the column once none are left.
+    //
     // Optional: the table predates the goals question, and older rows never
     // wrote one. New writes always include it (as `[]` at minimum).
     goals: v.optional(v.array(v.string())),
