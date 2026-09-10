@@ -44,6 +44,36 @@ const memberViewValidator = v.object({
 });
 
 /**
+ * A deck card as the browser gets it: exactly the fields the deck renders.
+ *
+ * Deliberately NOT `schema.doc("quests")`. The stored row also carries how the
+ * venue was ranked -- `score`, and a `scoreBreakdown` whose `partnerBoost` term
+ * is the venue's partner tier -- plus the Google `placeId` and the internal
+ * `rank`. No card renders any of it, and all of it is commercial detail about a
+ * deal with a venue, sitting in every member's devtools. The projection below
+ * is the only place it is dropped, so this validator is written out by hand to
+ * make dropping it the contract rather than an omission a spread could undo.
+ *
+ * Adding a field here is fine. Adding it because a card needs it is the test.
+ */
+const questViewValidator = v.object({
+  _id: v.id("quests"),
+  source: v.union(v.literal("partner"), v.literal("places")),
+  title: v.string(),
+  blurb: v.string(),
+  priceLabel: v.string(),
+  // `null` is "Google gave us no price", which the card renders as "Not
+  // listed". See the schema comment: it must never become a number here.
+  priceCents: v.union(v.number(), v.null()),
+  distanceKm: v.number(),
+  discountPct: v.number(),
+  photoUrl: v.optional(v.string()),
+  photoName: v.optional(v.string()),
+  // Read by `mapsHref`, which falls back to a search when it is absent.
+  mapsUri: v.optional(v.string()),
+});
+
+/**
  * One member's picture, by way of the account behind them.
  *
  * A guest row carries no `userId` -- `.index("by_user")` is sparse for exactly
@@ -155,7 +185,7 @@ const roomViewValidator = v.union(
     }),
     you: memberViewValidator,
     members: v.array(memberViewValidator),
-    quests: v.array(schema.doc("quests")),
+    quests: v.array(questViewValidator),
     plan: v.union(
       v.null(),
       v.object({
@@ -198,7 +228,7 @@ const roomViewValidator = v.union(
     progress: v.object({
       swipedByYou: v.number(),
       deckSize: v.number(),
-      waitingOn: v.array(v.string()),
+      waitingOn: v.array(memberViewValidator),
     }),
     // How the room has voted on the card the ASKING MEMBER is looking at.
     //
@@ -596,7 +626,21 @@ export const get = publicQuery({
         isHost: m.isHost,
         avatarUrl: avatars.get(m._id) ?? null,
       })),
-      quests,
+      // Field by field, never a spread: a spread would put every future column
+      // on this table into every browser in the room the day it is added.
+      quests: quests.map((q) => ({
+        _id: q._id,
+        source: q.source,
+        title: q.title,
+        blurb: q.blurb,
+        priceLabel: q.priceLabel,
+        priceCents: q.priceCents,
+        distanceKm: q.distanceKm,
+        discountPct: q.discountPct,
+        photoUrl: q.photoUrl,
+        photoName: q.photoName,
+        mapsUri: q.mapsUri,
+      })),
       plan: plan
         ? {
             _id: plan._id,
@@ -617,7 +661,11 @@ export const get = publicQuery({
       progress: {
         swipedByYou: yourSwipes.length,
         deckSize: quests.length,
-        // Who the room is still waiting on, by name.
+        // Who the room is still waiting on -- and the list the host unsticks a
+        // dead room from, so the member ROW rather than just the name. A
+        // double-tapped join leaves two members called Tam, and a screen that
+        // can only match them by name cannot offer to remove one of them
+        // without also naming the other.
         //
         // NOT a presence signal, whatever the old comment here said: it names
         // people who have not finished the deck, and somebody who shut their
@@ -630,7 +678,12 @@ export const get = publicQuery({
         // old row count said about a member with no rows.
         waitingOn: members
           .filter((m) => (m.swipeCount ?? 0) < quests.length)
-          .map((m) => m.name),
+          .map((m) => ({
+            _id: m._id,
+            name: m.name,
+            isHost: m.isHost,
+            avatarUrl: avatars.get(m._id) ?? null,
+          })),
       },
       // Every member named, including the ones with nothing to say yet: `null`
       // means "has not reached this card", which is not the same as a no. The
