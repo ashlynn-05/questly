@@ -1,5 +1,6 @@
 import { navModel, type NavContext, type NavRoute, type NavRow } from "@/lib/shell/nav";
 import { Clock, Hand, People, Pin, Sliders, Swap } from "./icons";
+import { NavRooms } from "./NavRooms";
 import { Plate } from "./Plate";
 
 /**
@@ -80,6 +81,15 @@ export function ShellNav({ route, ctx }: { route: NavRoute; ctx?: NavContext }) 
           </p>
         );
       })}
+
+      {/* The rooms you have been in, under the six sections rather than among
+          them. Six rows say where you can GO; these say what you were doing,
+          and mixing the two would make "Voting" and a room called "Touch grass"
+          look like the same kind of thing. It subscribes on its own and renders
+          nothing when there is nothing to list -- signed out, or a first
+          visit -- so the column below is unchanged for anybody who has no
+          rooms yet. */}
+      <NavRooms currentCode={ctx?.roomCode} />
 
       {/* Pushes the call to action to the bottom of the column, so it sits in
           the same place whether the window is 700px tall or 1400px. */}
