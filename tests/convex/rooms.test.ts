@@ -1216,3 +1216,69 @@ test("a deleted account's picture leaves the roster with it", async () => {
   const view = await asHost.query(api.rooms.get, { code, sessionKey });
   expect(view!.members[0].avatarUrl).toBeNull();
 });
+
+// Two defects in the one query the whole client subscribes to.
+
+test("rooms.get's deck carries only what a card renders, never the ranking detail", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.insert("quests", {
+      roomId: room!._id, rank: 0, source: "places", placeId: "ChIJ-secret", title: "The bench",
+      blurb: "", priceLabel: "Free", priceCents: 0, distanceKm: 1, discountPct: 0,
+      // Every optional card field populated, so the key assertion below sees
+      // the widest shape this projection can return rather than the narrowest.
+      photoUrl: "https://example.test/p.jpg", photoName: "places/x/photos/y",
+      mapsUri: "https://maps.google.test/?q=bench",
+      websiteUri: "https://bench.test",
+      score: 42, scoreBreakdown: { partnerBoost: 9 },
+    });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  // Not vacuous: the deck is populated and the card's own fields survive.
+  expect(view!.quests).toHaveLength(1);
+  expect(view!.quests[0]).toMatchObject({ title: "The bench", priceLabel: "Free" });
+
+  // The whole projected shape, asserted by key. How a venue was ranked -- what
+  // it scores, and how much of that score its partner tier bought -- is
+  // commercial detail, and a card that never renders it has no reason to ship
+  // it to every browser in the room.
+  expect(Object.keys(view!.quests[0]).sort()).toEqual([
+    "_id", "blurb", "discountPct", "distanceKm", "mapsUri", "photoName", "photoUrl",
+    "priceCents", "priceLabel", "source", "title",
+  ]);
+});
+
+test("waitingOn names member rows, so two people called Tam stay separable", async () => {
+  const t = convexTest(schema, modules);
+  registerComponents(t);
+  const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
+  const { code, sessionKey } = await asHost.mutation(api.rooms.create, CREATE);
+  // The exact roster a double-tapped join leaves behind.
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+  await t.mutation(api.rooms.join, { code, name: "Tam" });
+
+  await t.run(async (ctx) => {
+    const room = await ctx.db.query("rooms").withIndex("by_code", (q) => q.eq("code", code)).unique();
+    await ctx.db.insert("quests", {
+      roomId: room!._id, rank: 0, source: "places", placeId: "p", title: "T", blurb: "",
+      priceLabel: "Free", priceCents: 0, distanceKm: 1, discountPct: 0, score: 1, scoreBreakdown: {},
+    });
+  });
+
+  const view = await asHost.query(api.rooms.get, { code, sessionKey });
+  const waiting = view!.progress.waitingOn;
+  expect(waiting.map((w) => w.name).sort()).toEqual(["Bec", "Tam", "Tam"]);
+
+  // Two distinct rows, two distinct ids -- and every id is a member of this
+  // room, so the host's "take them out" button can name one without taking
+  // the other's seat by accident.
+  const ids = waiting.map((w) => w._id);
+  expect(new Set(ids).size).toBe(3);
+  expect(view!.members.map((m) => m._id).sort()).toEqual([...ids].sort());
+});

@@ -167,7 +167,7 @@ test("waitingOn names everyone who has not finished the deck", async () => {
   const { code, seats, questIds } = await swipingRoom(t, ["Bec", "Tam", "Jo"], 2);
   const [bec, tam] = seats;
 
-  expect((await progress(t, code, bec)).waitingOn.sort()).toEqual(["Bec", "Jo", "Tam"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Jo", "Tam"]);
 
   // One card each: nobody is through a two-card deck yet.
   for (const seat of [bec, tam]) {
@@ -178,7 +178,7 @@ test("waitingOn names everyone who has not finished the deck", async () => {
       dir: "no",
     });
   }
-  expect((await progress(t, code, bec)).waitingOn.sort()).toEqual(["Bec", "Jo", "Tam"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Jo", "Tam"]);
 
   // Bec finishes and drops out of the list; the other two stay in it.
   await t.mutation(api.swipes.cast, {
@@ -187,7 +187,7 @@ test("waitingOn names everyone who has not finished the deck", async () => {
     questId: questIds[1],
     dir: "no",
   });
-  expect((await progress(t, code, bec)).waitingOn.sort()).toEqual(["Jo", "Tam"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name).sort()).toEqual(["Jo", "Tam"]);
 });
 
 test("a member who leaves stops being waited on and leaves the others alone", async () => {
@@ -212,7 +212,7 @@ test("a member who leaves stops being waited on and leaves the others alone", as
   await t.mutation(api.rooms.leave, { code, sessionKey: jo.sessionKey });
 
   const after = await progress(t, code, bec);
-  expect(after.waitingOn.sort()).toEqual(["Bec", "Tam"]);
+  expect(after.waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
   // Jo's rows went with Jo. Bec's did not.
   expect(after.swipedByYou).toBe(1);
   expect((await progress(t, code, tam)).swipedByYou).toBe(0);
@@ -254,7 +254,7 @@ test("a host removing a seat leaves the remaining counts intact", async () => {
   });
 
   const after = await progress(t, code, bec);
-  expect(after.waitingOn.sort()).toEqual(["Bec", "Tam"]);
+  expect(after.waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
   expect(after.swipedByYou).toBe(1);
   expect((await progress(t, code, tam)).swipedByYou).toBe(1);
 });
@@ -308,7 +308,7 @@ test("a swipe row written outside the normal path is healed by the next mutation
   expect((await progress(t, code, tam)).swipedByYou).toBe(2);
   expect((await progress(t, code, jo)).swipedByYou).toBe(1);
   // Tam is two cards into a three-card deck, so everyone is still outstanding.
-  expect((await progress(t, code, bec)).waitingOn.sort()).toEqual(["Bec", "Jo", "Tam"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Jo", "Tam"]);
 });
 
 test("the backfill counts seats that predate the column, and is safe to repeat", async () => {
@@ -344,21 +344,21 @@ test("the backfill counts seats that predate the column, and is safe to repeat",
   });
 
   // Un-backfilled, Tam reads as nought cards in and the room waits on them.
-  expect((await progress(t, code, bec)).waitingOn.sort()).toEqual(["Bec", "Tam"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name).sort()).toEqual(["Bec", "Tam"]);
 
   await t.mutation(internal.migrations.backfillSwipeCount, {
     fn: "migrations:backfillSwipeCount",
   });
 
   // Backfilled, the room stops waiting on somebody who already finished.
-  expect((await progress(t, code, bec)).waitingOn).toEqual(["Bec"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name)).toEqual(["Bec"]);
   expect((await progress(t, code, tam)).swipedByYou).toBe(3);
 
   // Idempotent: it recomputes from the rows rather than adding to what it finds.
   await t.mutation(internal.migrations.backfillSwipeCount, {
     fn: "migrations:backfillSwipeCount",
   });
-  expect((await progress(t, code, bec)).waitingOn).toEqual(["Bec"]);
+  expect((await progress(t, code, bec)).waitingOn.map((m) => m.name)).toEqual(["Bec"]);
 });
 
 test("a full session ends with everyone through the deck and nobody waited on", async () => {
@@ -389,5 +389,5 @@ test("a full session ends with everyone through the deck and nobody waited on", 
 
   const end = await progress(t, code, bec);
   expect(end.swipedByYou).toBe(3);
-  expect(end.waitingOn).toEqual([]);
+  expect(end.waitingOn.map((m) => m.name)).toEqual([]);
 });

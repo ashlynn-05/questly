@@ -82,6 +82,7 @@ export function Deck({
   const quest = view.quests[index];
   const deckSize = view.quests.length;
   const waiting = view.progress.waitingOn;
+  const waitingNames = waiting.map((m) => m.name);
   const through = view.members.length - waiting.length;
   const hostName = view.members.find((m) => m.isHost)?.name ?? "The host";
 
@@ -226,13 +227,11 @@ export function Deck({
   }
 
   if (done) {
-    // Everyone the room is still waiting on, matched back to a member row so
-    // the host has something to act on. `rooms.get` projects `waitingOn` as
-    // names, not ids, so the match is by name -- and where two rows carry the
-    // same name, which is exactly what a double-tapped join leaves behind,
-    // both appear. That is the honest answer: from here the two are genuinely
-    // indistinguishable, and the duplicate IS one of them.
-    const stuck = view.members.filter((m) => waiting.includes(m.name));
+    // Everyone the room is still waiting on. `rooms.get` projects the member
+    // rows themselves, so a double-tapped join -- two seats, one name -- gives
+    // the host two buttons that each take out the seat they name, rather than
+    // two buttons that cannot tell each other apart.
+    const stuck = waiting;
 
     return (
       <section className="flex min-h-[60vh] flex-col justify-center gap-4 px-5 py-8">
@@ -241,7 +240,7 @@ export function Deck({
         </h1>
         <p aria-live="polite" className="text-[15px] leading-snug text-dim">
           {waiting.length > 0
-            ? `Waiting on ${nameList(waiting)}.`
+            ? `Waiting on ${nameList(waitingNames)}.`
             : "Working out where you all landed…"}
         </p>
 
