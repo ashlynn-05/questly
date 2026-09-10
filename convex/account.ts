@@ -82,13 +82,14 @@ const MAX_NAMED_ROOMS = 3;
 /**
  * And the refusal only ever covers a night that has not happened yet.
  *
- * Without this the refusal is a trap rather than a guard. Nothing in this
- * product can close a room: `rooms.leave` throws HOST_CANNOT_LEAVE for the
- * host, there is no cancel, and a `lobby` room nobody ever started stays
- * `lobby` for good. So "refuse while hosting an unsettled room" on its own
- * means one abandoned room -- a mistyped date, a plan that fell through --
- * permanently prevents that person from deleting their account, and the
- * refusal names an action ("close the room") the product does not have.
+ * Without this the refusal is a trap rather than a guard. `rooms.leave` throws
+ * HOST_CANNOT_LEAVE for the host and there is no cancel, so a `lobby` room
+ * nobody ever started stays `lobby` for good. `rooms.deleteRoom` now closes one
+ * -- but only a room its host is alone in, because closing one with people
+ * still in it deletes their night too. So "refuse while hosting an unsettled
+ * room" on its own still means one abandoned room with a guest in it -- a
+ * mistyped date, a plan that fell through -- permanently prevents that person
+ * from deleting their account.
  *
  * A night in the past is not a night anyone can still lose, which is what the
  * refusal exists to protect. So the seat is given up and the dead room is left
@@ -149,11 +150,13 @@ export const deleteAccount = authenticatedMutation({
       const codes = blocking.slice(0, MAX_NAMED_ROOMS).join(", ");
       throwUserError(
         "HOSTING_LIVE_ROOM",
-        // Only actions the product actually has. It cannot close a room, so
-        // the two real ways out are booking the night or letting it pass.
+        // Only actions the product actually has. Closing a room is now one of
+        // them (`rooms.deleteRoom`), but it refuses a room with somebody else
+        // still in it, so booking the night and letting the date pass stay in
+        // the sentence rather than being replaced by it.
         blocking.length === 1
-          ? `You are still hosting room ${codes}, and that night has not happened yet. Book it or let the date pass, and then this will go through.`
-          : `You are still hosting rooms ${codes}, and those nights have not happened yet. Book them or let the dates pass, and then this will go through.`,
+          ? `You are still hosting room ${codes}, and that night has not happened yet. Book it, close it from your settings, or let the date pass, and then this will go through.`
+          : `You are still hosting rooms ${codes}, and those nights have not happened yet. Book them, close them from your settings, or let the dates pass, and then this will go through.`,
       );
     }
 

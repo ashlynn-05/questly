@@ -44,6 +44,8 @@ export type ErrorCode =
   | "INVALID_ANSWER"
   | "NAME_REQUIRED"
   | "HOSTING_LIVE_ROOM"
+  | "ROOM_HAS_COMPANY"
+  | "DEMO_ROOM"
   | "NOT_DELETED"
   | "ACCOUNT_DELETED"
   | "AVATAR_MISSING"

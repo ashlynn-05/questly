@@ -12,6 +12,7 @@ import { throwUserError } from "./lib/errors";
 import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
 import { notifyRoom } from "./lib/push/notify";
 import { detachMember } from "./lib/rooms/roster";
+import { demolishRoom } from "./lib/rooms/demolish";
 import {
   DEFAULT_FINALIZE_RULE,
   DEFAULT_LOCK_RULE,
@@ -827,6 +828,84 @@ export const removeMember = publicMutation({
     // must leave the room in the same state. One implementation, so the two can
     // never drift.
     await detachMember(ctx, target);
+    return null;
+  },
+});
+
+/**
+ * The host closes their own room, and it stops existing.
+ *
+ * WHY THE PRODUCT NEEDED THIS. Nothing here could close a room. `leave` refuses
+ * the host, `removeMember` refuses to remove one, there is no cancel, and a
+ * `lobby` room nobody ever started stayed `lobby` for good. `account.ts` had to
+ * write its refusal around that absence: it could not tell somebody blocked
+ * from deleting their account to close the room, because closing a room was not
+ * a thing anyone could do. A mistyped date became permanent.
+ *
+ * WHY IT AUTHORISES ON THE ACCOUNT AND NOT A `sessionKey`. Every other room
+ * mutation takes the capability this browser holds, and that is right for them:
+ * they act INSIDE a room somebody is standing in. This one is reached from the
+ * settings list and the nav, which are account-scoped surfaces listing rooms
+ * this browser may hold no key for -- a host who cleared their storage, or who
+ * is on their laptop for the first time. Requiring the key would make the
+ * control unusable on exactly the screens it belongs to.
+ *
+ * Host authority is still `members.isHost` and NOT `rooms.hostUserId`, which is
+ * the ruling `account.ts` records at length: `join` hands the host seat of an
+ * empty demo room to whoever walks in first, so the two genuinely disagree, and
+ * every other host check in this product asks the seat.
+ *
+ * WHY IT REFUSES A ROOM WITH OTHER PEOPLE IN IT AND A NIGHT STILL AHEAD. This
+ * deletes the night for everybody, not only for the host, and the product
+ * already holds that a host may not walk out of a room mid-flight. A night in
+ * the PAST is not a night anyone can still lose -- `account.ts` makes exactly
+ * that argument for exactly this reason -- so once the date has passed the room
+ * is the host's to clear, however many people were in it. And a room the host
+ * is alone in was never anybody else's night to lose.
+ *
+ * WHY IT REFUSES A DEMO ROOM. Seeded rooms exist so the matchmaking lobby is
+ * never empty, and `join` hands their host seat to the first person through the
+ * door. Letting that person delete one would let any visitor empty the lobby
+ * for everybody.
+ */
+export const deleteRoom = authenticatedMutation({
+  args: { code: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { code }): Promise<null> => {
+    const room = await roomByCode(ctx, code);
+
+    // Bounded by ROOM_FULL, and read once for all three things below: finding
+    // the caller's seat, proving it is the host seat, and counting who else is
+    // still in the room.
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_room", (q) => q.eq("roomId", room._id))
+      .collect();
+
+    const seat = members.find((m) => m.userId === ctx.userId);
+    if (!seat) throwUserError("NOT_A_MEMBER", "You are not in this room.");
+    if (!seat.isHost) {
+      throwUserError("NOT_THE_HOST", "Only the host can close this room.");
+    }
+
+    if (room.demo === true) {
+      throwUserError(
+        "DEMO_ROOM",
+        "This is one of the demonstration rooms, and it stays where it is so the lobby is never empty.",
+      );
+    }
+
+    const others = members.filter((m) => m._id !== seat._id).length;
+    if (others > 0 && room.whenAt > Date.now()) {
+      throwUserError(
+        "ROOM_HAS_COMPANY",
+        others === 1
+          ? "Somebody else is still in this room and the night has not happened yet. Let the date pass, or remove them first."
+          : `${others} other people are still in this room and the night has not happened yet. Let the date pass, or remove them first.`,
+      );
+    }
+
+    await demolishRoom(ctx, room);
     return null;
   },
 });

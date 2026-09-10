@@ -21,6 +21,7 @@ import { Section } from "./_components/Section";
 import { SettingsAnswersSection } from "./_components/SettingsAnswersSection";
 import { SettingsProfileSection } from "./_components/SettingsProfileSection";
 import { SettingsPushSection } from "./_components/SettingsPushSection";
+import { SettingsRoomsSection } from "./_components/SettingsRoomsSection";
 
 /**
  * The account screen the product did not have.
@@ -36,31 +37,6 @@ import { SettingsPushSection } from "./_components/SettingsPushSection";
  * single assertion this branch allows for it. One Convex subscription is also
  * what the rest of the product already does.
  */
-
-/** The mood a room was opened for, in the words the funnel used to ask it. */
-const MOOD_LABEL: Record<string, string> = {
-  grass: "Touch grass",
-  meet: "Meet people",
-  treat: "Treat yourself",
-  new: "Something new",
-};
-
-/** What a room is doing right now, said plainly enough to decide whether to go back in. */
-const STATUS_LABEL: Record<string, string> = {
-  lobby: "Waiting for people",
-  building: "Building the deck",
-  swiping: "Swiping",
-  matched: "Writing the plan",
-  booked: "Booked",
-};
-
-function roomWhen(at: number): string {
-  return new Date(at).toLocaleString("en-AU", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -291,30 +267,7 @@ export default function SettingsPage() {
           <div className="contents lg:flex lg:flex-col lg:gap-8">
             <SettingsPushSection />
 
-            <Section id="rooms" title="Your rooms" topic="rooms">
-              {rooms === undefined ? (
-                <p className="text-[13px] text-dim">Looking…</p>
-              ) : rooms.length === 0 ? (
-                <p className="text-[13px] leading-snug text-dim">
-                  No rooms yet. Start one and it will be here.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {rooms.map((room) => (
-                    <Plate
-                      key={room.code}
-                      variant="raised"
-                      href={`/room/${room.code}`}
-                      label={`${MOOD_LABEL[room.mood] ?? room.mood}${room.isHost ? " · yours" : ""}`}
-                      sub={`${STATUS_LABEL[room.status] ?? room.status} · ${roomWhen(room.whenAt)}${
-                        room.demo ? " · demonstration room" : ""
-                      }`}
-                      right={room.code}
-                    />
-                  ))}
-                </div>
-              )}
-            </Section>
+            <SettingsRoomsSection rooms={rooms} />
 
             {/* `id` as well as the heading's own: the account menu's "Delete
                 account" navigates to /settings#leaving rather than deleting from a

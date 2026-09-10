@@ -37,6 +37,7 @@ import type * as lib_push_notify from "../lib/push/notify.js";
 import type * as lib_push_queue from "../lib/push/queue.js";
 import type * as lib_rateLimits from "../lib/rateLimits.js";
 import type * as lib_rooms_access from "../lib/rooms/access.js";
+import type * as lib_rooms_demolish from "../lib/rooms/demolish.js";
 import type * as lib_rooms_match from "../lib/rooms/match.js";
 import type * as lib_rooms_roster from "../lib/rooms/roster.js";
 import type * as lib_rooms_rules from "../lib/rooms/rules.js";
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   "lib/push/queue": typeof lib_push_queue;
   "lib/rateLimits": typeof lib_rateLimits;
   "lib/rooms/access": typeof lib_rooms_access;
+  "lib/rooms/demolish": typeof lib_rooms_demolish;
   "lib/rooms/match": typeof lib_rooms_match;
   "lib/rooms/roster": typeof lib_rooms_roster;
   "lib/rooms/rules": typeof lib_rooms_rules;
