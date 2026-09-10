@@ -10,6 +10,7 @@ import {
   publicQuery,
 } from "./lib/customFunctions";
 import { CARD_IDS, GOAL_IDS, moodAffinity, tasteSentence, type QuizAnswers } from "./lib/account/quiz";
+import { normalizeMood } from "./lib/deck/scoring";
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, MAX_AVATAR_MB } from "./lib/account/avatar";
 
 // The 1536-float vector never goes to the browser -- this validator is what
@@ -425,7 +426,7 @@ export const myRooms = publicQuery({
       .slice(0, MAX_MY_ROOMS)
       .map(({ room, isHost }) => ({
         code: room.code,
-        mood: room.mood,
+        mood: normalizeMood(room.mood),
         status: room.status,
         whenAt: room.whenAt,
         isHost,

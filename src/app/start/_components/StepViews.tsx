@@ -23,9 +23,8 @@ import type { UsePaginatedQueryReturnType } from "convex/react";
 
 const MOODS: Array<{ id: Mood; label: string; sub: string }> = [
   { id: "grass", label: "Touch grass", sub: "Outside, free, no booking needed." },
-  { id: "meet", label: "Meet people", sub: "Rooms with strangers who showed up too." },
-  { id: "treat", label: "Treat yourself", sub: "One good thing, properly." },
-  { id: "new", label: "Do something new", sub: "Something you have not done before." },
+  { id: "sidequest", label: "Random crazy sidequests", sub: "The theme park nobody has been to since 1994." },
+  { id: "hangout", label: "Hang-outs", sub: "One long table, or somewhere loud." },
 ];
 
 const TOTAL_QUESTIONS = QUIZ_CARDS.length + 1;
@@ -180,12 +179,10 @@ function MoodStep({ headingRef, mood, goTo }: StepViewsProps) {
             selected={m.id === mood}
             label={m.label}
             sub={m.sub}
-            onClick={() =>
-              goTo("party", {
-                mood: m.id,
-                visibility: m.id === "meet" ? "open" : "private",
-              })
-            }
+            // Only the activity. Who is coming -- and therefore whether the
+            // room is open to strangers -- is the next screen's question, and
+            // used to be answered twice in two different vocabularies.
+            onClick={() => goTo("party", { mood: m.id })}
           />
         ))}
       </div>

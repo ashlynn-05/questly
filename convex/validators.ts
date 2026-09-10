@@ -1,7 +1,31 @@
 import { v } from "convex/values";
 
+/**
+ * The three activities the product speaks. This is the API contract: every
+ * argument a client sends and every value a query returns is one of these.
+ */
 export const moodValidator = v.union(
   v.literal("grass"),
+  v.literal("sidequest"),
+  v.literal("hangout"),
+);
+
+/**
+ * What a STORED row may hold, which is not the same thing.
+ *
+ * Rooms and venues written before the taxonomy changed carry `meet`, `treat` or
+ * `new`. Tightening the table validator to the three above would make the very
+ * next schema push fail against those rows, so the storage contract stays wide
+ * while `migrations.backfillMoods` walks them, and `normalizeMood` translates
+ * at every read so no screen is wrong in the meantime.
+ *
+ * DELETE THIS once the backfill has run against every deployment: point the two
+ * tables back at `moodValidator` and drop `normalizeMood` with it.
+ */
+export const storedMoodValidator = v.union(
+  v.literal("grass"),
+  v.literal("sidequest"),
+  v.literal("hangout"),
   v.literal("meet"),
   v.literal("treat"),
   v.literal("new"),

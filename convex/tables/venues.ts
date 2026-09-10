@@ -1,6 +1,6 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { moodValidator } from "../validators";
+import { storedMoodValidator } from "../validators";
 
 export const venueTables = {
   venues: defineTable({
@@ -14,7 +14,7 @@ export const venueTables = {
     discountPct: v.number(),
     offerText: v.string(),
     partnerTier: v.number(),
-    moods: v.array(moodValidator),
+    moods: v.array(storedMoodValidator),
     active: v.boolean(),
   })
     .index("by_placeId", ["placeId"])

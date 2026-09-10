@@ -7,13 +7,14 @@ import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
 import { GOAL_IDS, QUIZ_CARDS, QUIZ_GOALS, tasteSentence, moodAffinity } from "../../convex/lib/account/quiz";
 import { rateLimiter } from "../../convex/lib/rateLimits";
+import { MOOD_IDS } from "../../convex/lib/deck/scoring";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
 test("the quiz is seven cards and every card names a mood", () => {
   expect(QUIZ_CARDS).toHaveLength(7);
   for (const card of QUIZ_CARDS) {
-    expect(["grass", "meet", "treat", "new"]).toContain(card.mood);
+    expect(MOOD_IDS).toContain(card.mood);
   }
 });
 

@@ -6,6 +6,7 @@ import { api, internal } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
 import { EMBEDDING_MODEL } from "../../convex/lib/openai";
+import type { Mood } from "../../convex/lib/deck/scoring";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
@@ -23,7 +24,7 @@ type Harness = TestConvex<typeof schema>;
 
 /** The one search every room in these tests asks, unless it says otherwise. */
 const SEARCH: {
-  mood: "grass" | "meet" | "treat" | "new";
+  mood: Mood;
   budgetPerHeadCents: number;
   centreLat: number;
   centreLng: number;
@@ -162,7 +163,7 @@ test("a deck built for a different mood is not reused", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
   await donorRoom(t, { builtAt: Date.now() });
-  const roomId = await freshRoom(t, "8890", { mood: "treat" });
+  const roomId = await freshRoom(t, "8890", { mood: "hangout" });
   expect(await t.query(internal.deck.recentDeck, { roomId, now: Date.now() })).toBeNull();
 });
 

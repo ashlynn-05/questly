@@ -12,6 +12,7 @@ import {
   VENUE_CATALOG_CEILING,
 } from "./lib/deck/venues";
 import { buildDeck } from "./lib/deck/build";
+import { type Mood, normalizeMood } from "./lib/deck/scoring";
 import { throwUserError } from "./lib/errors";
 import { publicAction } from "./lib/customFunctions";
 
@@ -36,7 +37,7 @@ async function readContextBase(ctx: QueryCtx, roomId: Id<"rooms">) {
       .unique();
     if (!profile) continue;
     if (profile.tasteVector.length) vectors.push(profile.tasteVector);
-    const affinity = profile.moodAffinity[room.mood];
+    const affinity = profile.moodAffinity[normalizeMood(room.mood)];
     if (typeof affinity === "number") affinities.push(affinity);
   }
   const moodAffinity = affinities.length
@@ -46,7 +47,7 @@ async function readContextBase(ctx: QueryCtx, roomId: Id<"rooms">) {
   return { room, vectors, moodAffinity };
 }
 
-async function readBoundedPartners(ctx: QueryCtx, mood: Doc<"rooms">["mood"]) {
+async function readBoundedPartners(ctx: QueryCtx, mood: Mood) {
   const active = await ctx.db
     .query("venues")
     .withIndex("by_active", (q) => q.eq("active", true))
@@ -57,7 +58,7 @@ async function readBoundedPartners(ctx: QueryCtx, mood: Doc<"rooms">["mood"]) {
       "The active venue catalogue is too large to build this deck safely.",
     );
   }
-  return active.filter((venue) => venue.moods.includes(mood));
+  return active.filter((venue) => venue.moods.some((m) => normalizeMood(m) === mood));
 }
 
 const contextBaseReturns = v.object({
@@ -96,7 +97,7 @@ export const context = internalQuery({
   }),
   handler: async (ctx, { roomId }) => {
     const base = await readContextBase(ctx, roomId);
-    const partners = await readBoundedPartners(ctx, base.room.mood);
+    const partners = await readBoundedPartners(ctx, normalizeMood(base.room.mood));
     return { ...base, partners };
   },
 });

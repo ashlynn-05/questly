@@ -8,6 +8,7 @@ import {
 } from "./lib/rooms/access";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
+import { normalizeMood } from "./lib/deck/scoring";
 import { throwUserError } from "./lib/errors";
 import { authenticatedMutation, publicMutation, publicQuery } from "./lib/customFunctions";
 import { notifyRoom } from "./lib/push/notify";
@@ -107,7 +108,7 @@ const LEGACY_DISCOVERY_LIMIT = 100;
 async function openRoomSummary(ctx: QueryCtx, room: Doc<"rooms">) {
   return {
     code: room.code,
-    mood: room.mood,
+    mood: normalizeMood(room.mood),
     headcount: room.headcount,
     memberCount: await memberCount(ctx, room._id),
     whenAt: room.whenAt,
@@ -579,7 +580,7 @@ export const get = publicQuery({
       room: {
         _id: room._id,
         code: room.code,
-        mood: room.mood,
+        mood: normalizeMood(room.mood),
         headcount: room.headcount,
         budgetPerHeadCents: room.budgetPerHeadCents,
         whenAt: room.whenAt,

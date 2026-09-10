@@ -1,4 +1,4 @@
-import type { Mood } from "@convex/lib/deck/scoring";
+import { MOOD_IDS, type Mood } from "@convex/lib/deck/scoring";
 import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when";
 
 /**
@@ -64,7 +64,6 @@ export type FunnelDraft = {
 };
 
 export const STEPS: readonly Step[] = ["quiz", "goals", "mood", "party", "constraints"];
-export const MOOD_IDS: readonly Mood[] = ["grass", "meet", "treat", "new"];
 export const BUDGETS: readonly number[] = [0, 2000, 3000, 5000, 8000];
 export const HEADCOUNTS: readonly number[] = [1, 2, 3, 4, 5, 6];
 export const RADII: readonly number[] = [2, 5, 10, 20];

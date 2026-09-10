@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
 import type { Id } from "../../convex/_generated/dataModel";
-import { DECK_SIZE, FREE_TYPES, MOOD_TYPES } from "../../convex/lib/deck/scoring";
+import { DECK_SIZE, FREE_TYPES, MOOD_TYPES, type Mood } from "../../convex/lib/deck/scoring";
 import {
   VENUE_CATALOG_CEILING,
   VENUE_PAGE_MAX_ROWS,
@@ -37,12 +37,12 @@ async function expectUserError(promise: Promise<unknown>, code: string, messageP
 
 async function roomWithPartner(
   t: TestConvex<typeof schema>,
-  over: { mood?: "grass" | "meet" | "treat" | "new"; status?: "lobby" | "swiping" } = {},
+  over: { mood?: Mood; status?: "lobby" | "swiping" } = {},
 ) {
   return await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
       hostUserId: "u1",
-      mood: over.mood ?? "treat",
+      mood: over.mood ?? "hangout",
       headcount: 4,
       budgetPerHeadCents: 4000,
       whenAt: 1_800_000_000_000,
@@ -62,7 +62,7 @@ async function roomWithPartner(
     await ctx.db.insert("venues", {
       placeId: "partner-1", name: "The Long Weekend", suburb: "Carlton",
       lat: -37.801, lng: 144.967, priceFromCents: 1400, discountPct: 25,
-      offerText: "25% off midweek", partnerTier: 3, moods: ["treat"], active: true,
+      offerText: "25% off midweek", partnerTier: 3, moods: ["hangout"], active: true,
     });
     // A venue for a different mood, which must not appear in a treat room.
     await ctx.db.insert("venues", {
@@ -242,7 +242,7 @@ test("deck.context returns the room and only the partners for its mood", async (
   expect(out.partners.map((p) => p.placeId)).toEqual(["partner-1"]);
   // The guest member has no userId, so contributes no vector.
   expect(out.vectors).toEqual([[0.1, 0.2]]);
-  // Nobody has said anything about "treat", so the room is neutral about it.
+  // Nobody has said anything about "hangout", so the room is neutral about it.
   expect(out.moodAffinity).toBe(0);
 });
 
@@ -251,16 +251,16 @@ test("deck.context returns the room and only the partners for its mood", async (
 test("deck.context blends the members' appetite for tonight's mood", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
-  const roomId = await roomWithPartner(t); // a "treat" room
+  const roomId = await roomWithPartner(t); // a "hangout" room
   await t.run(async (ctx) => {
-    // The host is keen on treat; the second signed-in member is not.
+    // The host is keen on a hang-out; the second signed-in member is not.
     await ctx.db.insert("profiles", {
       userId: "u1", displayName: "Bec", tasteVector: [],
-      tasteSentence: "", moodAffinity: { grass: 1, meet: 0, treat: 2, new: 0 }, createdAt: 1,
+      tasteSentence: "", moodAffinity: { grass: 1, sidequest: 0, hangout: 2 }, createdAt: 1,
     });
     await ctx.db.insert("profiles", {
       userId: "u3", displayName: "Kit", tasteVector: [],
-      tasteSentence: "", moodAffinity: { grass: 0, meet: 0, treat: 0, new: 0 }, createdAt: 1,
+      tasteSentence: "", moodAffinity: { grass: 0, sidequest: 0, hangout: 0 }, createdAt: 1,
     });
     await ctx.db.insert("members", {
       roomId, name: "Kit", userId: "u3", isHost: false, sessionKey: "kitkey", joinedAt: 3,
@@ -282,18 +282,18 @@ test("build reads an eligible venue after the first bounded page", async () => {
       await ctx.db.insert("venues", {
         placeId: `filler-${i}`, name: `Filler ${i}`, suburb: "CBD",
         lat: -37.8, lng: 144.96, priceFromCents: 2000, discountPct: 0,
-        offerText: "Filler", partnerTier: 1, moods: ["treat"], active: true,
+        offerText: "Filler", partnerTier: 1, moods: ["hangout"], active: true,
       });
     }
     await ctx.db.insert("venues", {
       placeId: "late-top", name: "Late Top", suburb: "CBD",
       lat: -37.8, lng: 144.96, priceFromCents: 0, discountPct: 40,
-      offerText: "Late offer", partnerTier: 3, moods: ["treat"], active: true,
+      offerText: "Late offer", partnerTier: 3, moods: ["hangout"], active: true,
     });
     await ctx.db.insert("venues", {
       placeId: "late-inactive", name: "Late Inactive", suburb: "CBD",
       lat: -37.8, lng: 144.96, priceFromCents: 0, discountPct: 40,
-      offerText: "Withdrawn", partnerTier: 3, moods: ["treat"], active: false,
+      offerText: "Withdrawn", partnerTier: 3, moods: ["hangout"], active: false,
     });
   });
 
@@ -336,7 +336,7 @@ test("the venue catalog ceiling fails before provider work", async () => {
       await ctx.db.insert("venues", {
         placeId: `too-many-${i}`, name: `Too Many ${i}`, suburb: "CBD",
         lat: -37.8, lng: 144.96, priceFromCents: 2000, discountPct: 0,
-        offerText: "Catalog row", partnerTier: 1, moods: ["treat"], active: true,
+        offerText: "Catalog row", partnerTier: 1, moods: ["hangout"], active: true,
       });
     }
   });
@@ -366,7 +366,7 @@ test("a required venue page split fails before provider work", async () => {
       placeId: "oversized", name: "Oversized", suburb: "CBD",
       lat: -37.8, lng: 144.96, priceFromCents: 2000, discountPct: 0,
       offerText: "x".repeat(VENUE_PAGE_MAX_BYTES * 2), partnerTier: 1,
-      moods: ["treat"], active: true,
+      moods: ["hangout"], active: true,
     });
   });
 
@@ -463,7 +463,7 @@ test("build ranks partners first, weighs mood fit, and caps the deck at nine", a
   expect(result).toEqual({ deckSize: DECK_SIZE });
 
   // The Places query is driven by the room's mood, not by a hard-coded list.
-  expect(callBody(PLACES_URL).includedTypes).toEqual(MOOD_TYPES.treat);
+  expect(callBody(PLACES_URL).includedTypes).toEqual(MOOD_TYPES.hangout);
 
   const stored = await t.run(async (ctx) =>
     ctx.db.query("quests").withIndex("by_room_rank", (q) => q.eq("roomId", roomId)).order("asc").collect(),
@@ -512,7 +512,7 @@ test("build asks OpenAI for JSON from the shared helper", async () => {
   const body = callBody(OPENAI_URL);
   expect(body.model).toBe("gpt-4o-mini");
   expect(body.response_format).toEqual({ type: "json_object" });
-  expect(body.messages[0].content).toContain('for a "treat" night out');
+  expect(body.messages[0].content).toContain('for a "hangout" night out');
   // One batched call for all nine blurbs, never nine sequential ones.
   expect(fetchMock.mock.calls.filter(([u]) => String(u) === OPENAI_URL)).toHaveLength(1);
 });
@@ -571,7 +571,7 @@ test("a room that likes tonight's mood gets a deck scored for it", async () => {
   await t.run(async (ctx) => {
     await ctx.db.insert("profiles", {
       userId: "u1", displayName: "Bec", tasteVector: [],
-      tasteSentence: "", moodAffinity: { grass: 0, meet: 0, treat: 2, new: 0 }, createdAt: 1,
+      tasteSentence: "", moodAffinity: { grass: 0, sidequest: 0, hangout: 2 }, createdAt: 1,
     });
   });
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
@@ -653,8 +653,8 @@ test("a Google failure hands the room back to the lobby too", async () => {
 test("build reports an empty neighbourhood and hands the room back to the lobby", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
-  // "new" has no partner inventory at all, and Places finds nothing out there.
-  const roomId = await roomWithPartner(t, { mood: "new" });
+  // "sidequest" has no partner inventory at all, and Places finds nothing out there.
+  const roomId = await roomWithPartner(t, { mood: "sidequest" });
   fetchMock.mockImplementation(async () => json({}));
   const asHost = t.withIdentity({ subject: "u1", name: "Bec" });
 
@@ -846,7 +846,7 @@ test("a taste vector of a different width does not shrink the blend", async () =
 test("a free room ranks against the free types, not the mood's own list", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
-  const roomId = await roomWithPartner(t, { mood: "new" });
+  const roomId = await roomWithPartner(t, { mood: "sidequest" });
   await t.run(async (ctx) => ctx.db.patch(roomId, { budgetPerHeadCents: 0 }));
   // Google prices neither of these; the park is free to walk into, the cafe is
   // not, and the only thing separating them is the type.
@@ -870,7 +870,7 @@ test("a free room ranks against the free types, not the mood's own list", async 
   // free to a group that had said they could not spend anything.
   expect(stored.map((q) => q.placeId)).toEqual(["park-1"]);
   // moodMatch is measured against the types the room actually asked for. Scored
-  // against MOOD_TYPES.new instead this would be 0 and the term would be dead
+  // against MOOD_TYPES.sidequest instead this would be 0 and the term would be dead
   // again -- exactly the bug computing it was meant to fix.
   expect(stored[0].scoreBreakdown.moodFit).toBeCloseTo(1.2);
   expect(stored[0].priceCents).toBe(0);
@@ -880,7 +880,7 @@ test("a free room ranks against the free types, not the mood's own list", async 
 test("a $0 room keeps a place Google itself calls free, whatever its type", async () => {
   const t = convexTest(schema, modules);
   registerComponents(t);
-  const roomId = await roomWithPartner(t, { mood: "new" });
+  const roomId = await roomWithPartner(t, { mood: "sidequest" });
   await t.run(async (ctx) => ctx.db.patch(roomId, { budgetPerHeadCents: 0 }));
   fetchMock.mockImplementation(async (url: string) => {
     if (String(url) !== PLACES_URL) return json(OPENAI_BODY);
@@ -1143,7 +1143,7 @@ test("a room borrowing a deck re-uses the embeddings the first build paid for", 
   // first room's cards.
   await t.run(async (ctx) => {
     const roomId = await ctx.db.insert("rooms", {
-      hostUserId: "u1", mood: "treat", headcount: 4, budgetPerHeadCents: 4000,
+      hostUserId: "u1", mood: "hangout", headcount: 4, budgetPerHeadCents: 4000,
       whenAt: 1_800_000_000_000, centreLat: -37.8, centreLng: 144.96, radiusKm: 5,
       visibility: "private", status: "lobby", code: "3333",
     });

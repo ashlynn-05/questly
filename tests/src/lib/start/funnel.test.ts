@@ -14,7 +14,7 @@ const FULL: FunnelDraft = {
   answers: { "card-1": "more", "card-2": "less" },
   cardIndex: 6,
   goals: ["reset", "meet-someone"],
-  mood: "treat",
+  mood: "hangout",
   visibility: "open",
   headcount: 6,
   budget: 5000,
@@ -90,7 +90,7 @@ test("one unusable field does not throw away the rest of the funnel", () => {
   expect(parsed?.budget).toBe(EMPTY_DRAFT.budget);
   expect(parsed?.answers).toEqual(FULL.answers);
   expect(parsed?.goals).toEqual(FULL.goals);
-  expect(parsed?.mood).toBe("treat");
+  expect(parsed?.mood).toBe("hangout");
   expect(parsed?.step).toBe("constraints");
 });
 

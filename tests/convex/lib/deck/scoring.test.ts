@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   cosine, distanceKm, priceLevelToCents, scoreQuest, moodAffinityMultiplier, MOOD_TYPES,
+  MOOD_IDS, normalizeMood,
 } from "../../../../convex/lib/deck/scoring";
 
 const base = {
@@ -117,7 +118,39 @@ describe("scoreQuest", () => {
 
   test("mood is a real query dimension, not decoration", () => {
     expect(MOOD_TYPES.grass).toContain("park");
-    expect(MOOD_TYPES.treat).not.toContain("park");
+    expect(MOOD_TYPES.hangout).not.toContain("park");
+  });
+});
+
+describe("the activity taxonomy", () => {
+  test("there are three activities, and they describe activities", () => {
+    expect(MOOD_IDS).toEqual(["grass", "sidequest", "hangout"]);
+  });
+
+  test("every activity asks Places for something, and for something different", () => {
+    for (const id of MOOD_IDS) expect(MOOD_TYPES[id].length).toBeGreaterThan(0);
+    const all = MOOD_IDS.flatMap((id) => MOOD_TYPES[id]);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  test("a sidequest is the theme park, not the restaurant", () => {
+    expect(MOOD_TYPES.sidequest).toContain("amusement_park");
+    expect(MOOD_TYPES.sidequest).not.toContain("restaurant");
+  });
+});
+
+describe("normalizeMood", () => {
+  test("the three current ids pass through untouched", () => {
+    for (const id of MOOD_IDS) expect(normalizeMood(id)).toBe(id);
+  });
+
+  test("company is not an activity: meet and treat both become a hang-out", () => {
+    expect(normalizeMood("meet")).toBe("hangout");
+    expect(normalizeMood("treat")).toBe("hangout");
+  });
+
+  test("doing something new becomes a sidequest", () => {
+    expect(normalizeMood("new")).toBe("sidequest");
   });
 });
 

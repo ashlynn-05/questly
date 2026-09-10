@@ -140,7 +140,7 @@ test("a twelve-member room admits exactly its cap under join contention", async 
   const hostId = "cap-host";
   const host = identity(t, hostId, "Cap Host");
   const { code, sessionKey: hostKey } = await host.mutation(api.rooms.create, {
-    mood: "treat",
+    mood: "hangout",
     headcount: 12,
     budgetPerHeadCents: 0,
     whenAt: FUTURE,

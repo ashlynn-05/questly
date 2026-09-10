@@ -5,6 +5,7 @@ import { expect, test } from "vitest";
 import { api, internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
 import { PARTNERS } from "../../convex/seed";
+import { MOOD_IDS } from "../../convex/lib/deck/scoring";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
@@ -26,7 +27,7 @@ test("every mood has at least two partner venues, so no deck is empty", async ()
   registerComponents(t);
   await t.mutation(internal.seed.run, {});
   const venues = await t.run(async (ctx) => ctx.db.query("venues").collect());
-  for (const mood of ["grass", "meet", "treat", "new"] as const) {
+  for (const mood of MOOD_IDS) {
     expect(venues.filter((v) => v.moods.includes(mood)).length).toBeGreaterThanOrEqual(2);
   }
 });
@@ -49,7 +50,7 @@ test("every mood gets a seeded open room, so matchmaking is never empty", async 
   const t = convexTest(schema, modules);
   registerComponents(t);
   await t.mutation(internal.seed.run, {});
-  for (const mood of ["grass", "meet", "treat", "new"] as const) {
+  for (const mood of MOOD_IDS) {
     const open = await t.query(api.rooms.openRooms, { mood });
     expect(open.length).toBeGreaterThanOrEqual(1);
   }

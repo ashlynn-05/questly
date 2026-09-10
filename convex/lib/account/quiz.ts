@@ -1,4 +1,4 @@
-import type { Mood } from "../deck/scoring";
+import { MOOD_IDS, type Mood } from "../deck/scoring";
 
 /**
  * Seven more-likely / less-likely cards. Kept short on purpose: this sits
@@ -8,11 +8,11 @@ import type { Mood } from "../deck/scoring";
 export const QUIZ_CARDS: Array<{ id: string; text: string; mood: Mood }> = [
   { id: "walk", text: "walking somewhere green instead of sitting down", mood: "grass" },
   { id: "swim", text: "cold water and a towel in a bag", mood: "grass" },
-  { id: "strangers", text: "a room where you know one person out of ten", mood: "meet" },
-  { id: "loud", text: "somewhere loud enough that you have to lean in", mood: "meet" },
-  { id: "long-lunch", text: "one long meal instead of three quick stops", mood: "treat" },
-  { id: "spend", text: "spending the whole budget in one good place", mood: "treat" },
-  { id: "never-done", text: "something you have genuinely never done", mood: "new" },
+  { id: "strangers", text: "a room where you know one person out of ten", mood: "hangout" },
+  { id: "loud", text: "somewhere loud enough that you have to lean in", mood: "hangout" },
+  { id: "long-lunch", text: "one long meal instead of three quick stops", mood: "hangout" },
+  { id: "spend", text: "spending the whole budget in one good place", mood: "hangout" },
+  { id: "never-done", text: "something you have genuinely never done", mood: "sidequest" },
 ];
 
 export type QuizAnswers = Record<string, "more" | "less">;
@@ -66,7 +66,7 @@ export function tasteSentence(answers: QuizAnswers, goals: string[] = []): strin
 }
 
 export function moodAffinity(answers: QuizAnswers): Record<string, number> {
-  const out: Record<string, number> = { grass: 0, meet: 0, treat: 0, new: 0 };
+  const out: Record<string, number> = Object.fromEntries(MOOD_IDS.map((id) => [id, 0]));
   for (const card of QUIZ_CARDS) {
     if (answers[card.id] === "more") out[card.mood] += 1;
     if (answers[card.id] === "less") out[card.mood] -= 1;
