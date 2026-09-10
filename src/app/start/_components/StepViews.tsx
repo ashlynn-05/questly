@@ -161,11 +161,12 @@ function PartyStep({ headingRef, company, busy, goTo }: StepViewsProps) {
           label="On your own"
           sub="Three answers and a card to swipe. No room, no waiting."
           disabled={busy}
-          // Headcount is not asked again: the screen has just been told. The
-          // room is private because there is nobody to open it to.
-          onClick={() =>
-            goTo("constraints", { company: "alone", headcount: 1, visibility: "private" })
-          }
+          // The headcount is NOT written down here. It is derived from this
+          // answer when the room is opened (`headcountFor`), so that coming
+          // back to this screen and choosing "With people" instead cannot
+          // leave a room of one behind it. Private because there is nobody to
+          // open it to.
+          onClick={() => goTo("constraints", { company: "alone", visibility: "private" })}
         />
         <Plate
           variant="raised"
@@ -339,7 +340,7 @@ function ConstraintsStep({
             <div className="flex flex-wrap gap-2">
               {HEADCOUNTS.map((n) => (
                 <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
-                  {n === 1 ? "Just me" : n}
+                  {n}
                 </Chip>
               ))}
             </div>

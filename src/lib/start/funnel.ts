@@ -76,7 +76,16 @@ export type FunnelDraft = {
 
 export const STEPS: readonly Step[] = ["quiz", "mood", "party", "company", "constraints"];
 export const BUDGETS: readonly number[] = [0, 2000, 3000, 5000, 8000];
-export const HEADCOUNTS: readonly number[] = [1, 2, 3, 4, 5, 6];
+/**
+ * The group sizes the constraints screen offers, and one is NOT among them.
+ *
+ * It used to be, labelled "Just me", because there was no question about who
+ * was coming and the headcount was the only way to say it. There is one now,
+ * one screen earlier, and the fieldset is drawn only for somebody who has just
+ * said other people are coming -- so "Just me" there is a contradiction, and
+ * not a harmless one: see `headcountFor`.
+ */
+export const HEADCOUNTS: readonly number[] = [2, 3, 4, 5, 6];
 export const RADII: readonly number[] = [2, 5, 10, 20];
 
 export const EMPTY_DRAFT: FunnelDraft = {
@@ -227,6 +236,30 @@ export function noDraft(): FunnelDraft | null {
 export function resetDraftForTests() {
   memory = null;
   restorePoint = undefined;
+}
+
+/**
+ * How many seats the room is opened with, which the funnel does not store.
+ *
+ * A ROOM OF ONE IS NOT A ROOM ANYBODY CAN JOIN. `waitingScreen` draws the build
+ * screen instead of a lobby for a room of one, so there is nowhere the join
+ * link is offered, and `rooms.join` refuses everybody the moment the status
+ * leaves `lobby`. That is exactly right for somebody going alone and a dead end
+ * for anybody else, so the seat count is derived from the company answer rather
+ * than carried beside it.
+ *
+ * It was carried beside it, and that was the bug: going alone wrote a headcount
+ * of 1 into the draft, Back from the constraints screen returns an alone host
+ * to the party screen, and choosing "With people" from there never gave it
+ * back. The host then opened a friends room nobody could get into, with "Just
+ * me" sitting selected on a screen they had no reason to re-read.
+ *
+ * The fallback also catches a draft restored from a browser store that predates
+ * any of this, or one somebody typed a 1 into by hand.
+ */
+export function headcountFor(company: Company | null, chosen: number): number {
+  if (company === "alone") return 1;
+  return HEADCOUNTS.includes(chosen) ? chosen : EMPTY_DRAFT.headcount;
 }
 
 /**
