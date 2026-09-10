@@ -11,7 +11,7 @@
     "repository": {
       "url": "https://github.com/ashlynn-05/questly",
       "provider": "github",
-      "revision": "6407cb1bb880cd2e98401a5bda36c9df57cb8e06"
+      "revision": "e5961cd82a6bae937ee131e4fbe75c5abc4eadf2"
     },
     "views": [
       {
@@ -28,6 +28,18 @@
         "note": "A swipe resolves a match, which queues exactly one plan generation."
       },
       {
+        "id": "deck-path",
+        "label": "Deck and taste",
+        "focus": [
+          "convexfns",
+          "deck",
+          "places",
+          "convexdb",
+          "openai"
+        ],
+        "note": "Candidates come from Places; only venues with no stored vector reach OpenAI."
+      },
+      {
         "id": "push-path",
         "label": "Notify the room",
         "focus": [
@@ -37,6 +49,16 @@
           "pushservice"
         ],
         "note": "Five room moments fan out to every member's devices except the actor's."
+      },
+      {
+        "id": "presence-path",
+        "label": "Who is still here",
+        "focus": [
+          "browser",
+          "nextapp",
+          "presence"
+        ],
+        "note": "Its own subscription, and display only: it never moves a match threshold."
       },
       {
         "id": "identity",
@@ -111,6 +133,7 @@
       "type": "backend",
       "label": "Convex Functions",
       "sublabel": "queries · mutations",
+      "tag": "one room subscription",
       "pos": [
         300,
         200
@@ -121,13 +144,15 @@
       ],
       "sources": [
         {
-          "path": "convex/rooms.ts"
+          "path": "convex/rooms.ts",
+          "label": "room view"
         },
         {
           "path": "convex/swipes.ts"
         },
         {
-          "path": "convex/proposals.ts"
+          "path": "convex/lib/rooms/match.ts",
+          "label": "resolveMatch"
         }
       ]
     },
@@ -155,22 +180,44 @@
       ]
     },
     {
-      "id": "pushpool",
-      "type": "messagebus",
-      "label": "Push Workpool",
-      "sublabel": "one job per event",
-      "sources": [
-        {
-          "path": "convex/lib/push/queue.ts"
-        }
-      ],
+      "id": "presence",
+      "type": "backend",
+      "label": "Presence",
+      "sublabel": "heartbeat · display only",
+      "tag": "own subscription",
       "pos": [
-        620,
+        300,
         460
       ],
       "size": [
         155,
         68
+      ],
+      "sources": [
+        {
+          "path": "convex/presence.ts"
+        }
+      ]
+    },
+    {
+      "id": "deck",
+      "type": "backend",
+      "label": "Deck Builder",
+      "sublabel": "ranks quests",
+      "tag": "room lease",
+      "pos": [
+        620,
+        70
+      ],
+      "size": [
+        155,
+        68
+      ],
+      "sources": [
+        {
+          "path": "convex/deck.ts",
+          "label": "build action"
+        }
       ]
     },
     {
@@ -196,7 +243,7 @@
       "id": "convexdb",
       "type": "database",
       "label": "Convex Database",
-      "sublabel": "rooms · quests · plans",
+      "sublabel": "rooms · plans · vectors",
       "pos": [
         620,
         330
@@ -207,33 +254,36 @@
       ],
       "sources": [
         {
-          "path": "convex/schema.ts"
+          "path": "convex/tables/rooms.ts",
+          "label": "members.swipeCount"
         },
         {
-          "path": "convex/tables/push.ts"
+          "path": "convex/tables/venues.ts",
+          "label": "venueEmbeddings"
+        },
+        {
+          "path": "convex/migrations.ts",
+          "label": "backfills"
         }
       ]
     },
     {
-      "id": "pushsend",
-      "type": "backend",
-      "label": "Push Sender",
-      "sublabel": "web-push · VAPID",
-      "tag": "Node runtime",
-      "sources": [
-        {
-          "path": "convex/pushSend.ts",
-          "line": 146,
-          "label": "deliver"
-        }
-      ],
+      "id": "pushpool",
+      "type": "messagebus",
+      "label": "Push Workpool",
+      "sublabel": "one job per event",
       "pos": [
-        900,
+        620,
         460
       ],
       "size": [
         155,
         68
+      ],
+      "sources": [
+        {
+          "path": "convex/lib/push/queue.ts"
+        }
       ]
     },
     {
@@ -259,14 +309,14 @@
       ]
     },
     {
-      "id": "deck",
+      "id": "pushsend",
       "type": "backend",
-      "label": "Deck Builder",
-      "sublabel": "ranks quests",
-      "tag": "room lease",
+      "label": "Push Sender",
+      "sublabel": "web-push · VAPID",
+      "tag": "Node runtime",
       "pos": [
-        620,
-        70
+        900,
+        460
       ],
       "size": [
         155,
@@ -274,20 +324,20 @@
       ],
       "sources": [
         {
-          "path": "convex/deck.ts",
-          "line": 238,
-          "label": "build action"
+          "path": "convex/pushSend.ts",
+          "line": 146,
+          "label": "deliver"
         }
       ]
     },
     {
-      "id": "pushservice",
+      "id": "places",
       "type": "external",
-      "label": "Web Push Services",
-      "sublabel": "endpoint per device",
+      "label": "Google Places API",
+      "sublabel": "nearby · text · photo",
       "pos": [
         1160,
-        460
+        70
       ],
       "size": [
         150,
@@ -309,13 +359,13 @@
       ]
     },
     {
-      "id": "places",
+      "id": "pushservice",
       "type": "external",
-      "label": "Google Places API",
-      "sublabel": "nearby · text · photo",
+      "label": "Web Push Services",
+      "sublabel": "endpoint per device",
       "pos": [
         1160,
-        70
+        460
       ],
       "size": [
         150,
@@ -331,6 +381,7 @@
         "ratelimiter",
         "convexfns",
         "betterauth",
+        "presence",
         "pushpool",
         "planpool",
         "convexdb",
@@ -369,33 +420,22 @@
       "variant": "emphasis"
     },
     {
-      "id": "match-enqueues",
-      "from": "convexfns",
-      "to": "planpool",
-      "label": "on match",
-      "variant": "emphasis",
-      "labelDx": 32
-    },
-    {
-      "id": "pool-runs-generator",
-      "from": "planpool",
-      "to": "plangen",
-      "label": "one lease winner",
-      "variant": "emphasis"
-    },
-    {
-      "id": "plan-written",
-      "from": "plangen",
-      "to": "convexdb",
-      "label": "upsert plan",
-      "variant": "emphasis"
+      "id": "app-to-presence",
+      "from": "nextapp",
+      "to": "presence",
+      "label": "heartbeat",
+      "labelAt": [
+        212,
+        452
+      ]
     },
     {
       "id": "auth-proxy",
       "from": "nextapp",
       "to": "betterauth",
       "label": "proxy /api/auth",
-      "variant": "security"
+      "variant": "security",
+      "labelDx": -62
     },
     {
       "id": "identity-check",
@@ -423,7 +463,37 @@
       "id": "room-state",
       "from": "convexfns",
       "to": "convexdb",
-      "label": "room state"
+      "label": "own rows only",
+      "labelDx": -85
+    },
+    {
+      "id": "match-enqueues",
+      "from": "convexfns",
+      "to": "planpool",
+      "label": "on match",
+      "variant": "emphasis",
+      "labelDx": 32
+    },
+    {
+      "id": "pool-runs-generator",
+      "from": "planpool",
+      "to": "plangen",
+      "label": "one lease winner",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plan-written",
+      "from": "plangen",
+      "to": "convexdb",
+      "label": "upsert plan",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plan-prompt",
+      "from": "plangen",
+      "to": "openai",
+      "label": "server key only",
+      "variant": "dashed"
     },
     {
       "id": "places-lookup",
@@ -433,11 +503,31 @@
       "variant": "dashed"
     },
     {
-      "id": "plan-prompt",
-      "from": "plangen",
+      "id": "embed-misses",
+      "from": "deck",
       "to": "openai",
-      "label": "server key only",
-      "variant": "dashed"
+      "label": "misses only",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          840,
+          104
+        ],
+        [
+          840,
+          170
+        ],
+        [
+          1235,
+          170
+        ]
+      ],
+      "labelAt": [
+        1030,
+        162
+      ]
     },
     {
       "id": "notify-room",
@@ -485,20 +575,20 @@
     },
     {
       "dot": "emerald",
-      "title": "Push module",
+      "title": "The one subscription",
       "items": [
-        "joined, matched, planReady, proposalOpened, booked",
-        "One row per browser, keyed by account or seat",
-        "A 404 or 410 deletes that subscription"
+        "Every room screen runs on a single reactive query",
+        "It reads the caller's own swipes, not the room's",
+        "A backfill on the migrations component seeded the counts"
       ]
     },
     {
       "dot": "violet",
-      "title": "Queues",
+      "title": "Queues and quota",
       "items": [
         "Two pools, parallelism 8, retries off",
         "Plan duplicates die at execution under a lease",
-        "Push retries are decided per endpoint"
+        "One stored vector per venue, so a borrowed deck is free"
       ]
     },
     {

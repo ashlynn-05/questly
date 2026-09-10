@@ -298,3 +298,51 @@ export const recentDeck = internalQuery({
   returns: v.union(v.null(), v.array(questFields)),
   handler: async (ctx, { roomId, now }) => findRecentDeck(ctx, roomId, now),
 });
+
+/**
+ * The vectors this shortlist already has, aligned to the ids it asked about.
+ *
+ * `null` for a miss rather than a short array, so the caller can pair each
+ * answer with the candidate that produced it without a second lookup.
+ */
+export const cachedEmbeddings = internalQuery({
+  args: { model: v.string(), placeIds: v.array(v.string()) },
+  returns: v.array(v.union(v.array(v.float64()), v.null())),
+  handler: async (ctx, { model, placeIds }): Promise<Array<number[] | null>> =>
+    Promise.all(
+      placeIds.map(async (placeId) => {
+        const row = await ctx.db
+          .query("venueEmbeddings")
+          .withIndex("by_model_place", (q) => q.eq("model", model).eq("placeId", placeId))
+          .first();
+        return row?.vector ?? null;
+      }),
+    ),
+});
+
+/**
+ * Keep the vectors we just paid for.
+ *
+ * `.first()` rather than `.unique()`, and a skip rather than a throw, for the
+ * reason `rooms.get` gives at length: two rooms can build at the same instant
+ * and race to write the same venue. A duplicate row here is harmless -- both
+ * hold a vector for the same place -- and refusing to write is cheaper than a
+ * transaction that fails and loses the whole batch.
+ */
+export const saveEmbeddings = internalMutation({
+  args: {
+    model: v.string(),
+    entries: v.array(v.object({ placeId: v.string(), vector: v.array(v.float64()) })),
+  },
+  returns: v.null(),
+  handler: async (ctx, { model, entries }) => {
+    for (const entry of entries) {
+      const existing = await ctx.db
+        .query("venueEmbeddings")
+        .withIndex("by_model_place", (q) => q.eq("model", model).eq("placeId", entry.placeId))
+        .first();
+      if (!existing) await ctx.db.insert("venueEmbeddings", { model, ...entry });
+    }
+    return null;
+  },
+});

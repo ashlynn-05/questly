@@ -1,5 +1,6 @@
 import { type Infer } from "convex/values";
 import { internal } from "../../_generated/api";
+import { EMBEDDING_MODEL } from "../openai";
 import type { ActionCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { questFields } from "./cache";
@@ -97,7 +98,9 @@ type Ranked<T> = T & { score: number; breakdown: Record<string, number> };
  * candidates included. With no signed-in member carrying a vector the blend is
  * undefined, the term is a constant 0, and the embedding call is skipped.
  */
-async function rankByTaste<T extends Rankable & { title: string; blurb: string }>(
+async function rankByTaste<
+  T extends Rankable & { title: string; blurb: string; placeId: string },
+>(
   ctx: ActionCtx,
   candidates: T[],
   vectors: number[][],
@@ -113,9 +116,51 @@ async function rankByTaste<T extends Rankable & { title: string; blurb: string }
   if (!roomTaste) return base;
 
   try {
-    const questVectors: number[][] = await ctx.runAction(internal.ai.embeddings.embedMany, {
-      texts: base.map((c) => `${c.title}. ${c.blurb}`),
-    });
+    // Keyed on the PLACE, not on the string below it. The two build paths
+    // describe the same venue in different words -- a full build has only the
+    // Google summary here, because `writeBlurbs` runs after the ranking, while
+    // a borrowing build has the donor's finished blurb off the stored row --
+    // so a text key would miss on every borrowed places card, which is the one
+    // case this cache was added for. See `tables/venues.ts`.
+    const placeIds = base.map((c) => c.placeId);
+    const cached: Array<number[] | null> = await ctx.runQuery(
+      internal.deck.cachedEmbeddings,
+      { model: EMBEDDING_MODEL, placeIds },
+    );
+
+    // Only the misses go upstream, and they go in ONE batched call holding ONE
+    // quota reservation, exactly as before -- `embedMany` takes an array
+    // precisely so a shortlist is a single round trip, and a warm build now
+    // makes no call and spends no quota at all.
+    const missing = base.filter((_, i) => cached[i] === null);
+    const fresh: number[][] =
+      missing.length === 0
+        ? []
+        : await ctx.runAction(internal.ai.embeddings.embedMany, {
+            texts: missing.map((c) => `${c.title}. ${c.blurb}`),
+          });
+    // Named here rather than left to fail later. A short answer would pair
+    // vectors with the wrong venues, and `saveEmbeddings` would reject an
+    // `undefined` vector with a validator error that says nothing about the
+    // provider -- after the quota was already spent.
+    if (fresh.length !== missing.length) {
+      throw new Error(
+        `embedMany returned ${fresh.length} vectors for ${missing.length} texts`,
+      );
+    }
+    if (fresh.length > 0) {
+      await ctx.runMutation(internal.deck.saveEmbeddings, {
+        model: EMBEDDING_MODEL,
+        entries: missing.map((c, i) => ({ placeId: c.placeId, vector: fresh[i] })),
+      });
+    }
+
+    // Re-assembled in the caller's order. `missing` was filtered out of `base`
+    // in order, so walking it in the same order pairs each vector with the
+    // candidate that produced it.
+    let next = 0;
+    const questVectors = cached.map((hit) => hit ?? fresh[next++]);
+
     return base
       .map((c, i) => ({ ...c, ...rank(c, cosine(roomTaste, questVectors[i])) }))
       .sort(byScore);

@@ -5,8 +5,7 @@ import OpenAI from "openai";
 import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
 import { runProviderReservation } from "../lib/errors";
-
-const EMBEDDING_MODEL = "text-embedding-3-small"; // 1536 dims
+import { EMBEDDING_MODEL } from "../lib/openai";
 
 /**
  * Bounded like every other outbound call in this backend: a hung socket would
