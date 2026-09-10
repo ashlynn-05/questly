@@ -18,23 +18,20 @@ export function SettingsAnswersSection({ profile }: { profile: Profile | undefin
           alone.
         </p>
       ) : (
-        <>
-          <div className="flex flex-col gap-5">
-            {groupAnswers(QUIZ_CARDS, profile.answers).map((group) => (
-              <div key={group.key} className="flex flex-col gap-1.5">
-                <h3 className="board text-[11px] text-dim">{group.label}</h3>
-                <ul className="flex flex-col gap-1.5">
-                  {group.cards.map((card) => (
-                    <li key={card.id} className="text-[15px] leading-snug text-text">
-                      {card.text}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-
-        </>
+        <div className="flex flex-col gap-5">
+          {groupAnswers(QUIZ_CARDS, profile.answers).map((group) => (
+            <div key={group.key} className="flex flex-col gap-1.5">
+              <h3 className="board text-[11px] text-dim">{group.label}</h3>
+              <ul className="flex flex-col gap-1.5">
+                {group.cards.map((card) => (
+                  <li key={card.id} className="text-[15px] leading-snug text-text">
+                    {card.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       )}
 
       <Plate variant="raised" center href="/start?retake=1" label="Retake the quiz" />

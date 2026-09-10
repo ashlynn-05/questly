@@ -6,7 +6,7 @@
  * way -- the same word eight times down the right-hand edge. Every row looked
  * identical, so the column of answers carried no shape at all, and the thing a
  * person actually came to check ("what did I say I wanted?") had to be read out
- * of seven repetitions of "More".
+ * of eight repetitions of "More".
  *
  * Grouped, the same eight phrases answer that question at a glance, the
  * repeated word is said once as a heading, and seven of the eight rules go away.

@@ -37,9 +37,10 @@ import { Rail, RailEnd, RailNode } from "./Rail";
 
 /**
  * A stop on the night. The funnel's steps and the room's statuses are one
- * journey, so they are one union -- `quiz` and `goals` share a stop because
- * they are one sitting, and `building` shares the swipe stop because it is the
- * deck arriving rather than a place anybody stands.
+ * journey, so they are one union -- `quiz` and `mood` share a stop because
+ * they are one sitting, `company` shares `party`'s because it is the second
+ * half of the same question, and `building` shares the swipe stop because it
+ * is the deck arriving rather than a place anybody stands.
  */
 export type Stop =
   | "quiz"
