@@ -18,7 +18,18 @@ import { WHEN_IDS, isValidDateValue, isValidMinutes, type WhenId } from "./when"
  * is the half that cannot fail, and the persisted half is the bonus.
  */
 
-export type Step = "quiz" | "mood" | "party" | "constraints";
+export type Step = "quiz" | "mood" | "party" | "company" | "constraints";
+
+/**
+ * Who the night is with, which is two questions rather than one.
+ *
+ * `null` until the party screen is answered. "With people" is not a value here:
+ * it is the branch that leads to the company screen, and the answer that comes
+ * back from there is `friends` or `strangers`.
+ */
+export type Company = "alone" | "friends" | "strangers";
+
+export const COMPANY_IDS: readonly Company[] = ["alone", "friends", "strangers"];
 
 /** Every value the funnel collects, and the one fact about what happened to it. */
 export type FunnelDraft = {
@@ -26,6 +37,7 @@ export type FunnelDraft = {
   answers: Record<string, "more" | "less">;
   cardIndex: number;
   mood: Mood | null;
+  company: Company | null;
   visibility: "private" | "open";
   headcount: number;
   budget: number;
@@ -62,7 +74,7 @@ export type FunnelDraft = {
   quizSaved: boolean;
 };
 
-export const STEPS: readonly Step[] = ["quiz", "mood", "party", "constraints"];
+export const STEPS: readonly Step[] = ["quiz", "mood", "party", "company", "constraints"];
 export const BUDGETS: readonly number[] = [0, 2000, 3000, 5000, 8000];
 export const HEADCOUNTS: readonly number[] = [1, 2, 3, 4, 5, 6];
 export const RADII: readonly number[] = [2, 5, 10, 20];
@@ -72,6 +84,7 @@ export const EMPTY_DRAFT: FunnelDraft = {
   answers: {},
   cardIndex: 0,
   mood: null,
+  company: null,
   visibility: "private",
   headcount: 4,
   budget: 0,
@@ -123,6 +136,7 @@ export function parseDraft(raw: string | null): FunnelDraft | null {
         ? d.cardIndex
         : 0,
     mood: MOOD_IDS.includes(d.mood as Mood) ? (d.mood as Mood) : null,
+    company: COMPANY_IDS.includes(d.company as Company) ? (d.company as Company) : null,
     visibility: d.visibility === "open" ? "open" : "private",
     headcount: oneOf(d.headcount, HEADCOUNTS, EMPTY_DRAFT.headcount),
     budget: oneOf(d.budget, BUDGETS, EMPTY_DRAFT.budget),
@@ -213,4 +227,30 @@ export function noDraft(): FunnelDraft | null {
 export function resetDraftForTests() {
   memory = null;
   restorePoint = undefined;
+}
+
+/**
+ * The screen a Back tap returns to, or `null` where there is nothing behind.
+ *
+ * A map from step to step cannot express this any more. The constraints screen
+ * is reached two ways -- straight from "on your own", or through the
+ * friends-or-strangers screen -- and sending somebody alone back to a question
+ * they were never asked is how a Back button starts lying. So the answer
+ * depends on the draft, not only on the step.
+ *
+ * The quiz is answered forwards only, and the activity screen is the first
+ * thing after it, so both stop here.
+ */
+export function backFrom(step: Step, draft: FunnelDraft): Step | null {
+  switch (step) {
+    case "quiz":
+    case "mood":
+      return null;
+    case "party":
+      return "mood";
+    case "company":
+      return "party";
+    case "constraints":
+      return draft.company === "alone" ? "party" : "company";
+  }
 }

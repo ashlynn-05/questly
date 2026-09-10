@@ -13,6 +13,7 @@ import { storeSessionKey } from "@/lib/room/session";
 import { errorCode, userMessage } from "@/lib/errors";
 import {
   EMPTY_DRAFT,
+  backFrom,
   forgetDraft,
   noDraft,
   restoredDraft,
@@ -32,8 +33,6 @@ import { Back } from "@/components/questly/icons";
 import { useRedirectIfDeleting } from "@/hooks/useRedirectIfDeleting";
 import { StepViews } from "./_components/StepViews";
 
-/** Where a mis-tap goes back to. The quiz itself is answered forwards only. */
-const BACK_TO: Partial<Record<Step, Step>> = { party: "mood", constraints: "party" };
 
 /**
  * Melbourne CBD. Every room is centred here: nothing in this flow asks the
@@ -116,7 +115,7 @@ function StartFunnel() {
     writeDraft(next);
   }
 
-  const { answers, cardIndex, mood, visibility, headcount, budget, radiusKm } = draft;
+  const { answers, cardIndex, mood, company, visibility, headcount, budget, radiusKm } = draft;
   const { whenId, whenMinutes, whenDate } = draft;
 
   const [busy, setBusy] = useState(false);
@@ -145,7 +144,7 @@ function StartFunnel() {
   const resumeAt: Step | null = profile === undefined ? null : profile ? "mood" : "quiz";
   const current = draft.step ?? resumeAt;
 
-  const lookingForRoom = current === "party" && visibility === "open";
+  const lookingForRoom = current === "company" && visibility === "open";
   const openRooms = usePaginatedQuery(
     api.rooms.openRoomsPage,
     lookingForRoom && mood !== null ? { mood } : "skip",
@@ -337,7 +336,7 @@ function StartFunnel() {
     );
   }
 
-  const backTo = BACK_TO[current];
+  const backTo = backFrom(current, draft);
 
   return (
     // The first in-product screen most people see. The band's account
@@ -346,9 +345,10 @@ function StartFunnel() {
     // which one that is.
     <Screen
       nav={<ShellNav route="start" />}
-      /* `quiz` and `mood` are one sitting -- what kind of night is this -- and
-         `journeyModel` collapses them into one stage. */
-      journey={<Journey at={current} />}
+      /* `company` is the second half of "who is coming" and shares `party`'s
+         stop; `journeyModel` then collapses `quiz` and `mood` into one stage
+         as well, since they are one sitting. */
+      journey={<Journey at={current === "company" ? "party" : current} />}
     >
       {/* The invitation to turn notifications on, for somebody signed in.
           `/start` because the funnel ends by opening a room and there is no
@@ -425,6 +425,7 @@ function StartFunnel() {
             cardIndex={cardIndex}
             answers={answers}
             mood={mood}
+            company={company}
             visibility={visibility}
             headcount={headcount}
             budget={budget}

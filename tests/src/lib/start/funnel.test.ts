@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { EMPTY_DRAFT, parseDraft, type FunnelDraft } from "../../../../src/lib/start/funnel";
+import {
+  EMPTY_DRAFT,
+  STEPS,
+  backFrom,
+  parseDraft,
+  type FunnelDraft,
+} from "../../../../src/lib/start/funnel";
 
 /**
  * `parseDraft` is the only part of the funnel's survival that is testable in
@@ -14,6 +20,7 @@ const FULL: FunnelDraft = {
   answers: { "card-1": "more", "card-2": "less" },
   cardIndex: 7,
   mood: "hangout",
+  company: "strangers",
   visibility: "open",
   headcount: 6,
   budget: 5000,
@@ -134,4 +141,36 @@ test("a chosen date survives, and a date nobody could keep does not", () => {
   expect(parseDraft(JSON.stringify({ ...custom, whenDate: "2026-02-31" }))?.whenDate).toBeNull();
   expect(parseDraft(JSON.stringify({ ...custom, whenDate: "3/10/2026" }))?.whenDate).toBeNull();
   expect(parseDraft(JSON.stringify({ ...custom, whenDate: 20261003 }))?.whenDate).toBeNull();
+});
+
+// --- the branch -----------------------------------------------------------
+//
+// "Who is coming?" used to be one screen offering With friends / Just me /
+// Meet people -- but "Meet people" was ALSO one of the four kinds of night, so
+// the same idea was put to somebody twice in two different vocabularies. It is
+// two questions now: alone or with people, and then, if with people, friends or
+// strangers.
+
+test("the funnel asks about company as its own step", () => {
+  expect(STEPS).toEqual(["quiz", "mood", "party", "company", "constraints"]);
+});
+
+test("an unknown company in a stored draft is refused like every other field", () => {
+  const parsed = parseDraft(JSON.stringify({ ...FULL, company: "whoever" }));
+  expect(parsed?.company).toBe(EMPTY_DRAFT.company);
+});
+
+test("back from the constraints goes to whichever question actually asked", () => {
+  // Somebody going alone never saw the friends-or-strangers screen, so Back
+  // must not invent it for them.
+  expect(backFrom("constraints", { ...FULL, company: "alone" })).toBe("party");
+  expect(backFrom("constraints", { ...FULL, company: "friends" })).toBe("company");
+  expect(backFrom("constraints", { ...FULL, company: "strangers" })).toBe("company");
+});
+
+test("back walks the rest of the funnel in order, and stops at the quiz", () => {
+  expect(backFrom("company", FULL)).toBe("party");
+  expect(backFrom("party", FULL)).toBe("mood");
+  expect(backFrom("mood", FULL)).toBeNull();
+  expect(backFrom("quiz", FULL)).toBeNull();
 });

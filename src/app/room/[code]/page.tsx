@@ -11,7 +11,7 @@ import { Screen, ScreenPending } from "@/components/questly/Screen";
 import { Journey } from "@/components/questly/Journey";
 import { ShellNav } from "@/components/questly/ShellNav";
 import { errorCode, userMessage } from "@/lib/errors";
-import { roomRedirect, statusTransition } from "@/lib/room/room";
+import { roomRedirect, shouldStartSoloBuild, statusTransition, waitingScreen } from "@/lib/room/room";
 import { moneyLabel } from "@/lib/room/share";
 import { useSessionKey } from "@/hooks/useSessionKey";
 import { useAwaySeats } from "@/lib/room/presence";
@@ -67,6 +67,18 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
    */
   const [buildError, setBuildError] = useState<BuildFailure | null>(null);
   const [retrying, setRetrying] = useState(false);
+
+  /**
+   * A solo room starts its own deck.
+   *
+   * Nobody else is coming, so the lobby is not drawn (see `waitingScreen`) and
+   * nobody is ever going to press "Start swiping". The latch is a ref and is
+   * never cleared: a failed build hands the room back to `lobby`, which is the
+   * state this fires on, so without it a solo room in an empty neighbourhood
+   * would rebuild forever on Places and OpenAI quota. One automatic attempt,
+   * then the build screen's own retry belongs to the person.
+   */
+  const soloBuildStarted = useRef(false);
 
   /**
    * A member who deliberately leaves must not be sent back to /join.
@@ -126,6 +138,25 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
       setRetrying(false);
     }
   }
+
+  useEffect(() => {
+    if (!view || !sessionKey) return;
+    if (
+      !shouldStartSoloBuild({
+        status: view.room.status,
+        headcount: view.room.headcount,
+        isHost: view.you.isHost,
+        alreadyStarted: soloBuildStarted.current,
+      })
+    ) {
+      return;
+    }
+    soloBuildStarted.current = true;
+    void retryTheBuild();
+    // `retryTheBuild` is redefined every render and is not a dependency: the
+    // latch above is what makes this run once, not the dependency list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, sessionKey]);
 
   /**
    * One focus policy for the whole room, in one place.
@@ -218,7 +249,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
         </p>
       ) : null}
 
-      {view.room.status === "lobby" ? (
+      {waitingScreen(view.room) === "lobby" ? (
         <Lobby
           view={view}
           away={away}
@@ -231,7 +262,7 @@ export default function RoomPage({ params }: PageProps<"/room/[code]">) {
         />
       ) : null}
 
-      {view.room.status === "building" ? (
+      {waitingScreen(view.room) === "building" ? (
         <section className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-5">
           <h1 ref={headingRef} tabIndex={-1} className="board text-[11px] text-accent">
             Building the deck

@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { isJoinReason, roomRedirect, statusTransition } from "../../../../src/lib/room/room";
+import {
+  isJoinReason,
+  roomRedirect,
+  shouldStartSoloBuild,
+  statusTransition,
+  waitingScreen,
+} from "../../../../src/lib/room/room";
 
 const base = {
   code: "1234",
@@ -82,4 +88,57 @@ test("a re-run that lands on the same status moves nothing", () => {
 test("no status yet is not a transition, and does not overwrite what was seen", () => {
   expect(statusTransition("swiping", null)).toEqual({ seen: "swiping", moveFocus: false });
   expect(statusTransition(null, null)).toEqual({ seen: null, moveFocus: false });
+});
+
+// --- going alone stops pretending to be a room ----------------------------
+//
+// A solo room still opened a lobby: one filled seat, "Waiting..." rows for
+// seats nobody is coming to fill, a "Copy the join link" button and a "Start
+// swiping" button warning that nobody else can join once the deck starts. For
+// a night the person has just said is only them, that is a screen made
+// entirely of other people.
+
+test("a room somebody else is coming to still opens its lobby", () => {
+  expect(waitingScreen({ status: "lobby", headcount: 4 })).toBe("lobby");
+});
+
+test("a room of one never shows a lobby, only the deck being built", () => {
+  expect(waitingScreen({ status: "lobby", headcount: 1 })).toBe("building");
+});
+
+test("a build in progress is a build in progress whoever is coming", () => {
+  expect(waitingScreen({ status: "building", headcount: 1 })).toBe("building");
+  expect(waitingScreen({ status: "building", headcount: 4 })).toBe("building");
+});
+
+test("a room that has started waits for nothing", () => {
+  for (const status of ["swiping", "matched", "booked"]) {
+    expect(waitingScreen({ status, headcount: 1 })).toBeNull();
+    expect(waitingScreen({ status, headcount: 4 })).toBeNull();
+  }
+});
+
+const solo = { status: "lobby", headcount: 1, isHost: true, alreadyStarted: false };
+
+test("a solo room starts its own deck, because there is nobody to press the button", () => {
+  expect(shouldStartSoloBuild(solo)).toBe(true);
+});
+
+test("a group room waits for its host to say go", () => {
+  expect(shouldStartSoloBuild({ ...solo, headcount: 4 })).toBe(false);
+});
+
+// The build spends Places and OpenAI quota, and a failed build hands the room
+// back to "lobby" -- which is the same state this fires on. Without the latch
+// a solo room whose neighbourhood has nothing in it would rebuild forever.
+test("it fires once, and a failure leaves the retry to the person", () => {
+  expect(shouldStartSoloBuild({ ...solo, alreadyStarted: true })).toBe(false);
+});
+
+test("only the host may start it, because the backend refuses anyone else", () => {
+  expect(shouldStartSoloBuild({ ...solo, isHost: false })).toBe(false);
+});
+
+test("a room already building is not started a second time", () => {
+  expect(shouldStartSoloBuild({ ...solo, status: "building" })).toBe(false);
 });

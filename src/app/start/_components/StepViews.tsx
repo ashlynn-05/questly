@@ -36,6 +36,7 @@ export type StepViewsProps = {
   cardIndex: number;
   answers: FunnelDraft["answers"];
   mood: FunnelDraft["mood"];
+  company: FunnelDraft["company"];
   visibility: FunnelDraft["visibility"];
   headcount: FunnelDraft["headcount"];
   budget: FunnelDraft["budget"];
@@ -141,9 +142,47 @@ function MoodStep({ headingRef, mood, goTo }: StepViewsProps) {
   );
 }
 
-function PartyStep({
+function PartyStep({ headingRef, company, busy, goTo }: StepViewsProps) {
+  return (
+    <section aria-labelledby="party-heading" className="flex flex-col gap-6">
+      <h1
+        id="party-heading"
+        ref={headingRef}
+        tabIndex={-1}
+        className="display text-[38px] text-text"
+      >
+        Alone, or with people?
+      </h1>
+
+      <div className="flex flex-col gap-2">
+        <Plate
+          variant="raised"
+          selected={company === "alone"}
+          label="On your own"
+          sub="Three answers and a card to swipe. No room, no waiting."
+          disabled={busy}
+          // Headcount is not asked again: the screen has just been told. The
+          // room is private because there is nobody to open it to.
+          onClick={() =>
+            goTo("constraints", { company: "alone", headcount: 1, visibility: "private" })
+          }
+        />
+        <Plate
+          variant="raised"
+          selected={company === "friends" || company === "strangers"}
+          label="With people"
+          sub="Open a room. Friends you invite, or strangers who are up for it."
+          disabled={busy}
+          onClick={() => goTo("company")}
+        />
+      </div>
+    </section>
+  );
+}
+
+function CompanyStep({
   headingRef,
-  visibility,
+  company,
   busy,
   lookingForRoom,
   openRooms,
@@ -152,9 +191,9 @@ function PartyStep({
   joinOpenRoom,
 }: StepViewsProps) {
   return (
-    <section aria-labelledby="party-heading" className="flex flex-col gap-6">
+    <section aria-labelledby="company-heading" className="flex flex-col gap-6">
       <h1
-        id="party-heading"
+        id="company-heading"
         ref={headingRef}
         tabIndex={-1}
         className="display text-[38px] text-text lg:text-[48px]"
@@ -165,25 +204,22 @@ function PartyStep({
       <div className="flex flex-col gap-2">
         <Plate
           variant="raised"
+          selected={company === "friends"}
           label="With friends"
           sub="Open a room and send them the number."
           disabled={busy}
-          onClick={() => goTo("constraints", { visibility: "private" })}
+          onClick={() => goTo("constraints", { company: "friends", visibility: "private" })}
         />
+        {/* The label does the most work of the three. This is the only one
+            where the value IS the strangers, and calling it "meet people"
+            undersold it. */}
         <Plate
           variant="raised"
-          label="Just me"
-          sub="A solo sidequest. Same plan, no voting."
+          selected={company === "strangers"}
+          label="Random meetups with strangers"
+          sub="Join a room that is already open, or open one they can find."
           disabled={busy}
-          onClick={() => goTo("constraints", { visibility: "private", headcount: 1 })}
-        />
-        <Plate
-          variant="raised"
-          selected={visibility === "open"}
-          label="Meet people"
-          sub="Join a room that is already open."
-          disabled={busy}
-          onClick={() => edit({ visibility: "open" })}
+          onClick={() => edit({ company: "strangers", visibility: "open" })}
         />
       </div>
 
@@ -193,8 +229,8 @@ function PartyStep({
           : openRooms.results.length === 0 && openRooms.status !== "Exhausted"
             ? "Looking for open rooms."
             : openRooms.results.length === 0
-              ? "No rooms are open for this mood yet. You can open one others can join."
-              : `${openRooms.results.length} open ${openRooms.results.length === 1 ? "room" : "rooms"} for this mood.`}
+              ? "No rooms are open for this activity yet. You can open one others can join."
+              : `${openRooms.results.length} open ${openRooms.results.length === 1 ? "room" : "rooms"} for this activity.`}
       </p>
 
       {lookingForRoom ? (
@@ -205,7 +241,7 @@ function PartyStep({
           ) : (
             <>
               {openRooms.results.length === 0 ? (
-                <p className="text-[13px] text-dim">Nobody has a room open for this mood yet.</p>
+                <p className="text-[13px] text-dim">Nobody has a room open for this yet.</p>
               ) : (
                 <>
                   {openRooms.results.map((room) => (
@@ -259,6 +295,7 @@ function PartyStep({
 
 function ConstraintsStep({
   headingRef,
+  company,
   headcount,
   budget,
   whenId,
@@ -277,34 +314,42 @@ function ConstraintsStep({
         tabIndex={-1}
         className="display text-[38px] text-text lg:text-[48px]"
       >
-        Four answers and it is solved.
+        No worries, plans on Questly
       </h1>
 
-      {/* Four questions, two columns from `lg`. These are chip groups, not a
-          list of stops, so a grid here is not the card grid DESIGN.md rules
-          out -- the rule protects list-like SCREENS whose answer is the route
-          line, and this screen's answer is four constraints taken at once.
-          Two columns is what stops the wide shell from being four rows of
-          chips with 600px of nothing beside them.
+      {/* Three or four questions, two columns from `lg`. These are chip
+          groups, not a list of stops, so a grid here is not the card grid
+          DESIGN.md rules out -- the rule protects list-like SCREENS whose
+          answer is the route line, and this screen's answer is the limits
+          taken at once. Two columns is what stops the wide shell from being
+          four rows of chips with 600px of nothing beside them.
 
           The mobile classes are stated first and unchanged: below `lg` this
           div is the same `flex flex-col gap-7` the section already applied to
-          these four fieldsets as direct children, so the phone spacing is
+          these fieldsets as direct children, so the phone spacing is
           byte-for-byte what it was. */}
       <div className="flex flex-col gap-7 lg:grid lg:grid-cols-2 lg:gap-x-10 lg:gap-y-7">
-        <fieldset className="flex flex-col gap-3 border-0 p-0">
-          <legend className="board text-[11px] text-accent">How many</legend>
-          <div className="flex flex-wrap gap-2">
-            {HEADCOUNTS.map((n) => (
-              <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
-                {n === 1 ? "Just me" : n}
-              </Chip>
-            ))}
-          </div>
-        </fieldset>
+        {/* Asked only when somebody else is coming. The screen before has
+            already been told it is one person, and asking again is asking the
+            same question twice -- which is also why the heading no longer
+            counts the answers: one branch has three and the other has four. */}
+        {company === "alone" ? null : (
+          <fieldset className="flex flex-col gap-3 border-0 p-0">
+            <legend className="board text-[11px] text-accent">How many</legend>
+            <div className="flex flex-wrap gap-2">
+              {HEADCOUNTS.map((n) => (
+                <Chip key={n} selected={headcount === n} onClick={() => edit({ headcount: n })}>
+                  {n === 1 ? "Just me" : n}
+                </Chip>
+              ))}
+            </div>
+          </fieldset>
+        )}
 
         <fieldset className="flex flex-col gap-3 border-0 p-0">
-          <legend className="board text-[11px] text-accent">Budget per head</legend>
+          <legend className="board text-[11px] text-accent">
+            {company === "alone" ? "Budget" : "Budget per head"}
+          </legend>
           <div className="flex flex-wrap gap-2">
             {BUDGETS.map((cents) => (
               <Chip key={cents} selected={budget === cents} onClick={() => edit({ budget: cents })}>
@@ -390,7 +435,7 @@ function ConstraintsStep({
 
       <Plate
         variant="action"
-        label={busy ? "Opening…" : "Open the room"}
+        label={busy ? "Opening…" : company === "alone" ? "Find me something" : "Open the room"}
         disabled={busy}
         onClick={() => void openTheRoom()}
       />
@@ -406,6 +451,8 @@ export function StepViews(props: StepViewsProps) {
       return <MoodStep {...props} />;
     case "party":
       return <PartyStep {...props} />;
+    case "company":
+      return <CompanyStep {...props} />;
     case "constraints":
       return <ConstraintsStep {...props} />;
   }

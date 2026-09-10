@@ -1,5 +1,5 @@
 /**
- * The three decisions the room shell makes that no test could reach.
+ * The decisions the room shell makes that no test could reach.
  *
  * `src/app/room/[code]/page.tsx` is a client component, and this project's
  * vitest setup runs one global edge-runtime environment with no DOM -- no
@@ -94,4 +94,57 @@ export function statusTransition(
   if (next === null) return { seen, moveFocus: false };
   if (seen === next) return { seen, moveFocus: false };
   return { seen: next, moveFocus: seen !== null };
+}
+
+/**
+ * Which waiting screen a room shows before it starts swiping, if either.
+ *
+ * A ROOM OF ONE NEVER SHOWS A LOBBY. The lobby draws one filled seat, a
+ * "Waiting..." row for every seat nobody is coming to fill, a "Copy the join
+ * link" button and a "Start swiping" button whose subtitle warns that nobody
+ * else can join once the deck starts. For a night somebody has just said is
+ * only them, that is a screen made entirely of other people. They asked three
+ * questions and they get a deck.
+ *
+ * The build screen it goes to instead is the one that already exists, which is
+ * the point: it is honest about what is happening, it names the host's retry,
+ * and it is where a failed build's message already lands.
+ */
+export function waitingScreen({
+  status,
+  headcount,
+}: {
+  status: string;
+  headcount: number;
+}): "lobby" | "building" | null {
+  if (status === "building") return "building";
+  if (status !== "lobby") return null;
+  return headcount === 1 ? "building" : "lobby";
+}
+
+/**
+ * Whether the shell should start a solo room's deck without being asked.
+ *
+ * Nobody is coming, so nobody is going to press "Start swiping" -- and the
+ * screen that offered it is gone. The build has to start itself.
+ *
+ * `alreadyStarted` is a latch, not a guess at progress, and it must never be
+ * cleared. A build that fails hands the room back to `lobby`, which is the
+ * exact state this fires on: without the latch, a solo room in a neighbourhood
+ * with nothing in it would rebuild forever, spending Places and OpenAI quota
+ * on the same failure. One automatic attempt, then the retry belongs to the
+ * person -- which is what the build screen's button is for.
+ */
+export function shouldStartSoloBuild({
+  status,
+  headcount,
+  isHost,
+  alreadyStarted,
+}: {
+  status: string;
+  headcount: number;
+  isHost: boolean;
+  alreadyStarted: boolean;
+}): boolean {
+  return headcount === 1 && isHost && status === "lobby" && !alreadyStarted;
 }
