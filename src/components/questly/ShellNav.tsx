@@ -42,12 +42,6 @@ export function ShellNav({ route, ctx }: { route: NavRoute; ctx?: NavContext }) 
       data-shell-nav
       className="hidden w-[236px] shrink-0 flex-col gap-[6px] border-r border-hairline px-3 pt-[22px] pb-5 lg:flex"
     >
-      {/* Says whose quests these are without claiming an account. The product
-          works signed out and a room lives in this browser's storage, so
-          "This browser" is the true scope -- "Your quests" would be a promise
-          the storage cannot keep across devices. */}
-      <p className="board mb-[6px] ml-1 text-[10px] text-dim">This browser</p>
-
       {/* Every row overrides the Plate's 16px padding and 12px gap with 10px
           and 8px. Measured, not guessed: at the defaults a 236px column leaves
           116px for a label, "Start a quest" needs 141px and "Your room" beside
