@@ -86,8 +86,19 @@ export function Screen({ children, bleed = false, badge = true, nav }: Props) {
        it, and that measure's own side padding. Stated as one number rather than
        as `nav + main` so a route WITHOUT a nav still centres its 940px in the
        same place as the routes with one, instead of drifting 118px left every
-       time you leave a room. */
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground lg:max-w-[1256px]">
+       time you leave a room.
+
+       AND 1436px FROM `xl` UP, which is 236 + 1120 + 80. On a 1440 monitor the
+       old cap left 184px of gutter on a shell that had already stopped growing,
+       so a screen with two columns in it was running them at 446px each while
+       300px of the window sat empty. The second number moves the same three
+       parts, not the shell alone: raising this without raising the measure
+       below would only widen the gutter INSIDE the shell.
+
+       It stops at 1436 rather than following the window, because a measure that
+       grows without limit is how a two-column screen becomes a 900px line of
+       prose. A 1856px monitor keeps a real gutter on purpose. */
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col bg-ground lg:max-w-[1256px] xl:max-w-[1436px]">
       {/* The band. `h-[76px]` is the 44px roundel plus 16px of air above and
           below -- a real height rather than padding, so it cannot drift when a
           route puts something taller in the left slot. The wordmark is on every
@@ -149,8 +160,12 @@ export function Screen({ children, bleed = false, badge = true, nav }: Props) {
         >
           {/* 940px is the design's own measure, and it is capped here rather
               than on `main` so the nav keeps its full 236px at every width
-              instead of the two sharing a squeeze. */}
-          <div className="flex w-full flex-col gap-8 lg:mx-auto lg:max-w-[940px]">{children}</div>
+              instead of the two sharing a squeeze. 1120px from `xl` up is the
+              other half of the wider shell above -- see the note on `main` for
+              why both numbers move together. */}
+          <div className="flex w-full flex-col gap-8 lg:mx-auto lg:max-w-[940px] xl:max-w-[1120px]">
+            {children}
+          </div>
         </div>
       </div>
     </main>
@@ -175,7 +190,7 @@ export function Screen({ children, bleed = false, badge = true, nav }: Props) {
  */
 export function ScreenPending({ label = "Loading…" }: { label?: string }) {
   return (
-    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground lg:max-w-[1256px]">
+    <main className="mx-auto flex w-full max-w-[460px] flex-1 items-center justify-center bg-ground lg:max-w-[1256px] xl:max-w-[1436px]">
       <p className="board text-[11px] text-accent">{label}</p>
     </main>
   );

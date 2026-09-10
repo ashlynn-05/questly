@@ -24,6 +24,7 @@ import {
 import {
   PRESET_MINUTES,
   isInThePast,
+  isValidDateValue,
   minutesToInputValue,
   resolveWhenAt,
 } from "@/lib/start/when";
@@ -42,6 +43,7 @@ const CBD = { lat: -37.8136, lng: 144.9631 };
 
 /** The sentence a time already gone gets, on the client and on the server. */
 const PAST_WHEN = "That time has already passed. Pick a later time.";
+const NO_WHEN_DATE = "Pick the day you want, or choose one of the three above.";
 const OPEN_ROOMS_PAGE_SIZE = 8;
 
 function StartFunnel() {
@@ -266,6 +268,14 @@ function StartFunnel() {
     // Resolved here, against the clock as it is NOW -- not at mount, and not
     // when the chip was tapped. Somebody who sat on this screen while the hour
     // turned gets the time they are looking at, not the one they arrived with.
+    // The date field is seeded when the chip is tapped, so an empty one means
+    // it was cleared -- or that a draft is being resumed from a browser store
+    // where the pair could have been separated. Either way the resolver would
+    // quietly fall back to today, and today is not the day anyone asked for.
+    if (whenId === "custom" && !isValidDateValue(whenDate)) {
+      setError(NO_WHEN_DATE);
+      return;
+    }
     const whenAt = resolveWhenAt(whenId, whenMinutes, new Date(), whenDate);
     // The server refuses this too, and the server is the rule -- but a refusal
     // that arrives after a round trip, on a screen that has already said
