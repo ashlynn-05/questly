@@ -15,6 +15,7 @@ import {
   EMPTY_DRAFT,
   backFrom,
   forgetDraft,
+  headcountFor,
   noDraft,
   restoredDraft,
   subscribeToDraft,
@@ -294,7 +295,10 @@ function StartFunnel() {
       }
       const { code, sessionKey } = await createRoom({
         mood,
-        headcount,
+        // Derived from the company answer, never read straight off the draft:
+        // one seat for somebody going alone, and the group size otherwise. See
+        // `headcountFor` for the room-nobody-can-join this prevents.
+        headcount: headcountFor(company, headcount),
         budgetPerHeadCents: budget,
         whenAt,
         centreLat: CBD.lat,
