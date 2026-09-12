@@ -28,7 +28,7 @@ Use iris/ink text on cornsilk; cornsilk or apricot on iris. Avoid small apricot 
 
 Voice: short, friendly invitations. Proposed copy: “Make a little detour.” and “sidequests. together.”
 
-These are raster design assets, not vector masters. Generated colors have slight tonal variation; exact production colors and typography remain defined by the code tokens. Sticker and social designs are concepts on the board, not separate exports. App code has not been changed.
+These are raster design assets, not vector masters. Generated colors have slight tonal variation; exact production colors and typography remain defined by the code tokens. Sticker and social designs are concepts on the board, not separate exports. The app icon in the code is not this raster: `scripts/generate-icons.sh` redraws the same Q as SVG geometry measured off it, so it stays crisp at 32px and uses the token apricot rather than the generator's drifted #f3bc2d.
 
 ## Generation prompts
 

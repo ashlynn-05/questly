@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ThemeToggle } from "./theme";
+import { ThemeImage } from "./ThemeImage";
 import { AccountBadge } from "./AccountBadge";
 
 /**
@@ -83,7 +84,13 @@ type Props = {
   journey?: ReactNode;
 };
 
-export function Screen({ children, bleed = false, badge = true, nav, journey }: Props) {
+export function Screen({
+  children,
+  bleed = false,
+  badge = true,
+  nav,
+  journey,
+}: Props) {
   return (
     /* WHY 1048px AND NOT THE WHOLE WINDOW. The brief's reference is What's On
        Melbourne, and the thing to copy from it is the restraint: measured off
@@ -134,13 +141,24 @@ export function Screen({ children, bleed = false, badge = true, nav, journey }: 
       <header className="flex h-[76px] shrink-0 items-center justify-between gap-3 px-5 lg:border-b lg:border-hairline lg:px-6">
         <Link
           href="/"
-          // The 44px target floor this product holds everywhere. The label is
-          // 11px, so the padding and min-height are what make it tappable, not
-          // the word. It grows to 13px on the wide band, where 11px in a 104px
-          // band reads as a caption rather than as the network's name.
-          className="board flex min-h-[44px] items-center px-1 text-[11px] text-accent lg:text-[13px]"
+          // The 44px target floor this product holds everywhere. The mark is
+          // 28px tall and grows to 34px on the wide band, so the padding and
+          // min-height are what make it tappable, not the artwork.
+          aria-label="Questly, home"
+          className="flex min-h-[44px] items-center px-1"
         >
-          Questly
+          {/* The drawn mark, not the word set in type. It is the same sign in
+              the same place on every route, which is the whole point of this
+              band -- and a sign is a picture of a name, not a caption. */}
+          <ThemeImage
+            night="/brand/questly-mark-night.png"
+            day="/brand/questly-mark-day.png"
+            alt="Questly"
+            width={96}
+            height={34}
+            priority
+            className="h-7 w-auto lg:h-[34px]"
+          />
         </Link>
         <div className="flex items-center gap-3">
           <ThemeToggle />
@@ -175,7 +193,9 @@ export function Screen({ children, bleed = false, badge = true, nav, journey }: 
               phone before it moved here. `px-10` and not the body's `px-5
               lg:px-10`, because this never renders on a phone and so has no
               phone padding to state. */}
-          {journey ? <div className="hidden lg:block lg:px-10 lg:pt-7">{journey}</div> : null}
+          {journey ? (
+            <div className="hidden lg:block lg:px-10 lg:pt-7">{journey}</div>
+          ) : null}
           {/* Centred in whatever height is left, EXCEPT under a journey band.
               A band is a top anchor: with the content still centring beneath
               it, a short screen put the stepper at the top, the heading 200px
@@ -189,7 +209,7 @@ export function Screen({ children, bleed = false, badge = true, nav, journey }: 
               journey ? "lg:justify-start lg:pt-8" : ""
             } ${bleed ? "" : "px-5 lg:px-10"}`}
           >
-          {/* 940px is the design's own measure, and it is capped here rather
+            {/* 940px is the design's own measure, and it is capped here rather
               than on `main` so the nav keeps its full 236px at every width
               instead of the two sharing a squeeze. 1120px from `xl` up is the
               other half of the wider shell above -- see the note on `main` for
