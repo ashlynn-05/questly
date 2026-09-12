@@ -1,8 +1,10 @@
 import { expect, test } from "vitest";
 import {
   EMPTY_DRAFT,
+  HEADCOUNTS,
   STEPS,
   backFrom,
+  headcountFor,
   parseDraft,
   type FunnelDraft,
 } from "../../../../src/lib/start/funnel";
@@ -173,4 +175,36 @@ test("back walks the rest of the funnel in order, and stops at the quiz", () => 
   expect(backFrom("party", FULL)).toBe("mood");
   expect(backFrom("mood", FULL)).toBeNull();
   expect(backFrom("quiz", FULL)).toBeNull();
+});
+
+// --- the seat count -------------------------------------------------------
+//
+// A room of one draws the build screen instead of a lobby, so it offers no join
+// link, and `rooms.join` refuses everybody once the status leaves `lobby`. That
+// is what somebody going alone asked for and a dead end for anybody else, which
+// is why the count is derived from the company answer rather than stored.
+
+test("going alone opens one seat whatever the draft was carrying", () => {
+  expect(headcountFor("alone", 6)).toBe(1);
+  expect(headcountFor("alone", EMPTY_DRAFT.headcount)).toBe(1);
+});
+
+test("going with people keeps the group size that was chosen", () => {
+  expect(headcountFor("friends", 6)).toBe(6);
+  expect(headcountFor("strangers", 2)).toBe(2);
+});
+
+// The bug this function exists for. Back from the constraints screen returns an
+// alone host to the party screen; choosing "With people" from there used to
+// leave the headcount of 1 that going alone had written down, and the host
+// opened a friends room nobody could get into.
+test("a headcount left over from going alone never opens a room with people", () => {
+  expect(headcountFor("friends", 1)).toBe(EMPTY_DRAFT.headcount);
+  expect(headcountFor("strangers", 1)).toBe(EMPTY_DRAFT.headcount);
+  expect(headcountFor(null, 1)).toBe(EMPTY_DRAFT.headcount);
+});
+
+test("the screen cannot offer a room of one, so the contradiction is unreachable", () => {
+  expect(HEADCOUNTS).not.toContain(1);
+  expect(HEADCOUNTS.every((n) => headcountFor("friends", n) === n)).toBe(true);
 });

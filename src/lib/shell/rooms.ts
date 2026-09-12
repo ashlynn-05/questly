@@ -14,12 +14,19 @@
  * without a DOM.
  */
 
-/** The mood a room was opened for, in the words the funnel used to ask it. */
+/**
+ * The mood a room was opened for, in the words the funnel used to ask it.
+ *
+ * The three the funnel now offers, and only those: `profiles.myRooms` runs
+ * every stored mood through `normalizeMood` before it leaves the server, so a
+ * room opened under one of the retired ids arrives here as the activity it
+ * became. Listing the retired ids as well would be four dead entries pretending
+ * the translation had not already happened.
+ */
 export const MOOD_LABEL: Record<string, string> = {
   grass: "Touch grass",
-  meet: "Meet people",
-  treat: "Treat yourself",
-  new: "Something new",
+  sidequest: "Random crazy sidequests",
+  hangout: "Hang-outs",
 };
 
 /** What a room is doing right now, said plainly enough to decide whether to go back in. */

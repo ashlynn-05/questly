@@ -123,6 +123,25 @@ export function waitingScreen({
 }
 
 /**
+ * The status the room is DRAWING, which is not always the status it holds.
+ *
+ * A solo room stays at `lobby` and draws the build screen, because it has no
+ * lobby to draw. The band above the room and the column beside it both name a
+ * place, and both used to read `room.status` directly -- so going alone landed
+ * on "Building the deck" under a band that said Room and a column highlighting
+ * "Your room". A failed build hands the room back to `lobby`, so it stayed
+ * wrong rather than flickering.
+ *
+ * One derivation, used by the screen, the band and the column, so the three
+ * cannot disagree about which one of them is right.
+ */
+export type RoomStatus = "lobby" | "building" | "swiping" | "matched" | "booked";
+
+export function shownStatus(room: { status: RoomStatus; headcount: number }): RoomStatus {
+  return waitingScreen(room) ?? room.status;
+}
+
+/**
  * Whether the shell should start a solo room's deck without being asked.
  *
  * Nobody is coming, so nobody is going to press "Start swiping" -- and the
