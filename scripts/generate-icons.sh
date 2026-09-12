@@ -7,14 +7,22 @@
 #
 #   brew install librsvg && ./scripts/generate-icons.sh
 #
-# The mark is the product's own wayfinding language, drawn the way MapTile in
-# src/components/questly/frame.tsx already draws it: one orange route line
-# stepping up and to the right on the iris ground, ending on a destination
-# roundel. The roundel is apricot rather than orange because orange is 2.95:1
-# on iris and this has to read at 48px on a home screen; apricot is 5.68:1.
+# The mark is the brand kit's Q, redrawn as geometry rather than resampled from
+# design/brandkit/questly-app-icon.png. That file is a 1254px raster from an
+# image generator, so its edges carry the generator's own tonal drift and it
+# cannot be scaled to 32px without going soft; the numbers below are measured
+# off it (ring centre 626,610 outer radius 428 stroke 145, tail cap centre
+# 995,1013 -- scaled by 512/1254) so the drawing and the raster are the same
+# mark, and this one stays crisp at every size.
 #
-# Colours are --q-iris / --q-orange / --q-apricot from src/app/globals.css. They
-# are literals here because an SVG on a home screen has no stylesheet to
+# The route line that used to be here is gone. It was the product's wayfinding
+# language, but the brand kit settled the identity on the Q and a home screen
+# should carry the identity, not a second one.
+#
+# The Q is apricot rather than the raster's #f3bc2d: apricot is a token, it is
+# 5.68:1 on iris, and orange would be 2.95:1 -- under AA at the 48px this has
+# to read at. Colours are --q-iris / --q-apricot from src/app/globals.css,
+# written as literals because an SVG on a home screen has no stylesheet to
 # resolve a var() against.
 set -euo pipefail
 
@@ -26,17 +34,23 @@ command -v rsvg-convert >/dev/null || {
 }
 
 IRIS="#3b3686"
-ORANGE="#e0652b"
 APRICOT="#edba40"
 
-# The art, centred in a 512 box: bounds are x 101..411, y 85..427, so the
-# margins are equal on all four sides and the mark does not look hung.
+# The art, centred in a 512 box: bounds are x 78..434, y 72..442, whose centre
+# is 256,257 -- the tail hanging off the lower right is what pulls the ring up
+# and left of centre, and the mark would look hung if the ring were centred
+# instead.
+#
+# The tail starts ON the ring's centre line, not short of it and not past it.
+# Its round cap has the same radius as half the stroke, so a cap centred on
+# that line is swallowed whole by the ring and the two shapes union into one
+# silhouette. Started further in, the cap pokes a bump into the counter --
+# visible at 512 and mush at 32.
 art() {
   cat <<SVG
-    <path d="M123 405H235V277H347V149" fill="none" stroke="$ORANGE" stroke-width="44"
-          stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="347" cy="149" r="64" fill="$APRICOT"/>
-    <circle cx="347" cy="149" r="26" fill="$IRIS"/>
+    <circle cx="253" cy="247" r="145" fill="none" stroke="$APRICOT" stroke-width="59"/>
+    <path d="M351 354 404 412" fill="none" stroke="$APRICOT" stroke-width="59"
+          stroke-linecap="round"/>
 SVG
 }
 
@@ -52,15 +66,17 @@ SVG
 }
 
 # The maskable variant. Android crops to an arbitrary shape and only guarantees
-# the centre 80% -- a circle of radius 205, and the tight art's own corner sits
-# at radius 230. 0.85 pulls it inside with a little room to spare; the ground
-# still runs to all four edges, which is the whole point of a maskable icon.
+# the centre 80% -- a circle of radius 205. The art's furthest point is the
+# tail's end cap, at radius 244 from the box centre, so 205/244 = 0.84 is the
+# largest scale that fits and 0.83 takes it with a little room to spare. The
+# ground still runs to all four edges, which is the whole point of a maskable
+# icon.
 svg_maskable() {
   cat <<SVG
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <title>Questly</title>
   <rect width="512" height="512" fill="$IRIS"/>
-  <g transform="translate(256 256) scale(0.85) translate(-256 -256)">
+  <g transform="translate(256 256) scale(0.83) translate(-256 -256)">
 $(art)
   </g>
 </svg>
